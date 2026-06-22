@@ -1,0 +1,29 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/configure/
+# The CodeRabbit GitHub App must have access to this repository (org-level
+# install on nimbus-agent, or add nimbus-vscode to the app's repo list).
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  auto_review:
+    enabled: true
+    drafts: false
+    base_branches:
+      - main
+  path_filters:
+    - "!dist/**"
+    - "!media/**"
+    - "!**/*.vsix"
+  path_instructions:
+    - path: "src/**/*.ts"
+      instructions: >-
+        This is a VS Code extension that talks to the Nimbus Gateway IPC-only via
+        the published @nimbus-dev/client package. Flag: any direct cloud/network
+        calls; any use of `any` (prefer `unknown`); any `console.*` in src (logging
+        must go through the output channel in logging.ts); and any import from the
+        Nimbus gateway source. The `vscode` API should only be touched via
+        src/vscode-shim.ts.
+chat:
+  auto_reply: true

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+media/
+dist-vsix/
+*.vsix
+*.tsbuildinfo
+.DS_Store

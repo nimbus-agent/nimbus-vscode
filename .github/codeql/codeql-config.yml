@@ -1,0 +1,7 @@
+name: nimbus-vscode CodeQL config
+
+# Analyze source only; skip generated bundles and deps.
+paths-ignore:
+  - dist
+  - media
+  - node_modules

@@ -1,0 +1,44 @@
+name: Bug report
+description: Report a problem with the Nimbus VS Code extension
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. For issues in the Gateway/connectors, please use the
+        [Nimbus](https://github.com/nimbus-agent/Nimbus) repository instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: extension-version
+    attributes:
+      label: Extension version
+      description: Shown next to "Nimbus Agent" in the Extensions view.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: editor
+    attributes:
+      label: Editor & version
+      placeholder: "VS Code 1.95.0 / Cursor / VSCodium"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS
+      placeholder: "Windows 11 / macOS 15 / Ubuntu 24.04"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: From the "Nimbus" output channel (set `nimbus.logLevel` to `debug` for more).
+      render: shell

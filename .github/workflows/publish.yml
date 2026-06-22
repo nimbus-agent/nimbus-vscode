@@ -1,0 +1,141 @@
+name: Publish VS Code Extension
+
+# Triggered by tags of the form `v0.2.0`. The tag version is written into
+# package.json before packaging so Marketplace and Open VSX match the tag.
+#
+# Required repository secrets (in the `release` environment):
+#   * VSCE_PAT — Azure DevOps PAT, "Marketplace (Manage)" scope, publisher `nimbus-agent`.
+#   * OVSX_PAT — Open VSX token for the `nimbus-agent` namespace.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to VS Code Marketplace + Open VSX
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Setup Node (vsce/ovsx are Node CLIs)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "22"
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint
+        run: bun run lint
+
+      - name: Test
+        run: bun run test
+        env:
+          CI: "true"
+
+      - name: Resolve version from tag
+        id: version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if ! [[ "$tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::tag '$GITHUB_REF_NAME' did not parse as semver after stripping 'v'"
+            exit 1
+          fi
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Stamp package.json with the tag version
+        run: npm pkg set version="${{ steps.version.outputs.version }}"
+
+      - name: Build bundle
+        run: bun run build
+
+      - name: Package .vsix
+        run: |
+          mkdir -p dist-vsix
+          bunx vsce package --no-dependencies --out dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
+
+      - name: Verify required publish secrets are present
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::VSCE_PAT secret is not configured."
+            exit 1
+          fi
+          if [ -z "$OVSX_PAT" ]; then
+            echo "::error::OVSX_PAT secret is not configured."
+            exit 1
+          fi
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: bunx vsce publish --pat "$VSCE_PAT" --no-dependencies --packagePath dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: bunx ovsx publish -p "$OVSX_PAT" dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
+
+      - name: Upload .vsix artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: nimbus-vsix-${{ steps.version.outputs.version }}
+          path: dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Mirror .vsix on GitHub Release
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Download .vsix artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: nimbus-vsix-${{ needs.publish.outputs.version }}
+          path: dist-vsix
+
+      - name: Upload .vsix to GitHub Release
+        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
+        with:
+          files: dist-vsix/nimbus-${{ needs.publish.outputs.version }}.vsix
+          tag_name: ${{ github.ref_name }}
+          name: VS Code extension ${{ needs.publish.outputs.version }}
+          generate_release_notes: true
