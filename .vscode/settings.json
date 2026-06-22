@@ -1,0 +1,30 @@
+{
+  // Match the project's Biome rules automatically. See biome.json.
+  "editor.defaultFormatter": "biomejs.biome",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.organizeImports.biome": "explicit"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[javascript]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  // dist/ and media bundles are build output — keep them out of search/watch.
+  "files.exclude": {
+    "dist": true
+  },
+  "search.exclude": {
+    "dist": true,
+    "media/webview.js": true,
+    "media/webview.css": true,
+    "bun.lock": true
+  }
+}

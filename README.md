@@ -26,9 +26,13 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/install> for setup.
 | --- | --- | --- |
 | `nimbus.socketPath` | _(auto)_ | Override the Gateway socket path. |
 | `nimbus.autoStartGateway` | `false` | Spawn `nimbus start` if the socket is unreachable. |
+| `nimbus.statusBarPollMs` | `30000` | Status-bar connector-health poll interval (ms). |
+| `nimbus.transcriptHistoryLimit` | `50` | Turns rehydrated into the chat panel on reload. |
 | `nimbus.askAgent` | _(Gateway default)_ | Default agent name passed to Ask. |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |
 | `nimbus.logLevel` | `info` | Output-channel verbosity. |
+
+See [docs/settings.md](./docs/settings.md) for the full reference.
 
 ## Contributing
 
@@ -36,6 +40,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). This repository was extracted from the
 
 ## See also
 
+- [Documentation](./docs/) — architecture, development, settings, and release docs
 - [Nimbus User Guide](https://nimbus-agent.dev/user-guide/vscode-extension/)
 - [Nimbus](https://github.com/nimbus-agent/Nimbus) — the Gateway this extension talks to
 
