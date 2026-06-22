@@ -11,10 +11,9 @@ export default defineConfig({
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts"],
       exclude: ["src/**/*.d.ts", "src/vscode-shim.ts"],
-      thresholds: {
-        lines: 80,
-        branches: 75,
-      },
+      // No hard thresholds here: coverage quality is enforced by SonarCloud's
+      // "Sonar way" gate (80% on NEW code) via sonar.yml. `test:coverage` only
+      // generates the lcov report that the Sonar scan consumes.
     },
   },
   resolve: {
