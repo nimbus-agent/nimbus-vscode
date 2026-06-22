@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 

@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 
 const CHAT_SHELL = `
@@ -23,8 +24,16 @@ interface VsCodeApi {
   setState: (s: unknown) => void;
 }
 
-function dispatch(origin: string, data: unknown): void {
-  globalThis.dispatchEvent(new MessageEvent("message", { origin, data }));
+// The VS Code host posts messages from the embedding (parent) frame with a
+// `vscode-webview://` origin. main.ts enforces BOTH `ev.source === window.parent`
+// and a non-empty `vscode-webview` origin (an inline CodeQL/Sonar origin check).
+// dispatch() mirrors a trusted host message by default; individual tests override
+// `origin`/`source` to exercise those guards. `source` is set via defineProperty
+// because jsdom's MessageEvent constructor does not accept a Window for `source`.
+function dispatch(origin: string, data: unknown, source: unknown = window.parent): void {
+  const ev = new MessageEvent("message", { origin, data });
+  Object.defineProperty(ev, "source", { value: source, configurable: true });
+  globalThis.dispatchEvent(ev);
 }
 
 function transcriptHtml(): string {
@@ -47,14 +56,14 @@ beforeEach(() => {
 });
 
 describe("webview message listener", () => {
-  test("renders a userMessage payload from a vscode-webview origin", () => {
+  test("renders a userMessage from the trusted parent frame + vscode-webview origin", () => {
     dispatch("vscode-webview://abc", { type: "userMessage", text: "hi from extension" });
     expect(transcriptHtml()).toContain("hi from extension");
   });
 
-  test("accepts empty origin (jsdom-style harness)", () => {
+  test("drops messages with an empty origin", () => {
     dispatch("", { type: "userMessage", text: "from harness" });
-    expect(transcriptHtml()).toContain("from harness");
+    expect(transcriptHtml()).not.toContain("from harness");
   });
 
   test("drops messages from foreign cross-origin frames", () => {
@@ -62,14 +71,9 @@ describe("webview message listener", () => {
     expect(transcriptHtml()).not.toContain("smuggled");
   });
 
-  test("regression: source: null is accepted when origin is trusted", () => {
-    const ev = new MessageEvent("message", {
-      origin: "vscode-webview://xyz",
-      data: { type: "userMessage", text: "no-source-payload" },
-    });
-    expect(ev.source).toBeNull();
-    globalThis.dispatchEvent(ev);
-    expect(transcriptHtml()).toContain("no-source-payload");
+  test("drops messages whose source is not the parent frame", () => {
+    dispatch("vscode-webview://xyz", { type: "userMessage", text: "no-source-payload" }, null);
+    expect(transcriptHtml()).not.toContain("no-source-payload");
   });
 
   test("ignores payloads that do not look like ExtensionToWebview", () => {
