@@ -49,4 +49,9 @@ describe("Settings", () => {
     expect(s.hitlAlwaysModal()).toBe(true);
     expect(s.logLevel()).toBe("debug");
   });
+
+  test("falls back to info for an unrecognized logLevel value", () => {
+    const s = createSettings(makeWorkspace({ logLevel: "trace" }));
+    expect(s.logLevel()).toBe("info");
+  });
 });

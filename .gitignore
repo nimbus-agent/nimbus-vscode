@@ -2,6 +2,7 @@ node_modules/
 dist/
 media/
 dist-vsix/
+coverage/
 *.vsix
 *.tsbuildinfo
 .DS_Store

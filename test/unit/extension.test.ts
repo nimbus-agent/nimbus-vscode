@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
 
+import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { AutoStartResult, AutoStarter } from "../../src/connection/auto-start.js";
 import { activateWithDeps } from "../../src/extension.js";
 import type {
@@ -51,6 +52,10 @@ interface Captured {
   infoMessages: string[];
   configChangeHandlers: Array<(e: ConfigurationChangeEventLike) => void>;
   cfgValues: Record<string, unknown>;
+  // Webview message handlers registered via panel.onMessage(), so tests can
+  // simulate the chat panel posting messages back to the extension host.
+  webviewMessageHandlers: Array<(msg: unknown) => void>;
+  panelRevealedCount: number;
 }
 
 const TEST_SOCKET_PATH = join(tmpdir(), `nimbus-test-${process.pid}.sock`);
@@ -65,6 +70,10 @@ function makeFixture(opts: {
   openClient?: () => Promise<ClientLike>;
   discoverSocket?: () => Promise<{ socketPath: string; source: string }>;
   autoStarter?: AutoStarter;
+  activeEditor?: { text: string; empty?: boolean };
+  panelVisible?: boolean;
+  panelActive?: boolean;
+  realChatPanel?: boolean;
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -78,6 +87,29 @@ function makeFixture(opts: {
   const configChangeHandlers: Array<(e: ConfigurationChangeEventLike) => void> = [];
   const cfgValues = opts.cfg ?? {};
   const inputAnswers = [...(opts.inputBoxAnswers ?? [])];
+
+  const webviewMessageHandlers: Array<(msg: unknown) => void> = [];
+  const panelDisposeListeners: Array<() => void> = [];
+  let panelCreated = false;
+  let panelRevealed = 0;
+  const chatPanel: ChatPanel = {
+    reveal: () => {
+      panelRevealed += 1;
+    },
+    dispose: () => {
+      for (const l of panelDisposeListeners) l();
+    },
+    panel: () => undefined,
+    onDispose: (h) => {
+      panelDisposeListeners.push(h);
+    },
+    onMessage: (h) => {
+      webviewMessageHandlers.push(h);
+    },
+    postMessage: () => Promise.resolve(true),
+    isVisible: () => opts.panelVisible ?? false,
+    isActive: () => opts.panelActive ?? false,
+  };
 
   const statusItem: StatusBarItemHandle = {
     text: "",
@@ -108,7 +140,13 @@ function makeFixture(opts: {
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
     showQuickPick: vi.fn(async () => undefined),
-    activeTextEditor: undefined,
+    activeTextEditor:
+      opts.activeEditor === undefined
+        ? undefined
+        : {
+            selection: { isEmpty: opts.activeEditor.empty ?? false },
+            document: { getText: () => opts.activeEditor?.text ?? "" },
+          },
   };
 
   const workspace: WorkspaceApi = {
@@ -145,31 +183,18 @@ function makeFixture(opts: {
       (async () => ({ socketPath: TEST_SOCKET_PATH, source: "default" }) as never),
     openClient: opts.openClient ?? makeFakeClient(),
     autoStarter: opts.autoStarter ?? okAutoStarter,
-    chatPanelFactory: () => {
-      let revealed = 0;
-      const disposeListeners: Array<() => void> = [];
-      const panel = {
-        reveal: () => {
-          revealed += 1;
-        },
-        dispose: () => {
-          for (const l of disposeListeners) l();
-        },
-        panel: () => undefined,
-        onDispose: (h: () => void) => {
-          disposeListeners.push(h);
-        },
-        onMessage: () => undefined,
-        postMessage: () => Promise.resolve(true),
-        isVisible: () => false,
-        isActive: () => false,
-      };
-      return {
-        createOrReveal: () => panel,
-        current: () => (revealed > 0 ? panel : undefined),
-      };
-    },
+    chatPanelFactory: () => ({
+      createOrReveal: () => {
+        panelCreated = true;
+        return chatPanel;
+      },
+      current: () => (panelCreated ? chatPanel : undefined),
+    }),
   };
+
+  // Drop the injected factory so activate() falls back to the real VS Code
+  // webview panel factory (backed by the vscode stub's createWebviewPanel).
+  if (opts.realChatPanel === true) delete deps.chatPanelFactory;
 
   return {
     ctx,
@@ -183,6 +208,10 @@ function makeFixture(opts: {
     infoMessages,
     configChangeHandlers,
     cfgValues,
+    webviewMessageHandlers,
+    get panelRevealedCount(): number {
+      return panelRevealed;
+    },
     deps,
   };
 }
@@ -190,6 +219,32 @@ function makeFixture(opts: {
 // Wait for the connection manager's `void connection.start()` to settle.
 async function waitForConnect(): Promise<void> {
   await new Promise((r) => setTimeout(r, 0));
+}
+
+function cmd(f: Captured, id: string): (...args: unknown[]) => unknown {
+  const h = f.commandHandlers.get(id);
+  if (h === undefined) throw new Error(`command ${id} not registered`);
+  return h;
+}
+
+// An askStream handle that immediately yields a terminal "done" event, so a
+// ChatController.start() call completes in one tick.
+function doneAskStream(): ReturnType<typeof vi.fn> {
+  return vi.fn(() => ({
+    streamId: "s1",
+    cancel: async () => undefined,
+    [Symbol.asyncIterator]: () => ({
+      next: async () => ({ value: { type: "done", reply: "", sessionId: "" }, done: false }),
+    }),
+  }));
+}
+
+// An openClient that rejects, leaving the connection manager disconnected so
+// connection.client() stays undefined (the "not connected" command paths).
+function disconnectedClient(): () => Promise<ClientLike> {
+  return async () => {
+    throw new Error("ECONNREFUSED");
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -306,5 +361,230 @@ describe("activateWithDeps", () => {
     await expect(handler()).resolves.toBeUndefined();
     expect(spawn).toHaveBeenCalledTimes(1);
     expect(f.ctx.subscriptions.length).toBeGreaterThan(0);
+  });
+
+  test("nimbus.search formats results, coercing non-string fields and falling back", async () => {
+    const queryItems = vi.fn(async () => ({
+      items: [
+        { title: "T1", service: "svc", url: "u1" },
+        { id: "ID2" }, // title missing → id fallback
+        { title: { nested: true } }, // object → not stringified → "(untitled)"
+        { title: 42, service: true, path: "p4" }, // number/boolean coerced
+      ],
+    }));
+    const f = makeFixture({
+      inputBoxAnswers: ["needle"],
+      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.search")();
+
+    expect(queryItems).toHaveBeenCalledTimes(1);
+    const qp = f.deps.window.showQuickPick as unknown as ReturnType<typeof vi.fn>;
+    const firstCall = qp.mock.calls[0];
+    if (firstCall === undefined) throw new Error("showQuickPick was not called");
+    const items = firstCall[0] as Array<{
+      label: string;
+      description: string;
+      detail: string;
+    }>;
+    expect(items[0]).toEqual({ label: "T1", description: "svc", detail: "u1" });
+    expect(items[1]?.label).toBe("ID2");
+    expect(items[2]?.label).toBe("(untitled)");
+    expect(items[3]?.label).toBe("42");
+    expect(items[3]?.description).toBe("true");
+    expect(items[3]?.detail).toBe("p4");
+  });
+
+  test("nimbus.search is a no-op for a blank query", async () => {
+    const queryItems = vi.fn(async () => ({ items: [] }));
+    const f = makeFixture({
+      inputBoxAnswers: ["   "],
+      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.search")();
+    expect(queryItems).not.toHaveBeenCalled();
+  });
+
+  test("nimbus.search reports an error when the query fails", async () => {
+    const queryItems = vi.fn(async () => {
+      throw new Error("index offline");
+    });
+    const f = makeFixture({
+      inputBoxAnswers: ["needle"],
+      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.search")();
+    expect(f.errorMessages.some((m) => m.includes("index offline"))).toBe(true);
+  });
+
+  test("nimbus.search errors when not connected to the Gateway", async () => {
+    const f = makeFixture({ inputBoxAnswers: ["needle"], openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.search")();
+    expect(f.errorMessages.some((m) => m.includes("not connected"))).toBe(true);
+    for (const s of f.ctx.subscriptions) s.dispose(); // clear the reconnect timer
+  });
+
+  test("nimbus.askAboutSelection prefixes the prompt and starts a stream", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      activeEditor: { text: "const x = 1;" },
+      inputBoxAnswers: ["Explain this:"],
+      openClient: makeFakeClient({ askStream } as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutSelection")();
+    expect(askStream).toHaveBeenCalledTimes(1);
+    expect((askStream.mock.calls[0] as unknown[])[0]).toBe("Explain this:\n\nconst x = 1;");
+  });
+
+  test("nimbus.askAboutSelection errors when there is no selection", async () => {
+    const f = makeFixture({ activeEditor: { text: "x", empty: true } });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutSelection")();
+    expect(f.errorMessages.some((m) => m.includes("select text first"))).toBe(true);
+  });
+
+  test("nimbus.askAboutSelection is a no-op for whitespace-only selection", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      activeEditor: { text: "   \n  " },
+      openClient: makeFakeClient({ askStream } as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutSelection")();
+    expect(askStream).not.toHaveBeenCalled();
+    expect(f.errorMessages).toHaveLength(0);
+  });
+
+  test("nimbus.askAboutSelection aborts when the prefix prompt is cancelled", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      activeEditor: { text: "code" },
+      inputBoxAnswers: [undefined],
+      openClient: makeFakeClient({ askStream } as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutSelection")();
+    expect(askStream).not.toHaveBeenCalled();
+  });
+
+  test("nimbus.searchSelection delegates to nimbus.search when text is selected", async () => {
+    const f = makeFixture({ activeEditor: { text: "selected" } });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.searchSelection")();
+    const exec = f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>;
+    expect(exec.mock.calls.some((c) => c[0] === "nimbus.search")).toBe(true);
+  });
+
+  test("nimbus.searchSelection errors when there is no selection", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.searchSelection")();
+    expect(f.errorMessages.some((m) => m.includes("select text first"))).toBe(true);
+  });
+
+  test("nimbus.newConversation creates the chat panel and resets without throwing", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await expect(cmd(f, "nimbus.newConversation")()).resolves.toBeUndefined();
+    expect(f.panelRevealedCount).toBeGreaterThanOrEqual(0);
+  });
+
+  test("nimbus.showPendingHitl does nothing when no consent is pending", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.showPendingHitl")();
+    expect(f.panelRevealedCount).toBe(0);
+  });
+
+  test("the webview message handlers route every known message type without throwing", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      inputBoxAnswers: ["hi"],
+      openClient: makeFakeClient({ askStream } as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // Running Ask creates the controller, which registers the onMessage handler.
+    await cmd(f, "nimbus.ask")();
+    const fire = f.webviewMessageHandlers[0];
+    if (fire === undefined) throw new Error("no webview message handler registered");
+
+    expect(() => {
+      fire({ type: "ready" });
+      fire({ type: "requestRehydrate" });
+      fire({ type: "openLogs" });
+      fire({ type: "startGateway" });
+      fire({ type: "stopStream" });
+      fire({ type: "hitlResponse", requestId: "x", decision: "approve" });
+      fire({ type: "openExternal", url: "https://example.com" });
+      fire({ type: "unknownType" });
+      fire("not an object");
+      fire(null);
+      fire({ noType: true });
+    }).not.toThrow();
+
+    await fire({ type: "submitAsk", text: "follow-up" });
+    expect(askStream.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("fireHitl routes a request through the router without throwing", async () => {
+    const f = makeFixture({});
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(() =>
+      handle.fireHitl({
+        requestId: "req-1",
+        prompt: "Allow file write?",
+      } as Parameters<typeof handle.fireHitl>[0]),
+    ).not.toThrow();
+  });
+
+  test("auto-starts the Gateway when a disconnect occurs and autoStartGateway is on", async () => {
+    const spawn = vi.fn(async (): Promise<AutoStartResult> => ({ kind: "ok" }));
+    let attempts = 0;
+    const openClient: () => Promise<ClientLike> = async () => {
+      attempts += 1;
+      if (attempts === 1) throw new Error("ECONNREFUSED"); // first connect → disconnected
+      return makeFakeClient()(); // reconnect after the spawn succeeds
+    };
+    const f = makeFixture({ cfg: { autoStartGateway: true }, openClient, autoStarter: { spawn } });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // Let the disconnected-branch auto-start IIFE (spawn → reconnectNow) settle.
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(spawn).toHaveBeenCalledTimes(1);
+    for (const s of f.ctx.subscriptions) s.dispose();
+  });
+
+  test("falls back to the real VS Code webview chat panel when none is injected", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      realChatPanel: true,
+      inputBoxAnswers: ["hi"],
+      openClient: makeFakeClient({ askStream } as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // Drives createRealChatPanelFactory → createWebviewPanel → renderChatHtml →
+    // wrapWebviewPanel, then a full ChatController.start() over the wrapper.
+    await expect(cmd(f, "nimbus.ask")()).resolves.toBeUndefined();
+    expect(askStream).toHaveBeenCalledTimes(1);
   });
 });
