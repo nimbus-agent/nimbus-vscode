@@ -88,10 +88,9 @@ export function connectionPlaceholder(state: ConnectionState): SidebarItem[] | u
   }
 }
 
-// The rows shown by an otherwise-empty view: the non-connected placeholder, or
-// the view's own `emptyLabel` when connected with nothing to show.
-export function placeholderItems(state: ConnectionState, emptyLabel: string): SidebarItem[] {
-  return connectionPlaceholder(state) ?? [{ label: emptyLabel }];
+// A standard error row for a view whose data load threw.
+export function errorRow(label: string, err: unknown): SidebarItem {
+  return { label, tooltip: err instanceof Error ? err.message : String(err), iconId: "error" };
 }
 
 export function toTreeItem(item: SidebarItem): TreeItemLike {
@@ -128,22 +127,40 @@ export function applyThemeIcons(
   return provider;
 }
 
-// Shared factory for the scaffold views: each renders connection-aware
-// placeholder rows and refreshes whenever the connection state changes.
-export function createPlaceholderView(deps: {
+// The shared sidebar view: connection-aware (renders a placeholder for any
+// non-connected state), refreshes on state change, and otherwise renders
+// `loadData()` rows. Every concrete view (audit, sessions, scaffolds) is a thin
+// wrapper that supplies its own `loadData`, so the provider boilerplate lives
+// in exactly one place.
+export function createDataView(deps: {
   connection: SidebarConnection;
-  emptyLabel: string;
+  loadData: () => Promise<SidebarItem[]>;
 }): SidebarView {
   const emitter = createEmitter<SidebarItem | undefined>();
   const sub = deps.connection.onState(() => emitter.fire(undefined));
+  const loadRows = async (): Promise<SidebarItem[]> => {
+    const placeholder = connectionPlaceholder(deps.connection.current());
+    return placeholder ?? (await deps.loadData());
+  };
   return {
     onDidChangeTreeData: emitter.event,
     getTreeItem: (item) => toTreeItem(item),
-    getChildren: () => placeholderItems(deps.connection.current(), deps.emptyLabel),
+    getChildren: async (element) => (element === undefined ? await loadRows() : []),
     refresh: () => emitter.fire(undefined),
     dispose: () => {
       sub.dispose();
       emitter.dispose();
     },
   };
+}
+
+// A scaffold view: shows `emptyLabel` when connected with no data yet.
+export function createPlaceholderView(deps: {
+  connection: SidebarConnection;
+  emptyLabel: string;
+}): SidebarView {
+  return createDataView({
+    connection: deps.connection,
+    loadData: async () => [{ label: deps.emptyLabel }],
+  });
 }

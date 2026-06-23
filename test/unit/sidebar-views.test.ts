@@ -5,8 +5,8 @@ import { createAgentsView } from "../../src/sidebar/agents-view.js";
 import { createIndexView } from "../../src/sidebar/index-view.js";
 import {
   applyThemeIcons,
+  connectionPlaceholder,
   createPlaceholderView,
-  placeholderItems,
   type SidebarConnection,
 } from "../../src/sidebar/tree-view.js";
 
@@ -39,10 +39,9 @@ function makeConnection(initial: ConnectionState): {
   };
 }
 
-describe("placeholderItems", () => {
-  test("connected shows the view's empty label", () => {
-    const items = placeholderItems({ kind: "connected", socketPath: "/s" }, "No audit entries yet");
-    expect(items).toEqual([{ label: "No audit entries yet" }]);
+describe("connectionPlaceholder", () => {
+  test("returns undefined when connected (the view renders its own data)", () => {
+    expect(connectionPlaceholder({ kind: "connected", socketPath: "/s" })).toBeUndefined();
   });
 
   test("idle / connecting / starting-gateway all show a connecting row", () => {
@@ -52,26 +51,27 @@ describe("placeholderItems", () => {
       { kind: "starting-gateway", socketPath: "/s" },
     ];
     for (const s of states) {
-      const items = placeholderItems(s, "empty");
+      const items = connectionPlaceholder(s);
       expect(items).toHaveLength(1);
-      expect(items[0]?.label).toMatch(/Connecting/);
-      expect(items[0]?.command).toBeUndefined();
+      expect(items?.[0]?.label).toMatch(/Connecting/);
+      expect(items?.[0]?.command).toBeUndefined();
     }
   });
 
   test("disconnected offers a reconnect command and surfaces the reason", () => {
-    const items = placeholderItems(
-      { kind: "disconnected", socketPath: "/s", reason: "ECONNREFUSED" },
-      "empty",
-    );
-    expect(items[0]?.command?.command).toBe("nimbus.reconnect");
-    expect(items[0]?.tooltip).toBe("ECONNREFUSED");
+    const items = connectionPlaceholder({
+      kind: "disconnected",
+      socketPath: "/s",
+      reason: "ECONNREFUSED",
+    });
+    expect(items?.[0]?.command?.command).toBe("nimbus.reconnect");
+    expect(items?.[0]?.tooltip).toBe("ECONNREFUSED");
   });
 
   test("permission-denied points at the logs", () => {
-    const items = placeholderItems({ kind: "permission-denied", socketPath: "/sock" }, "empty");
-    expect(items[0]?.command?.command).toBe("nimbus.openLogs");
-    expect(items[0]?.tooltip).toContain("/sock");
+    const items = connectionPlaceholder({ kind: "permission-denied", socketPath: "/sock" });
+    expect(items?.[0]?.command?.command).toBe("nimbus.openLogs");
+    expect(items?.[0]?.tooltip).toContain("/sock");
   });
 });
 
@@ -113,6 +113,19 @@ describe("createPlaceholderView", () => {
     expect(c.listenerCount()).toBe(1);
     view.dispose();
     expect(c.listenerCount()).toBe(0);
+  });
+
+  test("disposing an onDidChangeTreeData subscription stops further notifications", () => {
+    const c = makeConnection({ kind: "connected", socketPath: "/s" });
+    const view = createPlaceholderView({ connection: c.connection, emptyLabel: "x" });
+    let fired = 0;
+    const sub = view.onDidChangeTreeData?.(() => {
+      fired += 1;
+    });
+    c.set({ kind: "idle" });
+    sub?.dispose();
+    c.set({ kind: "connected", socketPath: "/s" });
+    expect(fired).toBe(1);
   });
 });
 

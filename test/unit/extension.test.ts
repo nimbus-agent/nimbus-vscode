@@ -431,6 +431,22 @@ describe("activateWithDeps", () => {
     expect(rows[0]).toMatchObject({ label: "Session s1" });
   });
 
+  test("the sessions provider shows an error row when querySql fails", async () => {
+    const querySql = vi.fn(async () => {
+      throw new Error("no such table: session_memory");
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ querySql } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.sessionsView");
+    if (provider === undefined) throw new Error("sessions provider not registered");
+    const rows = (await provider.getChildren(undefined)) as Array<{ label: string }>;
+    expect(querySql).toHaveBeenCalled();
+    expect(rows[0]?.label).toMatch(/failed to load/i);
+  });
+
   test("nimbus.openSession resumes the chosen session in the chat panel", async () => {
     const getSessionTranscript = vi.fn(async (_p: { sessionId: string; limit?: number }) => ({
       sessionId: "s5",

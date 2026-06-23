@@ -1,12 +1,5 @@
 import { type SessionSummary, sessionToItem } from "./sessions.js";
-import {
-  connectionPlaceholder,
-  createEmitter,
-  type SidebarConnection,
-  type SidebarItem,
-  type SidebarView,
-  toTreeItem,
-} from "./tree-view.js";
+import { createDataView, errorRow, type SidebarConnection, type SidebarView } from "./tree-view.js";
 
 // Session history browser (design surface #6). Lists persisted sessions; each
 // row opens (rehydrates) that session in the chat panel via nimbus.openSession.
@@ -18,36 +11,17 @@ export function createSessionsView(deps: {
   loadSessions: () => Promise<SessionSummary[]>;
   now?: () => number;
 }): SidebarView {
-  const emitter = createEmitter<SidebarItem | undefined>();
-  const sub = deps.connection.onState(() => emitter.fire(undefined));
-
-  const loadRows = async (): Promise<SidebarItem[]> => {
-    const placeholder = connectionPlaceholder(deps.connection.current());
-    if (placeholder !== undefined) return placeholder;
-    try {
-      const sessions = await deps.loadSessions();
-      if (sessions.length === 0) return [{ label: "No saved sessions yet" }];
-      const now = (deps.now ?? Date.now)();
-      return sessions.map((session) => sessionToItem(session, now));
-    } catch (err) {
-      return [
-        {
-          label: "Failed to load sessions",
-          tooltip: err instanceof Error ? err.message : String(err),
-          iconId: "error",
-        },
-      ];
-    }
-  };
-
-  return {
-    onDidChangeTreeData: emitter.event,
-    getTreeItem: (item) => toTreeItem(item),
-    getChildren: async (element) => (element === undefined ? await loadRows() : []),
-    refresh: () => emitter.fire(undefined),
-    dispose: () => {
-      sub.dispose();
-      emitter.dispose();
+  return createDataView({
+    connection: deps.connection,
+    loadData: async () => {
+      try {
+        const sessions = await deps.loadSessions();
+        if (sessions.length === 0) return [{ label: "No saved sessions yet" }];
+        const now = (deps.now ?? Date.now)();
+        return sessions.map((session) => sessionToItem(session, now));
+      } catch (err) {
+        return [errorRow("Failed to load sessions", err)];
+      }
     },
-  };
+  });
 }
