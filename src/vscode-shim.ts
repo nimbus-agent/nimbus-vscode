@@ -40,11 +40,15 @@ export interface TreeItemLike {
   // vscode.TreeItemCollapsibleState: None=0, Collapsed=1, Expanded=2.
   collapsibleState?: number;
   command?: TreeItemCommandLike;
+  // A ThemeIcon id (codicon) on the pure side; applyThemeIcons swaps it for a
+  // real vscode.ThemeIcon assigned to `iconPath` before registration.
+  iconId?: string;
+  iconPath?: unknown;
 }
 
 export interface TreeDataProviderLike<T> {
   getTreeItem(element: T): TreeItemLike;
-  getChildren(element?: T): T[];
+  getChildren(element?: T): T[] | Promise<T[]>;
   // Mirrors vscode.TreeDataProvider.onDidChangeTreeData — a vscode.Event<T | T[] |
   // undefined | null | void>. VS Code subscribes (calling with just the listener)
   // to learn when to refresh; the trailing Event args go unused here.

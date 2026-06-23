@@ -15,11 +15,12 @@ import { createToastSurface } from "./hitl/hitl-toast.js";
 import { createLogger, type Logger } from "./logging.js";
 import { createSettings } from "./settings.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
+import { formatAuditDetail } from "./sidebar/audit.js";
 import { createAuditView } from "./sidebar/audit-view.js";
 import { createIndexView } from "./sidebar/index-view.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
-import type { SidebarView } from "./sidebar/tree-view.js";
+import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
 import { createStatusBarController } from "./status-bar/status-bar-item.js";
 import type {
   CommandsApi,
@@ -37,6 +38,7 @@ export interface ActivateDeps {
   discoverSocket?: typeof discoverSocketPath;
   chatPanelFactory?: (deps: { log: Logger }) => ChatPanelFactory;
   autoStarter?: AutoStarter;
+  openReadonlyJson?: (title: string, content: string) => Promise<void>;
 }
 
 export function activateWithDeps(
@@ -289,19 +291,30 @@ export function activateWithDeps(
   });
   ctx.subscriptions.push(cfgSub);
 
-  // Sidebar tree views (design surfaces #1/#3/#5/#6). Phase 1 ships empty
-  // scaffolds; each refreshes off connection state and degrades gracefully when
-  // the Gateway is unreachable.
+  // Sidebar tree views (design surfaces #1/#3/#5/#6). The Audit view (#1) is
+  // live; the rest are scaffolds. Each refreshes off connection state and
+  // degrades gracefully when the Gateway is unreachable.
+  const auditView = createAuditView({
+    connection,
+    getClient: () => connection.client() as NimbusClient | undefined,
+  });
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
-    ["nimbus.auditView", createAuditView({ connection })],
+    ["nimbus.auditView", auditView],
     ["nimbus.agentsView", createAgentsView({ connection })],
     ["nimbus.indexView", createIndexView({ connection })],
     ["nimbus.sessionsView", createSessionsView({ connection })],
   ];
   for (const [viewId, view] of sidebarViews) {
-    ctx.subscriptions.push(deps.window.registerTreeDataProvider(viewId, view));
+    ctx.subscriptions.push(
+      deps.window.registerTreeDataProvider(
+        viewId,
+        applyThemeIcons(view, (id) => new vscode.ThemeIcon(id)),
+      ),
+    );
     ctx.subscriptions.push({ dispose: () => view.dispose() });
   }
+
+  const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
 
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 
@@ -406,6 +419,16 @@ export function activateWithDeps(
     await quickActions.show();
   });
 
+  register("nimbus.refreshAudit", () => {
+    auditView.refresh();
+  });
+
+  register("nimbus.openAuditEntry", async (...args) => {
+    const detail = formatAuditDetail(args[0]);
+    if (detail === undefined) return;
+    await openReadonlyJson(detail.title, detail.content);
+  });
+
   register("nimbus.showPendingHitl", () => {
     if (hitlRouter.snapshot().length === 0) return;
     chatPanelFactory.current()?.reveal();
@@ -486,6 +509,43 @@ function displayText(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return undefined;
+}
+
+// Opens read-only JSON in an editor tab via a custom-scheme content provider.
+// The provider is registered lazily on first use; each call gets a unique URI
+// so VS Code re-resolves the content. The `.json` path extension drives syntax
+// highlighting. Injectable as deps.openReadonlyJson so tests don't touch vscode.
+function createReadonlyJsonOpener(
+  ctx: ExtensionContextLike,
+): (title: string, content: string) => Promise<void> {
+  const scheme = "nimbus-audit";
+  // Bound retained content so a long session of opening entries can't grow the
+  // map without limit (Map preserves insertion order → oldest evicts first).
+  const MAX_DOCS = 50;
+  const docs = new Map<string, string>();
+  let seq = 0;
+  let registered = false;
+  const provider: vscode.TextDocumentContentProvider = {
+    provideTextDocumentContent: (uri) => docs.get(uri.path) ?? "",
+  };
+  return async (title, content) => {
+    if (!registered) {
+      ctx.subscriptions.push(
+        vscode.workspace.registerTextDocumentContentProvider(scheme, provider),
+      );
+      registered = true;
+    }
+    seq += 1;
+    const path = `/${seq}/${title}`;
+    docs.set(path, content);
+    while (docs.size > MAX_DOCS) {
+      const oldest = docs.keys().next().value;
+      if (oldest === undefined) break;
+      docs.delete(oldest);
+    }
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(`${scheme}:${path}`));
+    await vscode.window.showTextDocument(doc, { preview: true });
+  };
 }
 
 async function pingSocket(socketPath: string): Promise<boolean> {

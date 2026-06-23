@@ -10,15 +10,20 @@ export interface SidebarConnection {
 }
 
 // A single row rendered by a sidebar view. Plain data — no vscode types — so
-// providers stay pure and unit-testable; extension.ts maps these to TreeItems.
+// providers stay pure and unit-testable; extension.ts maps these to TreeItems
+// (and resolves `iconId` to a real ThemeIcon via applyThemeIcons).
 export interface SidebarItem {
   readonly label: string;
   readonly description?: string;
   readonly tooltip?: string;
+  /** A vscode ThemeIcon id (codicon), e.g. "pass" / "error" / "dash". */
+  readonly iconId?: string;
   readonly command?: { command: string; title: string; arguments?: unknown[] };
 }
 
 export interface SidebarView extends TreeDataProviderLike<SidebarItem> {
+  /** Force a re-render (fires onDidChangeTreeData). */
+  refresh(): void;
   dispose(): void;
 }
 
@@ -51,13 +56,13 @@ export function createEmitter<T>(): Emitter<T> {
   };
 }
 
-// The connection-aware rows shown by an otherwise-empty view. Each view passes
-// its own `emptyLabel` for the connected-but-no-data case; everything else is
-// shared so all four views degrade identically when the Gateway is unreachable.
-export function placeholderItems(state: ConnectionState, emptyLabel: string): SidebarItem[] {
+// Connection-aware rows for any non-connected state, shared by every view so
+// they all degrade identically when the Gateway is unreachable. Returns
+// undefined when connected (the caller renders its own data instead).
+export function connectionPlaceholder(state: ConnectionState): SidebarItem[] | undefined {
   switch (state.kind) {
     case "connected":
-      return [{ label: emptyLabel }];
+      return undefined;
     case "idle":
     case "connecting":
     case "starting-gateway":
@@ -67,6 +72,7 @@ export function placeholderItems(state: ConnectionState, emptyLabel: string): Si
         {
           label: "Gateway socket permission denied",
           tooltip: `Permission denied accessing ${state.socketPath}`,
+          iconId: "error",
           command: { command: "nimbus.openLogs", title: "Show Logs" },
         },
       ];
@@ -75,26 +81,55 @@ export function placeholderItems(state: ConnectionState, emptyLabel: string): Si
         {
           label: "Not connected — click to reconnect",
           tooltip: state.reason,
+          iconId: "debug-disconnect",
           command: { command: "nimbus.reconnect", title: "Reconnect to Gateway" },
         },
       ];
   }
 }
 
-function toTreeItem(item: SidebarItem): TreeItemLike {
+// The rows shown by an otherwise-empty view: the non-connected placeholder, or
+// the view's own `emptyLabel` when connected with nothing to show.
+export function placeholderItems(state: ConnectionState, emptyLabel: string): SidebarItem[] {
+  return connectionPlaceholder(state) ?? [{ label: emptyLabel }];
+}
+
+export function toTreeItem(item: SidebarItem): TreeItemLike {
   // Build incrementally so we never assign `undefined` to an optional field
   // (tsconfig has exactOptionalPropertyTypes). Phase 1 rows are leaf
   // placeholders (TreeItemCollapsibleState.None = 0).
   const treeItem: TreeItemLike = { label: item.label, collapsibleState: 0 };
   if (item.description !== undefined) treeItem.description = item.description;
   if (item.tooltip !== undefined) treeItem.tooltip = item.tooltip;
+  if (item.iconId !== undefined) treeItem.iconId = item.iconId;
   if (item.command !== undefined) treeItem.command = item.command;
   return treeItem;
 }
 
-// Shared factory for the Phase 1 scaffold views: each renders connection-aware
-// placeholder rows and refreshes whenever the connection state changes. Later
-// phases replace `getChildren` with real data while keeping this DI shape.
+// Wrap a view for registration with VS Code, resolving each row's `iconId` to a
+// real ThemeIcon via the injected `makeIcon` factory (kept out of this pure
+// module). Rows without an icon pass through untouched.
+export function applyThemeIcons(
+  view: SidebarView,
+  makeIcon: (id: string) => unknown,
+): TreeDataProviderLike<SidebarItem> {
+  const provider: TreeDataProviderLike<SidebarItem> = {
+    getChildren: (element) => view.getChildren(element),
+    getTreeItem: (item) => {
+      const treeItem = view.getTreeItem(item);
+      if (treeItem.iconId === undefined) return treeItem;
+      const { iconId, ...rest } = treeItem;
+      return { ...rest, iconPath: makeIcon(iconId) };
+    },
+  };
+  if (view.onDidChangeTreeData !== undefined) {
+    provider.onDidChangeTreeData = view.onDidChangeTreeData;
+  }
+  return provider;
+}
+
+// Shared factory for the scaffold views: each renders connection-aware
+// placeholder rows and refreshes whenever the connection state changes.
 export function createPlaceholderView(deps: {
   connection: SidebarConnection;
   emptyLabel: string;
@@ -105,6 +140,7 @@ export function createPlaceholderView(deps: {
     onDidChangeTreeData: emitter.event,
     getTreeItem: (item) => toTreeItem(item),
     getChildren: () => placeholderItems(deps.connection.current(), deps.emptyLabel),
+    refresh: () => emitter.fire(undefined),
     dispose: () => {
       sub.dispose();
       emitter.dispose();

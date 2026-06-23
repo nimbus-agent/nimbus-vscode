@@ -9,6 +9,7 @@ export const window = {
   showInputBox: async () => undefined,
   showQuickPick: async () => undefined,
   registerTreeDataProvider: (_viewId: string, _provider: unknown) => ({ dispose: () => undefined }),
+  showTextDocument: async (_doc: unknown, _opts?: unknown) => undefined,
   createStatusBarItem: () => ({
     text: "",
     tooltip: "",
@@ -47,6 +48,10 @@ export const workspace = {
     get: (_key: string, dflt: unknown) => dflt,
   }),
   onDidChangeConfiguration: () => ({ dispose: () => undefined }),
+  registerTextDocumentContentProvider: (_scheme: string, _provider: unknown) => ({
+    dispose: () => undefined,
+  }),
+  openTextDocument: async (uri: unknown) => ({ uri }),
 };
 export const commands = {
   registerCommand: () => ({ dispose: () => undefined }),
@@ -57,6 +62,9 @@ export const env = {
   isTelemetryEnabled: false,
 };
 export class ThemeColor {
+  constructor(public id: string) {}
+}
+export class ThemeIcon {
   constructor(public id: string) {}
 }
 export const Uri = {
