@@ -16,6 +16,29 @@ export const window = {
     hide: () => undefined,
     dispose: () => undefined,
   }),
+  createWebviewPanel: (_viewType: string, _title: string, _column: number, _options?: unknown) => {
+    let html = "";
+    return {
+      webview: {
+        cspSource: "vscode-resource:",
+        asWebviewUri: (uri: unknown) => ({ toString: () => `https://webview/${String(uri)}` }),
+        get html(): string {
+          return html;
+        },
+        set html(v: string) {
+          html = v;
+        },
+        postMessage: async (_m: unknown) => true,
+        onDidReceiveMessage: (_h: (m: unknown) => void) => ({ dispose: () => undefined }),
+      },
+      visible: true,
+      active: true,
+      reveal: () => undefined,
+      dispose: () => undefined,
+      onDidDispose: (_h: () => void) => ({ dispose: () => undefined }),
+      onDidChangeViewState: (_h: () => void) => ({ dispose: () => undefined }),
+    };
+  },
 };
 export const workspace = {
   getConfiguration: (_section: string) => ({
@@ -36,6 +59,11 @@ export class ThemeColor {
 }
 export const Uri = {
   parse: (s: string) => ({ toString: () => s, scheme: s.split(":")[0] ?? "" }),
+  file: (p: string) => ({ toString: () => p, fsPath: p, scheme: "file" }),
+  joinPath: (base: { toString(): string }, ...segments: string[]) => ({
+    toString: () => [base.toString(), ...segments].join("/"),
+    scheme: "file",
+  }),
 };
 export enum ViewColumn {
   Beside = -2,
