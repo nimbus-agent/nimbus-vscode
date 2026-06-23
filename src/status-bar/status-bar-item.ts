@@ -108,7 +108,9 @@ function formatConnected(inp: StatusBarInputs): StatusBarRender {
   return {
     text,
     tooltip: `Connected · profile=${profileSegment} · ${degradedSummary}`,
-    command: "nimbus.ask",
+    // Healthy + connected: open the quick-actions menu (design surface #7).
+    // Actionable states keep their contextual command (start/reconnect/HITL).
+    command: "nimbus.quickActions",
     backgroundColor: bg,
   };
 }

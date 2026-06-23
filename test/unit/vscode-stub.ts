@@ -7,6 +7,8 @@ export const window = {
   showInformationMessage: async () => undefined,
   showErrorMessage: async () => undefined,
   showInputBox: async () => undefined,
+  showQuickPick: async () => undefined,
+  registerTreeDataProvider: (_viewId: string, _provider: unknown) => ({ dispose: () => undefined }),
   createStatusBarItem: () => ({
     text: "",
     tooltip: "",

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test, vi } from "vitest";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
-import type { AutoStartResult, AutoStarter } from "../../src/connection/auto-start.js";
+import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
 import { activateWithDeps } from "../../src/extension.js";
 import type {
   CommandsApi,
@@ -140,6 +140,9 @@ function makeFixture(opts: {
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
     showQuickPick: vi.fn(async () => undefined),
+    registerTreeDataProvider: vi.fn((_viewId: string, _provider: unknown) => ({
+      dispose: () => undefined,
+    })),
     activeTextEditor:
       opts.activeEditor === undefined
         ? undefined
@@ -266,11 +269,48 @@ describe("activateWithDeps", () => {
       "nimbus.reconnect",
       "nimbus.openLogs",
       "nimbus.showPendingHitl",
+      "nimbus.quickActions",
     ];
     for (const id of expected) {
       expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
     }
     expect(f.ctx.subscriptions.length).toBeGreaterThanOrEqual(16);
+  });
+
+  test("registers the four sidebar tree views in the nimbus container", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const reg = f.deps.window.registerTreeDataProvider as unknown as ReturnType<typeof vi.fn>;
+    const viewIds = reg.mock.calls.map((c) => c[0]);
+    expect(viewIds).toEqual([
+      "nimbus.auditView",
+      "nimbus.agentsView",
+      "nimbus.indexView",
+      "nimbus.sessionsView",
+    ]);
+  });
+
+  test("nimbus.quickActions runs the picked action's command", async () => {
+    const f = makeFixture({});
+    const qp = f.deps.window.showQuickPick as unknown as ReturnType<typeof vi.fn>;
+    qp.mockResolvedValueOnce({ label: "$(search) Search", command: "nimbus.search" });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickActions")();
+    const exec = f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>;
+    expect(exec.mock.calls.some((c) => c[0] === "nimbus.search")).toBe(true);
+  });
+
+  test("nimbus.quickActions is a no-op when the menu is dismissed", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const exec = f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>;
+    const before = exec.mock.calls.length;
+    await cmd(f, "nimbus.quickActions")();
+    // showQuickPick resolves undefined by default → no command dispatched.
+    expect(exec.mock.calls.length).toBe(before);
   });
 
   test("nimbus.ask asks the user and starts a chat stream when input is non-empty", async () => {
