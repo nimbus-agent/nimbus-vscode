@@ -24,7 +24,14 @@ bun run build       # esbuild bundles into dist/ + media/
 ```
 
 To try it in VS Code: run `bun run build`, then press **F5** (Run Extension) from
-this folder to launch an Extension Development Host.
+this folder to launch an Extension Development Host. See
+[docs/development.md](./docs/development.md) for watch mode, debugging, and the
+test setup.
+
+## Docs
+
+Deeper reference lives in [`docs/`](./docs/): architecture, development,
+settings, and the release runbook.
 
 ## Architecture notes
 
@@ -39,8 +46,8 @@ this folder to launch an Extension Development Host.
 ## Pull requests
 
 - Keep PRs focused; include tests for behavior changes.
-- `bun run typecheck && bun run lint && bun run test && bun run build` must pass
-  (CI runs the same on Ubuntu).
+- `bun run typecheck && bun run lint && bun run test && bun run build && bun run check-bundle`
+  must pass (CI runs the same on Ubuntu).
 
 ## Releases
 

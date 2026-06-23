@@ -1,0 +1,68 @@
+# Settings
+
+Every setting the extension contributes lives under the `nimbus.*` namespace and
+is defined in [`package.json`](../package.json) (`contributes.configuration`).
+Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
+**Settings → Extensions → Nimbus**, or directly in `settings.json`.
+
+## Reference
+
+### `nimbus.socketPath`
+
+- **Type:** string · **Default:** `""` (auto-detect)
+- Override the Gateway IPC socket path. Leave empty to auto-detect via
+  `gateway.json` or the platform default. Set this only if you run the Gateway
+  with a non-standard socket location.
+
+### `nimbus.autoStartGateway`
+
+- **Type:** boolean · **Default:** `false`
+- When `true`, the extension spawns `nimbus start` if the Gateway socket is
+  unreachable. Leave `false` if you manage the Gateway lifecycle yourself (e.g. a
+  service or a separate terminal); enable it for a one-step "just works" setup.
+
+### `nimbus.statusBarPollMs`
+
+- **Type:** number · **Default:** `30000` · **Minimum:** `5000`
+- Polling interval, in milliseconds, for connector-health updates in the status
+  bar. Lower it for snappier health feedback at the cost of more IPC chatter;
+  raise it to reduce background polling.
+
+### `nimbus.transcriptHistoryLimit`
+
+- **Type:** number · **Default:** `50` · **Range:** `1`–`500`
+- How many turns to rehydrate from `engine.getSessionTranscript` when the Webview
+  reloads. Raise it to see more history after a panel reload; lower it if
+  rehydration feels heavy on long sessions.
+
+### `nimbus.askAgent`
+
+- **Type:** string · **Default:** `""` (Gateway default)
+- Optional default agent name passed to `askStream`. Blank uses the Gateway's
+  default agent. Set it to pin Ask to a specific agent.
+
+### `nimbus.hitlAlwaysModal`
+
+- **Type:** boolean · **Default:** `false`
+- When `true`, out-of-chat human-in-the-loop (HITL) consent renders as a blocking
+  **modal** instead of a non-modal toast. Enable it if you never want a consent
+  prompt to be missed; leave it off for a less interruptive flow.
+
+### `nimbus.logLevel`
+
+- **Type:** `error` | `warn` | `info` | `debug` · **Default:** `info`
+- Verbosity of the **Nimbus** output channel. Use `debug` when diagnosing
+  connection or streaming issues. Stream errors always log at `error` regardless
+  of this setting.
+
+## Example `settings.json`
+
+```jsonc
+{
+  // Let the extension start the Gateway for me, and pin a specific agent.
+  "nimbus.autoStartGateway": true,
+  "nimbus.askAgent": "research",
+  // Verbose logging while I debug a connection problem.
+  "nimbus.logLevel": "debug"
+}
+```

@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
 
+import type { AutoStartResult, AutoStarter } from "../../src/connection/auto-start.js";
 import { activateWithDeps } from "../../src/extension.js";
 import type {
   CommandsApi,
@@ -54,11 +55,16 @@ interface Captured {
 
 const TEST_SOCKET_PATH = join(tmpdir(), `nimbus-test-${process.pid}.sock`);
 
+// A no-op auto-starter so tests never spawn a real `nimbus` process or poll a
+// real socket. The real implementation is covered in auto-start.test.ts.
+const okAutoStarter: AutoStarter = { spawn: async () => ({ kind: "ok" }) };
+
 function makeFixture(opts: {
   cfg?: Record<string, unknown>;
   inputBoxAnswers?: Array<string | undefined>;
   openClient?: () => Promise<ClientLike>;
   discoverSocket?: () => Promise<{ socketPath: string; source: string }>;
+  autoStarter?: AutoStarter;
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -138,6 +144,7 @@ function makeFixture(opts: {
       (opts.discoverSocket as ActivateDeps["discoverSocket"]) ??
       (async () => ({ socketPath: TEST_SOCKET_PATH, source: "default" }) as never),
     openClient: opts.openClient ?? makeFakeClient(),
+    autoStarter: opts.autoStarter ?? okAutoStarter,
     chatPanelFactory: () => {
       let revealed = 0;
       const disposeListeners: Array<() => void> = [];
@@ -290,12 +297,14 @@ describe("activateWithDeps", () => {
   });
 
   test("nimbus.startGateway exercises the auto-starter without throwing", async () => {
-    const f = makeFixture({});
+    const spawn = vi.fn(async (): Promise<AutoStartResult> => ({ kind: "ok" }));
+    const f = makeFixture({ autoStarter: { spawn } });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
     const handler = f.commandHandlers.get("nimbus.startGateway");
     if (handler === undefined) throw new Error("startGateway handler not registered");
     await expect(handler()).resolves.toBeUndefined();
+    expect(spawn).toHaveBeenCalledTimes(1);
     expect(f.ctx.subscriptions.length).toBeGreaterThan(0);
   });
 });

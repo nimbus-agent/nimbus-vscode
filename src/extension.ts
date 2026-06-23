@@ -7,7 +7,7 @@ import * as vscode from "vscode";
 import { type ChatController, createChatController } from "./chat/chat-controller.js";
 import type { ChatPanel, ChatPanelFactory, WebviewPanelLike } from "./chat/chat-panel.js";
 import { createSessionStore } from "./chat/session-store.js";
-import { createAutoStarter } from "./connection/auto-start.js";
+import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js";
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
@@ -30,6 +30,7 @@ export interface ActivateDeps {
   openClient?: (socketPath: string) => Promise<NimbusClient>;
   discoverSocket?: typeof discoverSocketPath;
   chatPanelFactory?: (deps: { log: Logger }) => ChatPanelFactory;
+  autoStarter?: AutoStarter;
 }
 
 export function activateWithDeps(
@@ -63,11 +64,13 @@ export function activateWithDeps(
   });
   ctx.subscriptions.push({ dispose: () => void connection.dispose() });
 
-  const autoStart = createAutoStarter({
-    spawn: (cmd, args) => nodeSpawn(cmd, args, { detached: true, stdio: "ignore" }),
-    pingSocket,
-    log,
-  });
+  const autoStart =
+    deps.autoStarter ??
+    createAutoStarter({
+      spawn: (cmd, args) => nodeSpawn(cmd, args, { detached: true, stdio: "ignore" }),
+      pingSocket,
+      log,
+    });
   let autoStartInFlight = false;
 
   const statusItem = deps.window.createStatusBarItem(2, 100);
