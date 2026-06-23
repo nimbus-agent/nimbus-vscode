@@ -24,6 +24,7 @@ function fakeWindow(answer: string | undefined): WindowApi {
     showErrorMessage: vi.fn(),
     showInputBox: vi.fn(),
     showQuickPick: vi.fn(),
+    registerTreeDataProvider: vi.fn(() => ({ dispose: () => undefined })),
     activeTextEditor: undefined,
   };
 }

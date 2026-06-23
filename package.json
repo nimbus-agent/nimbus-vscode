@@ -74,8 +74,52 @@
         "command": "nimbus.reconnect",
         "title": "Reconnect to Gateway",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.quickActions",
+        "title": "Quick Actions",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.openLogs",
+        "title": "Show Logs",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.showPendingHitl",
+        "title": "Show Pending Consent Requests",
+        "category": "Nimbus"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nimbus",
+          "title": "Nimbus",
+          "icon": "resources/nimbus.svg"
+        }
+      ]
+    },
+    "views": {
+      "nimbus": [
+        {
+          "id": "nimbus.auditView",
+          "name": "Audit"
+        },
+        {
+          "id": "nimbus.agentsView",
+          "name": "Agents"
+        },
+        {
+          "id": "nimbus.indexView",
+          "name": "Index"
+        },
+        {
+          "id": "nimbus.sessionsView",
+          "name": "Sessions"
+        }
+      ]
+    },
     "menus": {
       "editor/context": [
         {

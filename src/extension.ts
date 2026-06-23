@@ -14,6 +14,12 @@ import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
 import { createLogger, type Logger } from "./logging.js";
 import { createSettings } from "./settings.js";
+import { createAgentsView } from "./sidebar/agents-view.js";
+import { createAuditView } from "./sidebar/audit-view.js";
+import { createIndexView } from "./sidebar/index-view.js";
+import { createQuickActions } from "./sidebar/quick-actions.js";
+import { createSessionsView } from "./sidebar/sessions-view.js";
+import type { SidebarView } from "./sidebar/tree-view.js";
 import { createStatusBarController } from "./status-bar/status-bar-item.js";
 import type {
   CommandsApi,
@@ -283,6 +289,22 @@ export function activateWithDeps(
   });
   ctx.subscriptions.push(cfgSub);
 
+  // Sidebar tree views (design surfaces #1/#3/#5/#6). Phase 1 ships empty
+  // scaffolds; each refreshes off connection state and degrades gracefully when
+  // the Gateway is unreachable.
+  const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
+    ["nimbus.auditView", createAuditView({ connection })],
+    ["nimbus.agentsView", createAgentsView({ connection })],
+    ["nimbus.indexView", createIndexView({ connection })],
+    ["nimbus.sessionsView", createSessionsView({ connection })],
+  ];
+  for (const [viewId, view] of sidebarViews) {
+    ctx.subscriptions.push(deps.window.registerTreeDataProvider(viewId, view));
+    ctx.subscriptions.push({ dispose: () => view.dispose() });
+  }
+
+  const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
+
   const register = (id: string, handler: (...args: unknown[]) => unknown): void => {
     ctx.subscriptions.push(deps.commands.registerCommand(id, handler));
   };
@@ -378,6 +400,10 @@ export function activateWithDeps(
 
   register("nimbus.openLogs", () => {
     out.show(true);
+  });
+
+  register("nimbus.quickActions", async () => {
+    await quickActions.show();
   });
 
   register("nimbus.showPendingHitl", () => {

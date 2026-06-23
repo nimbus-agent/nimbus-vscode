@@ -41,11 +41,11 @@ describe("formatStatusBar", () => {
     expect(r.backgroundColor?.id).toMatch(/errorBackground/);
   });
 
-  test("connected healthy", () => {
+  test("connected healthy opens the quick-actions menu", () => {
     const r = formatStatusBar(inputs());
     expect(r.text).toMatch(/work/);
     expect(r.text).toMatch(/circle-large-filled/);
-    expect(r.command).toBe("nimbus.ask");
+    expect(r.command).toBe("nimbus.quickActions");
   });
 
   test("connected with degraded connector", () => {
