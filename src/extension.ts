@@ -19,6 +19,7 @@ import { formatAuditDetail } from "./sidebar/audit.js";
 import { createAuditView } from "./sidebar/audit-view.js";
 import { createIndexView } from "./sidebar/index-view.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
+import { parseSessionRow, type SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
 import { createStatusBarController } from "./status-bar/status-bar-item.js";
@@ -29,6 +30,12 @@ import type {
   WindowApi,
   WorkspaceApi,
 } from "./vscode-shim.js";
+
+// Mirrors the Gateway's session.list query against the local session_memory
+// table (reachable through the public read-only querySql).
+const SESSIONS_SQL =
+  "SELECT session_id AS sessionId, MAX(created_at) AS lastWriteAt, COUNT(*) AS chunkCount " +
+  "FROM session_memory GROUP BY session_id ORDER BY lastWriteAt DESC LIMIT 200";
 
 export interface ActivateDeps {
   window: WindowApi;
@@ -298,11 +305,34 @@ export function activateWithDeps(
     connection,
     getClient: () => connection.client() as NimbusClient | undefined,
   });
+  const loadSessions = async (): Promise<SessionSummary[]> => {
+    const client = connection.client() as NimbusClient | undefined;
+    if (client === undefined) return [];
+    try {
+      const result = await client.querySql(SESSIONS_SQL);
+      const sessions: SessionSummary[] = [];
+      for (const row of result.rows) {
+        const parsed = parseSessionRow(row);
+        if (parsed !== undefined) sessions.push(parsed);
+      }
+      return sessions;
+    } catch (e) {
+      // e.g. an older Gateway without the session_memory table. Log a trail,
+      // then rethrow so the view renders its "Failed to load sessions" row.
+      log.warn(`loadSessions querySql failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+  };
+  // Session list comes from the Gateway's session_memory table via the public
+  // querySql (mirrors the Gateway's own session.list query). This schema
+  // coupling is isolated here so the view stays pure; swap for a typed
+  // client.listSessions() once the client exposes one.
+  const sessionsView = createSessionsView({ connection, loadSessions });
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
     ["nimbus.auditView", auditView],
     ["nimbus.agentsView", createAgentsView({ connection })],
     ["nimbus.indexView", createIndexView({ connection })],
-    ["nimbus.sessionsView", createSessionsView({ connection })],
+    ["nimbus.sessionsView", sessionsView],
   ];
   for (const [viewId, view] of sidebarViews) {
     ctx.subscriptions.push(
@@ -421,6 +451,18 @@ export function activateWithDeps(
 
   register("nimbus.refreshAudit", () => {
     auditView.refresh();
+  });
+
+  register("nimbus.refreshSessions", () => {
+    sessionsView.refresh();
+  });
+
+  register("nimbus.openSession", async (...args) => {
+    const sessionId = typeof args[0] === "string" ? args[0] : "";
+    if (sessionId.length === 0) return;
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    await ctl.resume(sessionId, settings.transcriptHistoryLimit());
   });
 
   register("nimbus.openAuditEntry", async (...args) => {

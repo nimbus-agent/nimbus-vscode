@@ -293,6 +293,8 @@ describe("activateWithDeps", () => {
       "nimbus.quickActions",
       "nimbus.refreshAudit",
       "nimbus.openAuditEntry",
+      "nimbus.refreshSessions",
+      "nimbus.openSession",
     ];
     for (const id of expected) {
       expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
@@ -368,7 +370,13 @@ describe("activateWithDeps", () => {
     const open = cmd(f, "nimbus.openAuditEntry");
     // Open more than the eviction cap (50) to drive the prune loop.
     for (let i = 0; i < 55; i++) {
-      await open({ id: i, actionType: "x", hitlStatus: "approved", actionJson: "{}", timestamp: i });
+      await open({
+        id: i,
+        actionType: "x",
+        hitlStatus: "approved",
+        actionJson: "{}",
+        timestamp: i,
+      });
     }
     expect(f.ctx.subscriptions.length).toBeGreaterThan(0);
   });
@@ -405,6 +413,57 @@ describe("activateWithDeps", () => {
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
     expect(() => cmd(f, "nimbus.refreshAudit")()).not.toThrow();
+  });
+
+  test("the registered sessions provider lists sessions via querySql", async () => {
+    const querySql = vi.fn(async () => ({
+      rows: [{ sessionId: "s1", lastWriteAt: 1, chunkCount: 2 }],
+    }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ querySql } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.sessionsView");
+    if (provider === undefined) throw new Error("sessions provider not registered");
+    const rows = await provider.getChildren(undefined);
+    expect(querySql).toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({ label: "Session s1" });
+  });
+
+  test("nimbus.openSession resumes the chosen session in the chat panel", async () => {
+    const getSessionTranscript = vi.fn(async (_p: { sessionId: string; limit?: number }) => ({
+      sessionId: "s5",
+      turns: [],
+      hasMore: false,
+    }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ getSessionTranscript } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openSession")("s5");
+    expect(f.panelRevealedCount).toBeGreaterThanOrEqual(0);
+    const call = getSessionTranscript.mock.calls[0]?.[0] as { sessionId: string } | undefined;
+    expect(call?.sessionId).toBe("s5");
+  });
+
+  test("nimbus.openSession is a no-op for a non-string argument", async () => {
+    const getSessionTranscript = vi.fn(async () => ({ sessionId: "", turns: [], hasMore: false }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ getSessionTranscript } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openSession")(undefined);
+    expect(getSessionTranscript).not.toHaveBeenCalled();
+  });
+
+  test("nimbus.refreshSessions refreshes the sessions view without throwing", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(() => cmd(f, "nimbus.refreshSessions")()).not.toThrow();
   });
 
   test("falls back to the real read-only JSON opener when none is injected", async () => {

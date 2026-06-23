@@ -3,7 +3,6 @@ import { describe, expect, test } from "vitest";
 import type { ConnectionState } from "../../src/connection/connection-manager.js";
 import { createAgentsView } from "../../src/sidebar/agents-view.js";
 import { createIndexView } from "../../src/sidebar/index-view.js";
-import { createSessionsView } from "../../src/sidebar/sessions-view.js";
 import {
   applyThemeIcons,
   createPlaceholderView,
@@ -123,7 +122,6 @@ describe("scaffold view factories", () => {
     const cases: Array<[ReturnType<typeof createAgentsView>, RegExp]> = [
       [createAgentsView({ connection: makeConnection(connected).connection }), /agents/i],
       [createIndexView({ connection: makeConnection(connected).connection }), /indexed/i],
-      [createSessionsView({ connection: makeConnection(connected).connection }), /sessions/i],
     ];
     for (const [view, pattern] of cases) {
       expect((await view.getChildren())[0]?.label).toMatch(pattern);

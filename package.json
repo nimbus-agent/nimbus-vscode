@@ -100,6 +100,17 @@
         "command": "nimbus.openAuditEntry",
         "title": "Open Audit Entry",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.refreshSessions",
+        "title": "Refresh Sessions",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nimbus.openSession",
+        "title": "Open Session",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
@@ -136,12 +147,21 @@
         {
           "command": "nimbus.openAuditEntry",
           "when": "false"
+        },
+        {
+          "command": "nimbus.openSession",
+          "when": "false"
         }
       ],
       "view/title": [
         {
           "command": "nimbus.refreshAudit",
           "when": "view == nimbus.auditView",
+          "group": "navigation"
+        },
+        {
+          "command": "nimbus.refreshSessions",
+          "when": "view == nimbus.sessionsView",
           "group": "navigation"
         }
       ],

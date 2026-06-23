@@ -4,10 +4,10 @@ import {
   type AuditEntry,
   auditEntryToItem,
   formatAuditDetail,
-  formatRelativeTime,
   iconForStatus,
   parseAuditEntry,
 } from "../../src/sidebar/audit.js";
+import { formatRelativeTime } from "../../src/sidebar/relative-time.js";
 
 const base: AuditEntry = {
   id: 7,
