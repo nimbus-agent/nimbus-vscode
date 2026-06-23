@@ -325,9 +325,9 @@ export function activateWithDeps(
     try {
       const r = await c.queryItems({ limit: 50 });
       const items = r.items.map((it) => ({
-        label: String(it["title"] ?? it["id"] ?? "(untitled)"),
-        description: String(it["service"] ?? ""),
-        detail: String(it["url"] ?? it["path"] ?? ""),
+        label: displayText(it["title"]) ?? displayText(it["id"]) ?? "(untitled)",
+        description: displayText(it["service"]) ?? "",
+        detail: displayText(it["url"]) ?? displayText(it["path"]) ?? "",
       }));
       await deps.window.showQuickPick(items, {
         placeHolder: `${items.length} results for "${q.trim()}"`,
@@ -452,6 +452,14 @@ export function createInlineHitlSurface(args: {
       void panel.postMessage(payload);
     });
   };
+}
+
+// Coerce an unknown index field to a display string, ignoring non-primitives so
+// search results never render Object's "[object Object]" default (Sonar S6551).
+function displayText(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return undefined;
 }
 
 async function pingSocket(socketPath: string): Promise<boolean> {
