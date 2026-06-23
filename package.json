@@ -89,6 +89,17 @@
         "command": "nimbus.showPendingHitl",
         "title": "Show Pending Consent Requests",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.refreshAudit",
+        "title": "Refresh Audit Log",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nimbus.openAuditEntry",
+        "title": "Open Audit Entry",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
@@ -121,6 +132,19 @@
       ]
     },
     "menus": {
+      "commandPalette": [
+        {
+          "command": "nimbus.openAuditEntry",
+          "when": "false"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "nimbus.refreshAudit",
+          "when": "view == nimbus.auditView",
+          "group": "navigation"
+        }
+      ],
       "editor/context": [
         {
           "command": "nimbus.askAboutSelection",

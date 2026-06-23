@@ -56,6 +56,15 @@ interface Captured {
   // simulate the chat panel posting messages back to the extension host.
   webviewMessageHandlers: Array<(msg: unknown) => void>;
   panelRevealedCount: number;
+  openedDocs: Array<{ title: string; content: string }>;
+  treeProviders: Map<string, RegisteredProvider>;
+}
+
+// The minimal shape the extension registers per tree view, captured so tests
+// can drive getChildren/getTreeItem exactly as VS Code would.
+interface RegisteredProvider {
+  getTreeItem(element: unknown): { label: string; iconPath?: unknown };
+  getChildren(element?: unknown): unknown[] | Promise<unknown[]>;
 }
 
 const TEST_SOCKET_PATH = join(tmpdir(), `nimbus-test-${process.pid}.sock`);
@@ -74,6 +83,7 @@ function makeFixture(opts: {
   panelVisible?: boolean;
   panelActive?: boolean;
   realChatPanel?: boolean;
+  realAuditDetail?: boolean;
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -89,6 +99,8 @@ function makeFixture(opts: {
   const inputAnswers = [...(opts.inputBoxAnswers ?? [])];
 
   const webviewMessageHandlers: Array<(msg: unknown) => void> = [];
+  const openedDocs: Array<{ title: string; content: string }> = [];
+  const treeProviders = new Map<string, RegisteredProvider>();
   const panelDisposeListeners: Array<() => void> = [];
   let panelCreated = false;
   let panelRevealed = 0;
@@ -140,9 +152,10 @@ function makeFixture(opts: {
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
     showQuickPick: vi.fn(async () => undefined),
-    registerTreeDataProvider: vi.fn((_viewId: string, _provider: unknown) => ({
-      dispose: () => undefined,
-    })),
+    registerTreeDataProvider: vi.fn((viewId: string, provider: unknown) => {
+      treeProviders.set(viewId, provider as RegisteredProvider);
+      return { dispose: () => undefined };
+    }),
     activeTextEditor:
       opts.activeEditor === undefined
         ? undefined
@@ -193,11 +206,17 @@ function makeFixture(opts: {
       },
       current: () => (panelCreated ? chatPanel : undefined),
     }),
+    openReadonlyJson: async (title: string, content: string) => {
+      openedDocs.push({ title, content });
+    },
   };
 
   // Drop the injected factory so activate() falls back to the real VS Code
   // webview panel factory (backed by the vscode stub's createWebviewPanel).
   if (opts.realChatPanel === true) delete deps.chatPanelFactory;
+  // Drop the injected opener so activate() exercises the real content-provider
+  // path (backed by the vscode stub).
+  if (opts.realAuditDetail === true) delete deps.openReadonlyJson;
 
   return {
     ctx,
@@ -215,6 +234,8 @@ function makeFixture(opts: {
     get panelRevealedCount(): number {
       return panelRevealed;
     },
+    openedDocs,
+    treeProviders,
     deps,
   };
 }
@@ -270,6 +291,8 @@ describe("activateWithDeps", () => {
       "nimbus.openLogs",
       "nimbus.showPendingHitl",
       "nimbus.quickActions",
+      "nimbus.refreshAudit",
+      "nimbus.openAuditEntry",
     ];
     for (const id of expected) {
       expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
@@ -311,6 +334,97 @@ describe("activateWithDeps", () => {
     await cmd(f, "nimbus.quickActions")();
     // showQuickPick resolves undefined by default → no command dispatched.
     expect(exec.mock.calls.length).toBe(before);
+  });
+
+  test("the registered audit provider loads client rows and resolves theme icons", async () => {
+    const auditList = vi.fn(async () => [
+      {
+        id: 1,
+        actionType: "drive.read",
+        hitlStatus: "approved",
+        actionJson: "{}",
+        timestamp: 1000,
+      },
+    ]);
+    const f = makeFixture({
+      openClient: makeFakeClient({ auditList } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.auditView");
+    if (provider === undefined) throw new Error("audit provider not registered");
+    const rows = await provider.getChildren(undefined);
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(auditList).toHaveBeenCalled();
+    const item = provider.getTreeItem(rows[0]);
+    // applyThemeIcons swapped the row's iconId for a real ThemeIcon on iconPath.
+    expect(item.iconPath).toBeDefined();
+  });
+
+  test("the real read-only JSON opener bounds retained docs without throwing", async () => {
+    const f = makeFixture({ realAuditDetail: true });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const open = cmd(f, "nimbus.openAuditEntry");
+    // Open more than the eviction cap (50) to drive the prune loop.
+    for (let i = 0; i < 55; i++) {
+      await open({ id: i, actionType: "x", hitlStatus: "approved", actionJson: "{}", timestamp: i });
+    }
+    expect(f.ctx.subscriptions.length).toBeGreaterThan(0);
+  });
+
+  test("nimbus.openAuditEntry opens a read-only JSON doc for a valid entry", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(
+      f,
+      "nimbus.openAuditEntry",
+    )({
+      id: 3,
+      actionType: "drive.read",
+      hitlStatus: "approved",
+      actionJson: '{"k":1}',
+      timestamp: 1000,
+    });
+    expect(f.openedDocs).toHaveLength(1);
+    expect(f.openedDocs[0]?.title).toBe("audit-3.json");
+    expect(JSON.parse(f.openedDocs[0]?.content ?? "{}").action).toEqual({ k: 1 });
+  });
+
+  test("nimbus.openAuditEntry is a no-op for an unparseable argument", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openAuditEntry")({ nope: true });
+    expect(f.openedDocs).toHaveLength(0);
+  });
+
+  test("nimbus.refreshAudit refreshes the audit view without throwing", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(() => cmd(f, "nimbus.refreshAudit")()).not.toThrow();
+  });
+
+  test("falls back to the real read-only JSON opener when none is injected", async () => {
+    const f = makeFixture({ realAuditDetail: true });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // Drives createReadonlyJsonOpener → registerTextDocumentContentProvider →
+    // openTextDocument → showTextDocument against the vscode stub.
+    await expect(
+      cmd(
+        f,
+        "nimbus.openAuditEntry",
+      )({
+        id: 9,
+        actionType: "x",
+        hitlStatus: "rejected",
+        actionJson: "{}",
+        timestamp: 1,
+      }),
+    ).resolves.toBeUndefined();
   });
 
   test("nimbus.ask asks the user and starts a chat stream when input is non-empty", async () => {
