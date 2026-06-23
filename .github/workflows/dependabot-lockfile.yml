@@ -1,0 +1,61 @@
+name: Dependabot lockfile sync
+
+# Dependabot updates package.json but cannot maintain bun's bun.lock, so its npm
+# PRs fail CI's `bun install --frozen-lockfile`. This regenerates bun.lock on a
+# Dependabot PR and commits it back to the PR branch so CI passes.
+#
+# pull_request_target is required so the GITHUB_TOKEN can push to the PR branch.
+# It is safe here because the job is strictly gated to the `dependabot[bot]`
+# actor (first-party version bumps) and runs `bun install --ignore-scripts`
+# (no dependency postinstall code is executed).
+
+on:
+  pull_request_target:
+    branches: [main]
+    paths:
+      - "package.json"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dependabot-lockfile-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  sync-lockfile:
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout the PR branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # pull_request_target's GITHUB_TOKEN is write-capable; keep it so the
+          # bun.lock commit can be pushed back to the Dependabot branch.
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: latest
+
+      - name: Regenerate bun.lock (no install scripts)
+        run: bun install --ignore-scripts
+
+      - name: Commit bun.lock if it changed
+        run: |
+          if git diff --quiet -- bun.lock; then
+            echo "bun.lock already in sync — nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bun.lock
+          git commit -m "chore: sync bun.lock for Dependabot bump"
+          git push
