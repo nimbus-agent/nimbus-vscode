@@ -198,7 +198,7 @@
         {
           "command": "nimbus.askAboutIndexItem",
           "when": "view == nimbus.indexView && viewItem == nimbusIndexItem",
-          "group": "inline"
+          "group": "navigation"
         }
       ],
       "editor/context": [

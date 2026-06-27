@@ -489,6 +489,8 @@ export function activateWithDeps(
   });
 
   register("nimbus.openIndexItem", async (...args) => {
+    // Primary-click command: args[0] is the IndexItem we put in the row's
+    // command.arguments. Re-validate it defensively through parseIndexRow.
     const item = parseIndexRow(args[0]);
     if (item === undefined || item.url === undefined) return;
     try {
