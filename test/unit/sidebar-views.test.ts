@@ -6,7 +6,9 @@ import { createIndexView } from "../../src/sidebar/index-view.js";
 import {
   applyThemeIcons,
   connectionPlaceholder,
+  createDataView,
   createPlaceholderView,
+  toTreeItem,
   type SidebarConnection,
 } from "../../src/sidebar/tree-view.js";
 
@@ -176,5 +178,32 @@ describe("applyThemeIcons", () => {
     });
     c.set({ kind: "idle" });
     expect(fired).toBe(1);
+  });
+});
+
+describe("one-level nesting", () => {
+  test("toTreeItem marks a row with children collapsible and forwards contextValue", () => {
+    const item = toTreeItem({ label: "svc", contextValue: "grp", children: [{ label: "kid" }] });
+    expect(item.collapsibleState).toBe(1);
+    expect(item.contextValue).toBe("grp");
+  });
+
+  test("toTreeItem leaves a childless row as a leaf", () => {
+    expect(toTreeItem({ label: "leaf" }).collapsibleState).toBe(0);
+    expect(toTreeItem({ label: "leaf", children: [] }).collapsibleState).toBe(0);
+  });
+
+  test("createDataView returns a parent's children, and [] for leaves", async () => {
+    const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
+    const c = makeConnection(connected);
+    const view = createDataView({
+      connection: c.connection,
+      loadData: async () => [{ label: "svc", children: [{ label: "kid" }] }],
+    });
+    const [parent] = await view.getChildren();
+    if (parent === undefined) throw new Error("expected a parent row");
+    expect(await view.getChildren(parent)).toEqual([{ label: "kid" }]);
+    const [kid] = (await view.getChildren(parent)) as Array<{ label: string }>;
+    expect(await view.getChildren(kid as never)).toEqual([]);
   });
 });

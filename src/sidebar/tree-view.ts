@@ -19,6 +19,17 @@ export interface SidebarItem {
   /** A vscode ThemeIcon id (codicon), e.g. "pass" / "error" / "dash". */
   readonly iconId?: string;
   readonly command?: { command: string; title: string; arguments?: unknown[] };
+  /** A vscode TreeItem contextValue, used to gate context-menu (view/item/context) commands. */
+  readonly contextValue?: string;
+  /** Child rows; when present and non-empty, this row renders collapsible. */
+  readonly children?: SidebarItem[];
+  /**
+   * Domain object carried on the tree node. VS Code passes the NODE element
+   * (this SidebarItem) — not `command.arguments` — to a view/item/context
+   * command, so a menu handler reads its data from here. Untyped because it's
+   * generic across views; consumers coerce it defensively.
+   */
+  readonly payload?: unknown;
 }
 
 export interface SidebarView extends TreeDataProviderLike<SidebarItem> {
@@ -95,11 +106,13 @@ export function errorRow(label: string, err: unknown): SidebarItem {
 
 export function toTreeItem(item: SidebarItem): TreeItemLike {
   // Build incrementally so we never assign `undefined` to an optional field
-  // (tsconfig has exactOptionalPropertyTypes). Phase 1 rows are leaf
-  // placeholders (TreeItemCollapsibleState.None = 0).
-  const treeItem: TreeItemLike = { label: item.label, collapsibleState: 0 };
+  // (tsconfig has exactOptionalPropertyTypes). A row with children renders
+  // Collapsed (1); otherwise it's a leaf (None = 0).
+  const collapsibleState = item.children !== undefined && item.children.length > 0 ? 1 : 0;
+  const treeItem: TreeItemLike = { label: item.label, collapsibleState };
   if (item.description !== undefined) treeItem.description = item.description;
   if (item.tooltip !== undefined) treeItem.tooltip = item.tooltip;
+  if (item.contextValue !== undefined) treeItem.contextValue = item.contextValue;
   if (item.iconId !== undefined) treeItem.iconId = item.iconId;
   if (item.command !== undefined) treeItem.command = item.command;
   return treeItem;
@@ -145,7 +158,8 @@ export function createDataView(deps: {
   return {
     onDidChangeTreeData: emitter.event,
     getTreeItem: (item) => toTreeItem(item),
-    getChildren: async (element) => (element === undefined ? await loadRows() : []),
+    getChildren: async (element) =>
+      element === undefined ? await loadRows() : (element.children ?? []),
     refresh: () => emitter.fire(undefined),
     dispose: () => {
       sub.dispose();
