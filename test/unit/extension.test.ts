@@ -295,6 +295,7 @@ describe("activateWithDeps", () => {
       "nimbus.openAuditEntry",
       "nimbus.refreshSessions",
       "nimbus.openSession",
+      "nimbus.refreshIndex",
     ];
     for (const id of expected) {
       expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
@@ -480,6 +481,48 @@ describe("activateWithDeps", () => {
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
     expect(() => cmd(f, "nimbus.refreshSessions")()).not.toThrow();
+  });
+
+  test("the registered index provider groups items via queryItems", async () => {
+    const queryItems = vi.fn(async () => ({
+      items: [
+        { id: "a", name: "Doc", service: "gdrive", itemType: "file", url: "https://x" },
+        { id: "b", name: "Note", service: "gdrive", itemType: "file" },
+      ],
+      meta: { limit: 100, total: 2 },
+    }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.indexView");
+    if (provider === undefined) throw new Error("index provider not registered");
+    const groups = await provider.getChildren(undefined);
+    expect(queryItems).toHaveBeenCalledTimes(1);
+    expect(groups[0]).toMatchObject({ label: "gdrive", description: "2" });
+  });
+
+  test("the index provider shows an error row when queryItems fails", async () => {
+    const queryItems = vi.fn(async () => {
+      throw new Error("index offline");
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.indexView");
+    if (provider === undefined) throw new Error("index provider not registered");
+    const rows = (await provider.getChildren(undefined)) as Array<{ label: string }>;
+    expect(rows[0]?.label).toMatch(/failed to load index/i);
+  });
+
+  test("nimbus.refreshIndex refreshes the index view without throwing", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(() => cmd(f, "nimbus.refreshIndex")()).not.toThrow();
   });
 
   test("falls back to the real read-only JSON opener when none is injected", async () => {

@@ -17,6 +17,7 @@ import { createSettings } from "./settings.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
 import { formatAuditDetail } from "./sidebar/audit.js";
 import { createAuditView } from "./sidebar/audit-view.js";
+import { type IndexItem, parseIndexRow } from "./sidebar/index.js";
 import { createIndexView } from "./sidebar/index-view.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
 import { parseSessionRow, type SessionSummary } from "./sidebar/sessions.js";
@@ -36,6 +37,10 @@ import type {
 const SESSIONS_SQL =
   "SELECT session_id AS sessionId, MAX(created_at) AS lastWriteAt, COUNT(*) AS chunkCount " +
   "FROM session_memory GROUP BY session_id ORDER BY lastWriteAt DESC LIMIT 200";
+
+// Newest-N indexed items pulled for the Index view. The Gateway returns them
+// already ordered; we cap to keep the tree responsive (cf. the search handler).
+const INDEX_LIMIT = 100;
 
 export interface ActivateDeps {
   window: WindowApi;
@@ -328,10 +333,30 @@ export function activateWithDeps(
   // coupling is isolated here so the view stays pure; swap for a typed
   // client.listSessions() once the client exposes one.
   const sessionsView = createSessionsView({ connection, loadSessions });
+  // Indexed items come from the Gateway via the public queryItems IPC. The
+  // schema coupling (field names) is isolated here so the view stays pure; swap
+  // for a typed client method once one exists.
+  const loadIndex = async (): Promise<IndexItem[]> => {
+    const client = connection.client() as NimbusClient | undefined;
+    if (client === undefined) return [];
+    try {
+      const { items } = await client.queryItems({ limit: INDEX_LIMIT });
+      const result: IndexItem[] = [];
+      for (const row of items) {
+        const parsed = parseIndexRow(row);
+        if (parsed !== undefined) result.push(parsed);
+      }
+      return result;
+    } catch (e) {
+      log.warn(`loadIndex queryItems failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+  };
+  const indexView = createIndexView({ connection, loadIndex });
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
     ["nimbus.auditView", auditView],
     ["nimbus.agentsView", createAgentsView({ connection })],
-    ["nimbus.indexView", createIndexView({ connection })],
+    ["nimbus.indexView", indexView],
     ["nimbus.sessionsView", sessionsView],
   ];
   for (const [viewId, view] of sidebarViews) {
@@ -455,6 +480,10 @@ export function activateWithDeps(
 
   register("nimbus.refreshSessions", () => {
     sessionsView.refresh();
+  });
+
+  register("nimbus.refreshIndex", () => {
+    indexView.refresh();
   });
 
   register("nimbus.openSession", async (...args) => {
