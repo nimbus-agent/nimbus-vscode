@@ -132,15 +132,46 @@ describe("createPlaceholderView", () => {
 });
 
 describe("scaffold view factories", () => {
-  test("each placeholder view exposes its own connected empty label", async () => {
+  test("the agents placeholder view exposes its connected empty label", async () => {
     const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
-    const cases: Array<[ReturnType<typeof createAgentsView>, RegExp]> = [
-      [createAgentsView({ connection: makeConnection(connected).connection }), /agents/i],
-      [createIndexView({ connection: makeConnection(connected).connection }), /indexed/i],
-    ];
-    for (const [view, pattern] of cases) {
-      expect((await view.getChildren())[0]?.label).toMatch(pattern);
-    }
+    const view = createAgentsView({ connection: makeConnection(connected).connection });
+    expect((await view.getChildren())[0]?.label).toMatch(/agents/i);
+  });
+});
+
+describe("createIndexView", () => {
+  const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
+
+  test("empty index shows the empty-state row", async () => {
+    const c = makeConnection(connected);
+    const view = createIndexView({ connection: c.connection, loadIndex: async () => [] });
+    expect((await view.getChildren())[0]?.label).toMatch(/no indexed items/i);
+  });
+
+  test("loaded items render as collapsible service groups", async () => {
+    const c = makeConnection(connected);
+    const view = createIndexView({
+      connection: c.connection,
+      loadIndex: async () => [{ id: "a", name: "Doc", service: "gdrive", url: "https://x" }],
+    });
+    const [group] = await view.getChildren();
+    if (group === undefined) throw new Error("expected a service group");
+    expect(group.label).toBe("gdrive");
+    expect(view.getTreeItem(group).collapsibleState).toBe(1);
+    expect((await view.getChildren(group))[0]?.label).toBe("Doc");
+  });
+
+  test("a failing loadIndex renders a single error row", async () => {
+    const c = makeConnection(connected);
+    const view = createIndexView({
+      connection: c.connection,
+      loadIndex: async () => {
+        throw new Error("index offline");
+      },
+    });
+    const rows = (await view.getChildren()) as Array<{ label: string; tooltip?: string }>;
+    expect(rows[0]?.label).toMatch(/failed to load index/i);
+    expect(rows[0]?.tooltip).toBe("index offline");
   });
 });
 

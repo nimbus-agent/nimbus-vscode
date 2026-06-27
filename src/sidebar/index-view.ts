@@ -1,11 +1,25 @@
-import { createPlaceholderView, type SidebarConnection, type SidebarView } from "./tree-view.js";
+import { groupByService, type IndexItem, indexToTree } from "./index.js";
+import { createDataView, errorRow, type SidebarConnection, type SidebarView } from "./tree-view.js";
 
-// Index search browser (design surface #5). Phase 1 ships the empty scaffold;
-// a later phase wires `getChildren` to client.queryItems() with service/type
-// filters.
-export function createIndexView(deps: { connection: SidebarConnection }): SidebarView {
-  return createPlaceholderView({
+// Index browser (design surface #5). Groups indexed items by service into a
+// two-level tree; each item opens its source via nimbus.openIndexItem.
+// `loadIndex` is injected so the schema-coupled queryItems call lives in the
+// composition root, keeping this view pure and swappable for a typed client
+// method later.
+export function createIndexView(deps: {
+  connection: SidebarConnection;
+  loadIndex: () => Promise<IndexItem[]>;
+}): SidebarView {
+  return createDataView({
     connection: deps.connection,
-    emptyLabel: "No indexed items yet",
+    loadData: async () => {
+      try {
+        const items = await deps.loadIndex();
+        if (items.length === 0) return [{ label: "No indexed items yet" }];
+        return indexToTree(groupByService(items));
+      } catch (err) {
+        return [errorRow("Failed to load index", err)];
+      }
+    },
   });
 }
