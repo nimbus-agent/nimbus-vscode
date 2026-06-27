@@ -20,7 +20,8 @@ needs **no Gateway bump and no `@nimbus-dev/client` version change**.
 ## Goals
 
 - Surface what's in the local index, grouped by service, newest-first.
-- Primary click on an item opens its source (url externally, else path in editor).
+- Primary click on an item opens its source `url` (by scheme: `file:` in the
+  editor, `http(s):` externally).
 - Right-click → "Ask Nimbus about this" seeds the chat panel with a prompt about
   the item, reusing the existing `askAboutSelection` flow.
 - Introduce **one level of tree nesting** as a reusable capability in the shared
@@ -63,9 +64,33 @@ queryItems(params: {
 }>;
 ```
 
-Items are untyped records. The existing `nimbus.search` handler reads
-`title`, `id`, `service`, `url`, `path` off each row; we follow the same field
-names and coerce defensively (rows are external `unknown` data).
+The real client erases items to `Record<string, unknown>[]`, but the
+**authoritative shape is `NimbusItem`** from `@nimbus-dev/sdk` (the mock client
+types `queryItems` as `NimbusItem[]`):
+
+```ts
+interface NimbusItem {
+  id: string;
+  service: string;
+  itemType: "file" | "folder" | "email" | "event" | "photo" | "task";
+  name: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  createdAt?: number;
+  modifiedAt?: number;
+  url?: string;
+  parentId?: string;
+  rawMeta?: Record<string, unknown>;
+}
+```
+
+We **do not import `NimbusItem`** — CLAUDE.md mandates `@nimbus-dev/client` as
+the only Nimbus dependency. We coerce defensively over `Record<string, unknown>`
+but read the real field names: `name` (not `title`), `itemType` (not `type`),
+`createdAt`/`modifiedAt` (not `timestampMs`), `url` (there is **no `path`
+field**). Note: the existing `nimbus.search` handler reads `title`/`path`, which
+do not exist on `NimbusItem` — it works only via its `?? id` fallback. That
+latent mismatch is out of scope here but worth a follow-up.
 
 ## Architecture
 
@@ -75,14 +100,16 @@ No `vscode` imports. Mirrors the `sessions.ts` split (pure parse/format helpers;
 the schema-coupled query lives in the composition root).
 
 ```ts
+// View-model projected from a NimbusItem row (we own this type; we do NOT import
+// NimbusItem). Field names mirror NimbusItem so the defensive parse reads the
+// real keys.
 export interface IndexItem {
   readonly id: string;
-  readonly title: string;
+  readonly name: string;
   readonly service: string;        // "" → grouped under an "(unknown)" bucket
-  readonly type?: string;
+  readonly itemType?: "file" | "folder" | "email" | "event" | "photo" | "task";
   readonly url?: string;
-  readonly path?: string;
-  readonly timestampMs?: number;
+  readonly updatedMs?: number;     // modifiedAt ?? createdAt, for sorting
 }
 
 export interface ServiceGroup {
@@ -90,12 +117,13 @@ export interface ServiceGroup {
   readonly items: IndexItem[];
 }
 
-// Defensive coercion over one untyped queryItems row. Returns undefined when the
-// row has no usable id (which becomes the item's stable identity / fallback label).
+// Defensive coercion over one untyped queryItems row. Reads name/service/
+// itemType/url and updatedMs (modifiedAt ?? createdAt). Returns undefined when
+// the row has no usable id (which is the item's stable identity / fallback name).
 export function parseIndexRow(row: Record<string, unknown>): IndexItem | undefined;
 
 // Group items by service. Services sorted alphabetically; items newest-first
-// within each group (by timestampMs when present, else input order preserved).
+// within each group (by updatedMs when present, else input order preserved).
 export function groupByService(items: IndexItem[]): ServiceGroup[];
 
 // Build the two-level SidebarItem tree: a collapsible parent per service
@@ -105,14 +133,18 @@ export function indexToTree(groups: ServiceGroup[]): SidebarItem[];
 ```
 
 Item-row mapping (in `indexToTree`):
-- `label` = `title` (fallback to `id`).
-- `description` = `type` (when present).
-- `tooltip` = `url` ?? `path` (when present).
+- `label` = `name` (fallback to `id`).
+- `description` = `itemType` (when present).
+- `tooltip` = `url` (when present).
 - `command` = `{ command: "nimbus.openIndexItem", title: "Open", arguments: [item] }`
-  **only when** the item has a `url` or `path`; otherwise no command (the row is
-  still reachable via the right-click Ask action).
+  **only when** the item has a `url`; otherwise no command (the row is still
+  reachable via the right-click Ask action).
 - `contextValue` = `"nimbusIndexItem"` (drives the `view/item/context` menu).
-- `iconId` for a sensible codicon (e.g. `"file"`); service rows use e.g. `"folder"`.
+- `iconId` mapped from `itemType` via a small authoritative table over the closed
+  enum — `file`→`"file"`, `folder`→`"folder"`, `email`→`"mail"`,
+  `event`→`"calendar"`, `photo`→`"device-camera"`, `task`→`"checklist"`; default
+  `"file"`. Service (parent) rows use a generic `"folder"` icon for v1 (see
+  Deferred — per-service branding).
 
 ### Extend — `src/sidebar/tree-view.ts` (the one shared change)
 
@@ -170,15 +202,28 @@ export function createIndexView(deps: {
 - Register `createIndexView({ connection, loadIndex })` in the `sidebarViews`
   array (replacing the placeholder entry).
 - **Commands** (registered via the existing `register(...)` helper):
-  - `nimbus.openIndexItem` — argument is the `IndexItem`. If `url`, open via
-    `vscode.env.openExternal(vscode.Uri.parse(url))`; else if `path`, open via
-    `vscode.commands.executeCommand("vscode.open", vscode.Uri.file(path))`; else
-    no-op. (Real `vscode` is already used at the composition root for the
-    `ThemeIcon` factory, so this glue belongs here, outside the pure modules.)
-  - `nimbus.askAboutIndexItem` — argument is the `IndexItem`. Builds a prompt
-    (e.g. ``Tell me about this indexed item:\n\n${title}${url ? `\n${url}` : ""}``),
-    then `ensureChatController()` → `ctl.start(prompt)`. Reuses the
-    `askAboutSelection` shape.
+  - `nimbus.openIndexItem` — argument is the `IndexItem`. Opens `item.url` by
+    scheme: `file:` → `vscode.commands.executeCommand("vscode.open", uri)`;
+    `http`/`https` (or other) → `vscode.env.openExternal(uri)`; no `url` → no-op.
+    The whole open is wrapped in try/catch; on failure (e.g. a file moved or
+    deleted since indexing, or an unsupported scheme) show
+    `vscode.window.showWarningMessage("Couldn't open <name>: <reason>")` rather
+    than surfacing a raw error. (Real `vscode` is already used at the composition
+    root for the `ThemeIcon` factory, so this glue belongs here, outside the pure
+    modules.) `rawMeta` may carry additional location hints for some services —
+    deferred; v1 opens via `url` only.
+  - `nimbus.askAboutIndexItem` — argument is the `IndexItem`. Builds a structured
+    prompt from the available fields, then `ensureChatController()` →
+    `ctl.start(prompt)` (reuses the `askAboutSelection` shape):
+    ```text
+    Tell me about this indexed item:
+    - Name: ${name}
+    - Service: ${service}
+    - Type: ${itemType ?? "unknown"}
+    ${url ? `- URL: ${url}` : ""}
+    ```
+    No content/excerpt is included — `NimbusItem` exposes no body field
+    (deferred; would need a client capability).
   - `nimbus.refreshIndex` — calls the view's `refresh()` (wired like
     `nimbus.refreshSessions`).
 
@@ -215,17 +260,21 @@ export function createIndexView(deps: {
 | Disconnected / connecting / permission-denied | Shared `connectionPlaceholder` (unchanged). |
 | Connected, zero items | Single row "No indexed items yet". |
 | `queryItems` throws | Single `errorRow("Failed to load index", err)`; warning logged. |
-| Item with neither url nor path | Leaf row, **no** command; still Ask-able via context menu. |
+| Item with no `url` | Leaf row, **no** command; still Ask-able via context menu. |
+| `url` open fails (moved/deleted/unsupported scheme) | `showWarningMessage`; tree unchanged. |
 
 ## Testing
 
 - **`test/unit/index.test.ts`** (new, pure):
-  - `parseIndexRow`: well-formed row; missing id → `undefined`; garbage/extra
-    fields; url-only and path-only rows.
+  - `parseIndexRow`: well-formed `NimbusItem`-shaped row; missing id →
+    `undefined`; garbage/extra fields; url-present and url-absent rows;
+    `updatedMs` from `modifiedAt`, falling back to `createdAt`.
   - `groupByService`: grouping correctness, alphabetical service order,
-    newest-first within group, empty input, blank-service bucket.
+    newest-first (by `updatedMs`) within group, empty input, blank-service
+    bucket.
   - `indexToTree`: parents collapsible with correct counts; item rows carry a
-    command only when a target exists; `contextValue` set; label fallback to id.
+    command only when `url` is present; `contextValue` set; label fallback to id;
+    `itemType`→`iconId` mapping (each enum value + default).
 - **`test/unit/sidebar-views.test.ts`**:
   - index-view empty / error / loaded paths.
   - new nesting path in `createDataView`: `getChildren(parent)` returns the
@@ -233,18 +282,46 @@ export function createIndexView(deps: {
 - **`test/unit/extension.test.ts`**:
   - `loadIndex` maps rows and drops unparseable ones; rethrows on `queryItems`
     failure.
-  - `nimbus.openIndexItem` prefers url over path; no-op when neither.
-  - `nimbus.askAboutIndexItem` builds a prompt and calls `ctl.start`.
+  - `nimbus.openIndexItem` routes `file:` → `vscode.open` and `http(s):` →
+    `openExternal`; no-op without `url`; a thrown open surfaces a warning, not a
+    raw error.
+  - `nimbus.askAboutIndexItem` builds the structured prompt and calls
+    `ctl.start`.
   - `nimbus.refreshIndex` triggers a re-render.
+- **Manual verification:** in the Extension Development Host, confirm pressing
+  `Enter` / primary-selecting an item row fires `nimbus.openIndexItem` (default
+  `registerTreeDataProvider` behaviour — we add no `TreeViewOptions` that could
+  conflict), and the right-click "Ask Nimbus about this" appears only on item
+  rows.
 - **Bars:** `bun run typecheck`, `bun run lint`, `bun run test` (keep
   `src/sidebar` at 100% lines), `bun run build`, `bun run check-bundle`.
 
+## Deferred (post-v1)
+
+Recorded from review feedback (2026-06-27); each is a deliberate non-goal for v1:
+
+- **Auto-refresh / polling** — no public index-changed event on the client (only
+  `subscribeHitl`; `onNotification` is private transport state). Manual refresh
+  matches Audit & Sessions. Revisit if the client exposes an index event.
+- **Per-service branding (friendly names + service-specific icons)** — the real
+  `service` string values are unobserved, so a mapping table now risks dead code.
+  `groupByService`/`indexToTree` keep a single seam (one function maps a service
+  string to a label+icon) so this drops in later; v1 renders the raw service
+  string with a generic folder icon.
+- **Excerpt/content in the Ask prompt** — `NimbusItem` has no body field; would
+  need a new client capability.
+- **Pagination / load-more** — single `INDEX_LIMIT` cap is sufficient for v1.
+
 ## Risks / open questions
 
-- **`queryItems` field names** — assumed identical to what `nimbus.search` reads
-  (`title`/`id`/`service`/`url`/`path`/timestamp). If a timestamp field name is
-  unknown, `groupByService` falls back to input order (newest-first relies on the
-  Gateway's default ordering); confirm the field during implementation.
+- **`queryItems` field names** — RESOLVED. Verified against `NimbusItem`
+  (`@nimbus-dev/sdk`, the mock client's `queryItems` element type): `name`,
+  `service`, `itemType`, `createdAt`/`modifiedAt`, `url`. We read these via
+  defensive coercion without importing the type. Sort key is
+  `modifiedAt ?? createdAt`; absent both, input order is preserved (relies on the
+  Gateway's default ordering).
+- **`rawMeta` location hints** — some services may stash a richer location in
+  `rawMeta`; v1 opens via `url` only. Inspect real data before relying on it.
 - **Inline vs. submenu** for the Ask action — cosmetic; decide while wiring
   `package.json`.
 - **`INDEX_LIMIT`** value — start with a sensible cap (e.g. 100) consistent with
