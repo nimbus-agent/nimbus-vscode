@@ -708,13 +708,15 @@ describe("activateWithDeps", () => {
     expect(f.ctx.subscriptions.length).toBeGreaterThan(0);
   });
 
-  test("nimbus.search formats results, coercing non-string fields and falling back", async () => {
+  test("nimbus.search reads NimbusItem fields (name/url), coercing and falling back", async () => {
+    // Rows use the real NimbusItem field names: name (not title) and url (no
+    // path field exists). The search handler must read these.
     const queryItems = vi.fn(async () => ({
       items: [
-        { title: "T1", service: "svc", url: "u1" },
-        { id: "ID2" }, // title missing → id fallback
-        { title: { nested: true } }, // object → not stringified → "(untitled)"
-        { title: 42, service: true, path: "p4" }, // number/boolean coerced
+        { name: "T1", service: "svc", url: "u1" },
+        { id: "ID2" }, // name missing → id fallback
+        { name: { nested: true } }, // object → not stringified, no id → "(untitled)"
+        { name: 42, service: true }, // number/boolean coerced; no url → empty detail
       ],
     }));
     const f = makeFixture({
@@ -739,7 +741,7 @@ describe("activateWithDeps", () => {
     expect(items[2]?.label).toBe("(untitled)");
     expect(items[3]?.label).toBe("42");
     expect(items[3]?.description).toBe("true");
-    expect(items[3]?.detail).toBe("p4");
+    expect(items[3]?.detail).toBe("");
   });
 
   test("nimbus.search is a no-op for a blank query", async () => {

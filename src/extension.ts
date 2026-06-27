@@ -417,9 +417,10 @@ export function activateWithDeps(
     try {
       const r = await c.queryItems({ limit: 50 });
       const items = r.items.map((it) => ({
-        label: displayText(it["title"]) ?? displayText(it["id"]) ?? "(untitled)",
+        // NimbusItem fields: name (not title) and url (there is no path).
+        label: displayText(it["name"]) ?? displayText(it["id"]) ?? "(untitled)",
         description: displayText(it["service"]) ?? "",
-        detail: displayText(it["url"]) ?? displayText(it["path"]) ?? "",
+        detail: displayText(it["url"]) ?? "",
       }));
       await deps.window.showQuickPick(items, {
         placeHolder: `${items.length} results for "${q.trim()}"`,
