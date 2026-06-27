@@ -111,6 +111,22 @@
         "command": "nimbus.openSession",
         "title": "Open Session",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.refreshIndex",
+        "title": "Refresh Index",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nimbus.openIndexItem",
+        "title": "Open Indexed Item",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.askAboutIndexItem",
+        "title": "Ask Nimbus about this",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
@@ -151,6 +167,14 @@
         {
           "command": "nimbus.openSession",
           "when": "false"
+        },
+        {
+          "command": "nimbus.openIndexItem",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.askAboutIndexItem",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -163,6 +187,18 @@
           "command": "nimbus.refreshSessions",
           "when": "view == nimbus.sessionsView",
           "group": "navigation"
+        },
+        {
+          "command": "nimbus.refreshIndex",
+          "when": "view == nimbus.indexView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nimbus.askAboutIndexItem",
+          "when": "view == nimbus.indexView && viewItem == nimbusIndexItem",
+          "group": "inline"
         }
       ],
       "editor/context": [
