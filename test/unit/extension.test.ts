@@ -49,6 +49,7 @@ interface Captured {
   outputAppendLines: string[];
   outputShownGetter: number;
   errorMessages: string[];
+  warnMessages: string[];
   infoMessages: string[];
   configChangeHandlers: Array<(e: ConfigurationChangeEventLike) => void>;
   cfgValues: Record<string, unknown>;
@@ -93,6 +94,7 @@ function makeFixture(opts: {
   const outputAppendLines: string[] = [];
   let outputShown = 0;
   const errorMessages: string[] = [];
+  const warnMessages: string[] = [];
   const infoMessages: string[] = [];
   const configChangeHandlers: Array<(e: ConfigurationChangeEventLike) => void> = [];
   const cfgValues = opts.cfg ?? {};
@@ -148,6 +150,10 @@ function makeFixture(opts: {
     }),
     showErrorMessage: vi.fn(async (m: string) => {
       errorMessages.push(m);
+      return undefined;
+    }),
+    showWarningMessage: vi.fn(async (m: string) => {
+      warnMessages.push(m);
       return undefined;
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
@@ -227,6 +233,7 @@ function makeFixture(opts: {
       return outputShown;
     },
     errorMessages,
+    warnMessages,
     infoMessages,
     configChangeHandlers,
     cfgValues,
@@ -296,6 +303,8 @@ describe("activateWithDeps", () => {
       "nimbus.refreshSessions",
       "nimbus.openSession",
       "nimbus.refreshIndex",
+      "nimbus.openIndexItem",
+      "nimbus.askAboutIndexItem",
     ];
     for (const id of expected) {
       expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
@@ -523,6 +532,70 @@ describe("activateWithDeps", () => {
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
     expect(() => cmd(f, "nimbus.refreshIndex")()).not.toThrow();
+  });
+
+  test("nimbus.openIndexItem opens a url via the injected opener", async () => {
+    const opened: string[] = [];
+    const f = makeFixture({});
+    f.deps.openSource = async (item) => {
+      if (item.url !== undefined) opened.push(item.url);
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openIndexItem")({ id: "a", name: "Doc", service: "s", url: "https://x" });
+    expect(opened).toEqual(["https://x"]);
+  });
+
+  test("nimbus.openIndexItem is a no-op for an item without a url", async () => {
+    const opener = vi.fn(async () => undefined);
+    const f = makeFixture({});
+    f.deps.openSource = opener;
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openIndexItem")({ id: "a", name: "Doc", service: "s" });
+    expect(opener).not.toHaveBeenCalled();
+  });
+
+  test("nimbus.openIndexItem warns (not errors) when the open throws", async () => {
+    const f = makeFixture({});
+    f.deps.openSource = async () => {
+      throw new Error("file is gone");
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openIndexItem")({ id: "a", name: "Doc", service: "s", url: "file:///x" });
+    expect(f.warnMessages.some((m) => m.includes("file is gone"))).toBe(true);
+  });
+
+  test("nimbus.askAboutIndexItem seeds the chat from the node payload", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // The argument shape VS Code passes to a context-menu command: the tree
+    // NODE (a SidebarItem), carrying the IndexItem on `payload`. A bare
+    // IndexItem here would (correctly) fail to extract — that's the bug guard.
+    await cmd(f, "nimbus.askAboutIndexItem")({
+      label: "Q3 Deck",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
+    });
+    const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
+    expect(sent).toContain("Q3 Deck");
+    expect(sent).toContain("- Service: gdrive");
+  });
+
+  test("nimbus.askAboutIndexItem is a no-op for a node without a payload", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutIndexItem")({ label: "x", contextValue: "nimbusIndexItem" });
+    expect(askStream).not.toHaveBeenCalled();
   });
 
   test("falls back to the real read-only JSON opener when none is injected", async () => {

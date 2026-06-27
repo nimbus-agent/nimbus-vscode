@@ -17,7 +17,7 @@ import { createSettings } from "./settings.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
 import { formatAuditDetail } from "./sidebar/audit.js";
 import { createAuditView } from "./sidebar/audit-view.js";
-import { type IndexItem, parseIndexRow } from "./sidebar/index.js";
+import { buildAskPrompt, type IndexItem, parseIndexRow } from "./sidebar/index.js";
 import { createIndexView } from "./sidebar/index-view.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
 import { parseSessionRow, type SessionSummary } from "./sidebar/sessions.js";
@@ -51,6 +51,7 @@ export interface ActivateDeps {
   chatPanelFactory?: (deps: { log: Logger }) => ChatPanelFactory;
   autoStarter?: AutoStarter;
   openReadonlyJson?: (title: string, content: string) => Promise<void>;
+  openSource?: (item: IndexItem) => Promise<void>;
 }
 
 export function activateWithDeps(
@@ -370,6 +371,7 @@ export function activateWithDeps(
   }
 
   const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
+  const openSource = deps.openSource ?? createSourceOpener();
 
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 
@@ -484,6 +486,35 @@ export function activateWithDeps(
 
   register("nimbus.refreshIndex", () => {
     indexView.refresh();
+  });
+
+  register("nimbus.openIndexItem", async (...args) => {
+    const item = parseIndexRow(args[0]);
+    if (item === undefined || item.url === undefined) return;
+    try {
+      await openSource(item);
+    } catch (e) {
+      void deps.window.showWarningMessage(
+        `Couldn't open ${item.name}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  });
+
+  register("nimbus.askAboutIndexItem", async (...args) => {
+    // A view/item/context command receives the tree NODE element (a SidebarItem),
+    // NOT the row's command.arguments. The IndexItem rides along on node.payload
+    // (see itemToRow). openIndexItem differs: it's the row's primary command, so
+    // it gets command.arguments[0] (the IndexItem) directly.
+    const node = args[0];
+    const payload =
+      typeof node === "object" && node !== null
+        ? (node as { payload?: unknown }).payload
+        : undefined;
+    const item = parseIndexRow(payload);
+    if (item === undefined) return;
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    await ctl.start(buildAskPrompt(item));
   });
 
   register("nimbus.openSession", async (...args) => {
@@ -616,6 +647,29 @@ function createReadonlyJsonOpener(
     }
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(`${scheme}:${path}`));
     await vscode.window.showTextDocument(doc, { preview: true });
+  };
+}
+
+function createSourceOpener(): (item: IndexItem) => Promise<void> {
+  return async (item) => {
+    const url = item.url;
+    if (url === undefined || url.length === 0) return;
+    // A Windows drive path (C:\...) is NOT a URI scheme — `C:` would otherwise
+    // parse as scheme "c". Treat it, and any bare path, as a file Uri; only a
+    // real >=2-char scheme (http/https/file/mailto/...) goes through Uri.parse.
+    const isWindowsDrivePath = /^[a-zA-Z]:[\\/]/.test(url);
+    const uri =
+      !isWindowsDrivePath && /^[a-z][a-z0-9+.-]+:/i.test(url)
+        ? vscode.Uri.parse(url)
+        : vscode.Uri.file(url);
+    if (uri.scheme === "file") {
+      await vscode.commands.executeCommand("vscode.open", uri);
+    } else {
+      // openExternal resolves `false` (it does not throw) when the OS handler
+      // declines; surface that through the command's catch -> warning path.
+      const ok = await vscode.env.openExternal(uri);
+      if (!ok) throw new Error("the system declined to open this URL");
+    }
   };
 }
 
