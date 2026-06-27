@@ -40,7 +40,7 @@
 - Test: `test/unit/sidebar-views.test.ts`
 
 **Interfaces:**
-- Produces: `SidebarItem` now has optional `readonly children?: SidebarItem[]` and `readonly contextValue?: string`. `toTreeItem(item)` sets `collapsibleState = 1` when `children` is non-empty (else `0`) and passes through `contextValue`. `createDataView(...).getChildren(parent)` returns `parent.children ?? []`.
+- Produces: `SidebarItem` now has optional `readonly children?: SidebarItem[]`, `readonly contextValue?: string`, and `readonly payload?: unknown` (a domain object the node carries for view/item/context commands). `toTreeItem(item)` sets `collapsibleState = 1` when `children` is non-empty (else `0`) and passes through `contextValue` (it does **not** copy `payload`/`children` onto the TreeItem). `createDataView(...).getChildren(parent)` returns `parent.children ?? []`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -103,6 +103,13 @@ In `src/sidebar/tree-view.ts`, add the two optional fields to `SidebarItem` (aft
   readonly contextValue?: string;
   /** Child rows; when present and non-empty, this row renders collapsible. */
   readonly children?: SidebarItem[];
+  /**
+   * Domain object carried on the tree node. VS Code passes the NODE element
+   * (this SidebarItem) — not `command.arguments` — to a view/item/context
+   * command, so a menu handler reads its data from here. Untyped because it's
+   * generic across views; consumers coerce it defensively.
+   */
+  readonly payload?: unknown;
 ```
 
 Replace `toTreeItem` with:
@@ -271,6 +278,7 @@ describe("indexToTree", () => {
     expect(withUrl?.description).toBe("email");
     expect(withUrl?.command?.command).toBe("nimbus.openIndexItem");
     expect(withUrl?.iconId).toBe("mail");
+    expect(withUrl?.payload).toMatchObject({ id: "a", service: "slack", url: "https://x" });
 
     const noUrl = parent?.children?.find((c) => c.label === "No URL");
     expect(noUrl?.command).toBeUndefined();
@@ -420,6 +428,9 @@ function itemToRow(item: IndexItem): SidebarItem {
     label: item.name,
     iconId: iconForItemType(item.itemType),
     contextValue: "nimbusIndexItem",
+    // Carried so the view/item/context "Ask" command (which receives this node,
+    // not command.arguments) can recover the IndexItem.
+    payload: item,
     ...(item.itemType !== undefined ? { description: item.itemType } : {}),
     ...(item.url !== undefined
       ? {
@@ -817,22 +828,35 @@ Add to `test/unit/extension.test.ts` (in the sidebar describe). These call the c
     expect(f.warnMessages.some((m) => m.includes("file is gone"))).toBe(true);
   });
 
-  test("nimbus.askAboutIndexItem seeds the chat with a structured prompt", async () => {
+  test("nimbus.askAboutIndexItem seeds the chat from the node payload", async () => {
     const askStream = doneAskStream();
     const f = makeFixture({
       openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
+    // The argument shape VS Code passes to a context-menu command: the tree
+    // NODE (a SidebarItem), carrying the IndexItem on `payload`. A bare
+    // IndexItem here would (correctly) fail to extract — that's the bug guard.
     await cmd(f, "nimbus.askAboutIndexItem")({
-      id: "a",
-      name: "Q3 Deck",
-      service: "gdrive",
-      itemType: "file",
+      label: "Q3 Deck",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
     });
     const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
     expect(sent).toContain("Q3 Deck");
     expect(sent).toContain("- Service: gdrive");
+  });
+
+  test("nimbus.askAboutIndexItem is a no-op for a node without a payload", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutIndexItem")({ label: "x", contextValue: "nimbusIndexItem" });
+    expect(askStream).not.toHaveBeenCalled();
   });
 ```
 
@@ -870,12 +894,21 @@ function createSourceOpener(): (item: IndexItem) => Promise<void> {
   return async (item) => {
     const url = item.url;
     if (url === undefined || url.length === 0) return;
-    // A bare path (no scheme) → a file Uri; otherwise parse the scheme as-is.
-    const uri = /^[a-z][a-z0-9+.-]*:/i.test(url) ? vscode.Uri.parse(url) : vscode.Uri.file(url);
+    // A Windows drive path (C:\...) is NOT a URI scheme — `C:` would otherwise
+    // parse as scheme "c". Treat it, and any bare path, as a file Uri; only a
+    // real >=2-char scheme (http/https/file/mailto/...) goes through Uri.parse.
+    const isWindowsDrivePath = /^[a-zA-Z]:[\\/]/.test(url);
+    const uri =
+      !isWindowsDrivePath && /^[a-z][a-z0-9+.-]+:/i.test(url)
+        ? vscode.Uri.parse(url)
+        : vscode.Uri.file(url);
     if (uri.scheme === "file") {
       await vscode.commands.executeCommand("vscode.open", uri);
     } else {
-      await vscode.env.openExternal(uri);
+      // openExternal resolves `false` (it does not throw) when the OS handler
+      // declines; surface that through the command's catch -> warning path.
+      const ok = await vscode.env.openExternal(uri);
+      if (!ok) throw new Error("the system declined to open this URL");
     }
   };
 }
@@ -899,7 +932,16 @@ Beside the other index command (after `nimbus.refreshIndex`):
   });
 
   register("nimbus.askAboutIndexItem", async (...args) => {
-    const item = parseIndexRow(args[0]);
+    // A view/item/context command receives the tree NODE element (a SidebarItem),
+    // NOT the row's command.arguments. The IndexItem rides along on node.payload
+    // (see itemToRow). openIndexItem differs: it's the row's primary command, so
+    // it gets command.arguments[0] (the IndexItem) directly.
+    const node = args[0];
+    const payload =
+      typeof node === "object" && node !== null
+        ? (node as { payload?: unknown }).payload
+        : undefined;
+    const item = parseIndexRow(payload);
     if (item === undefined) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;
@@ -1021,7 +1063,8 @@ git commit -m "feat(sidebar): contribute Index view commands and menus"
 
 - **Grouped-by-service two-level tree** → Tasks 1 (nesting), 2 (`groupByService`/`indexToTree`), 3 (wrapper).
 - **Eager single `queryItems` fetch, schema isolated in composition root** → Task 4 (`loadIndex`, `INDEX_LIMIT`).
-- **Open source by url scheme, try/catch → warning** → Task 5 (`createSourceOpener`, `nimbus.openIndexItem`, `showWarningMessage`).
+- **Open source by url scheme, try/catch → warning** → Task 5 (`createSourceOpener`, `nimbus.openIndexItem`, `showWarningMessage`). Windows drive paths are excluded from scheme parsing; `openExternal`'s `false` return is converted to a throw so it reaches the warning path.
+- **Command argument plumbing (review fix)** → primary-click `openIndexItem` reads `command.arguments[0]` (the `IndexItem`); context-menu `askAboutIndexItem` reads the tree node's `payload` (a `SidebarItem` is what VS Code hands a view/item/context command). `itemToRow` sets both.
 - **Item with no url → no command, still Ask-able** → Task 2 (`itemToRow`), Task 5 (open no-op).
 - **`itemType` → codicon over the closed enum** → Task 2 (`iconForItemType`).
 - **Structured Ask prompt, no excerpt** → Task 2 (`buildAskPrompt`), Task 5 (command).
