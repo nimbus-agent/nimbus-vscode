@@ -934,4 +934,21 @@ describe("activateWithDeps", () => {
     await expect(cmd(f, "nimbus.ask")()).resolves.toBeUndefined();
     expect(askStream).toHaveBeenCalledTimes(1);
   });
+
+  test("the registered agents provider renders configured agents from settings", async () => {
+    const f = makeFixture({
+      cfg: { agents: [{ id: "researcher", label: "Researcher", description: "Deep research" }] },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.agentsView");
+    if (provider === undefined) throw new Error("agents provider not registered");
+    const rows = await provider.getChildren(undefined);
+    // getChildren returns the raw SidebarItem rows (carrying iconId);
+    // applyThemeIcons maps iconId -> iconPath only inside getTreeItem (mirrors
+    // the audit provider test).
+    expect(rows[0]).toMatchObject({ label: "Researcher", iconId: "hubot" });
+    const item = provider.getTreeItem(rows[0]);
+    expect(item.iconPath).toBeDefined();
+  });
 });

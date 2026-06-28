@@ -14,6 +14,7 @@ import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
 import { createLogger, type Logger } from "./logging.js";
 import { createSettings } from "./settings.js";
+import { type Agent, parseAgents } from "./sidebar/agents.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
 import { formatAuditDetail } from "./sidebar/audit.js";
 import { createAuditView } from "./sidebar/audit-view.js";
@@ -114,6 +115,7 @@ export function activateWithDeps(
   const chatPanelFactory = deps.chatPanelFactory?.({ log }) ?? createRealChatPanelFactory(log);
 
   let chatController: ChatController | undefined;
+  let activeAgent: string | undefined;
   const registeredHitlStreams = new Set<string>();
 
   const ensureChatController = (): ChatController | undefined => {
@@ -135,7 +137,7 @@ export function activateWithDeps(
         registeredHitlStreams.delete(id);
       },
       log,
-      agent: () => settings.askAgent(),
+      agent: () => activeAgent ?? settings.askAgent(),
     });
     panel.onMessage((msg) => {
       if (msg === null || typeof msg !== "object") return;
@@ -301,12 +303,13 @@ export function activateWithDeps(
 
   const cfgSub = deps.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration("nimbus")) renderStatusBar(connection.current());
+    if (e.affectsConfiguration("nimbus.agents")) agentsView.refresh();
   });
   ctx.subscriptions.push(cfgSub);
 
-  // Sidebar tree views (design surfaces #1/#3/#5/#6). The Audit view (#1) is
-  // live; the rest are scaffolds. Each refreshes off connection state and
-  // degrades gracefully when the Gateway is unreachable.
+  // Sidebar tree views (design surfaces #1/#3/#5/#6). All four are live (Audit,
+  // Agents, Index, Sessions). Each refreshes off connection state and degrades
+  // gracefully when the Gateway is unreachable.
   const auditView = createAuditView({
     connection,
     getClient: () => connection.client() as NimbusClient | undefined,
@@ -354,9 +357,15 @@ export function activateWithDeps(
     }
   };
   const indexView = createIndexView({ connection, loadIndex });
+  const loadAgents = (): Agent[] => parseAgents(settings.agents());
+  const agentsView = createAgentsView({
+    connection,
+    loadAgents,
+    activeAgentId: () => activeAgent,
+  });
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
     ["nimbus.auditView", auditView],
-    ["nimbus.agentsView", createAgentsView({ connection })],
+    ["nimbus.agentsView", agentsView],
     ["nimbus.indexView", indexView],
     ["nimbus.sessionsView", sessionsView],
   ];
