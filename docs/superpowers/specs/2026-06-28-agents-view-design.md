@@ -1,7 +1,7 @@
 # Agents View Design
 
 **Date:** 2026-06-28
-**Status:** Approved (pending spec review)
+**Status:** Implemented
 **Surface:** Sidebar design surface #3 (Agents)
 
 ---
