@@ -456,7 +456,32 @@ export function activateWithDeps(
   register("nimbus.newConversation", async () => {
     const ctl = ensureChatController();
     if (ctl === undefined) return;
+    activeAgent = undefined;
     await ctl.newConversation();
+    agentsView.refresh();
+  });
+
+  register("nimbus.openAgentChat", async (...args) => {
+    // The Agents view row's primary command. VS Code passes the tree NODE
+    // element (a SidebarItem); the Agent rides on node.payload (see
+    // agentsToRows). Re-validate it through parseAgents (single-element array).
+    const node = args[0];
+    const payload =
+      typeof node === "object" && node !== null
+        ? (node as { payload?: unknown }).payload
+        : undefined;
+    const [agent] = parseAgents([payload]);
+    if (agent === undefined) return;
+    activeAgent = agent.id;
+    // ensureChatController() creates+reveals the panel on first use (via
+    // chatPanelFactory.createOrReveal); for an already-open panel it returns
+    // early without revealing, so current()?.reveal() below covers that case.
+    // current() is therefore never undefined at the reveal point.
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    await ctl.newConversation();
+    chatPanelFactory.current()?.reveal();
+    agentsView.refresh();
   });
 
   register("nimbus.startGateway", async () => {

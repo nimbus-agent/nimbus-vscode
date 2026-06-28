@@ -951,4 +951,54 @@ describe("activateWithDeps", () => {
     const item = provider.getTreeItem(rows[0]);
     expect(item.iconPath).toBeDefined();
   });
+
+  test("nimbus.openAgentChat scopes the next stream to the clicked agent", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      cfg: { askAgent: "default-agent" },
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openAgentChat")({
+      label: "Researcher",
+      contextValue: "nimbusAgent",
+      payload: { id: "researcher", label: "Researcher" },
+    });
+    // A new conversation was started; now send a message and inspect the agent.
+    for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
+    await waitForConnect();
+    const opts = askStream.mock.calls[0]?.[1] as { agent?: string } | undefined;
+    expect(opts?.agent).toBe("researcher");
+  });
+
+  test("nimbus.openAgentChat is a no-op for a node without an agent payload", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openAgentChat")({ label: "x" });
+    for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
+    await waitForConnect();
+    const opts = askStream.mock.calls[0]?.[1] as { agent?: string } | undefined;
+    expect(opts?.agent).toBeUndefined();
+  });
+
+  test("nimbus.newConversation clears the active agent back to the default", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      cfg: { askAgent: "default-agent" },
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openAgentChat")({ payload: { id: "researcher", label: "Researcher" } });
+    await cmd(f, "nimbus.newConversation")();
+    for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
+    await waitForConnect();
+    const opts = askStream.mock.calls[0]?.[1] as { agent?: string } | undefined;
+    expect(opts?.agent).toBe("default-agent");
+  });
 });

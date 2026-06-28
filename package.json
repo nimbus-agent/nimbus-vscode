@@ -127,6 +127,11 @@
         "command": "nimbus.askAboutIndexItem",
         "title": "Ask Nimbus about this",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.openAgentChat",
+        "title": "Open Agent Chat",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
@@ -174,6 +179,10 @@
         },
         {
           "command": "nimbus.askAboutIndexItem",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.openAgentChat",
           "when": "false"
         }
       ],
