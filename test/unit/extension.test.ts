@@ -960,11 +960,9 @@ describe("activateWithDeps", () => {
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
-    await cmd(f, "nimbus.openAgentChat")({
-      label: "Researcher",
-      contextValue: "nimbusAgent",
-      payload: { id: "researcher", label: "Researcher" },
-    });
+    // Primary-click shape: VS Code passes command.arguments[0] = the bare Agent
+    // object (not a SidebarItem wrapper). The handler must read args[0] directly.
+    await cmd(f, "nimbus.openAgentChat")({ id: "researcher", label: "Researcher" });
     // A new conversation was started; now send a message and inspect the agent.
     for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
     await waitForConnect();
@@ -972,13 +970,14 @@ describe("activateWithDeps", () => {
     expect(opts?.agent).toBe("researcher");
   });
 
-  test("nimbus.openAgentChat is a no-op for a node without an agent payload", async () => {
+  test("nimbus.openAgentChat is a no-op for an arg without a usable agent id", async () => {
     const askStream = doneAskStream();
     const f = makeFixture({
       openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
+    // No id field → parseAgents drops the entry → handler returns early.
     await cmd(f, "nimbus.openAgentChat")({ label: "x" });
     for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
     await waitForConnect();
@@ -994,7 +993,8 @@ describe("activateWithDeps", () => {
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
-    await cmd(f, "nimbus.openAgentChat")({ payload: { id: "researcher", label: "Researcher" } });
+    // Primary-click shape: bare Agent object.
+    await cmd(f, "nimbus.openAgentChat")({ id: "researcher", label: "Researcher" });
     await cmd(f, "nimbus.newConversation")();
     for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
     await waitForConnect();

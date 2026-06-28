@@ -49,6 +49,10 @@ export function agentsToRows(agents: Agent[], activeAgentId?: string): SidebarIt
       label: agent.label,
       iconId: "hubot",
       contextValue: "nimbusAgent",
+      // payload is reserved for a future view/item/context menu entry and is
+      // NOT consumed by the primary-click path — the click uses
+      // command.arguments[0] (the bare Agent) which openAgentChat reads
+      // directly via parseAgents.
       payload: agent,
       command: {
         command: "nimbus.openAgentChat",
