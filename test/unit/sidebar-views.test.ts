@@ -131,11 +131,38 @@ describe("createPlaceholderView", () => {
   });
 });
 
-describe("scaffold view factories", () => {
-  test("the agents placeholder view exposes its connected empty label", async () => {
-    const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
-    const view = createAgentsView({ connection: makeConnection(connected).connection });
-    expect((await view.getChildren())[0]?.label).toMatch(/agents/i);
+describe("createAgentsView", () => {
+  const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
+
+  test("shows the empty label when no agents are configured", async () => {
+    const view = createAgentsView({
+      connection: makeConnection(connected).connection,
+      loadAgents: () => [],
+      activeAgentId: () => undefined,
+    });
+    expect((await view.getChildren())[0]?.label).toMatch(/no agents configured/i);
+  });
+
+  test("renders configured agents as clickable rows", async () => {
+    const view = createAgentsView({
+      connection: makeConnection(connected).connection,
+      loadAgents: () => [{ id: "researcher", label: "Researcher" }],
+      activeAgentId: () => undefined,
+    });
+    const [row] = await view.getChildren();
+    expect(row?.label).toBe("Researcher");
+    expect(row?.command?.command).toBe("nimbus.openAgentChat");
+    expect(row?.description).toBeUndefined();
+  });
+
+  test("marks the active agent", async () => {
+    const view = createAgentsView({
+      connection: makeConnection(connected).connection,
+      loadAgents: () => [{ id: "researcher", label: "Researcher" }],
+      activeAgentId: () => "researcher",
+    });
+    const [row] = await view.getChildren();
+    expect(row?.description).toBe("(active)");
   });
 });
 
