@@ -402,7 +402,12 @@ In `test/unit/extension.test.ts`, add inside the `describe("activateWithDeps", .
     const provider = f.treeProviders.get("nimbus.agentsView");
     if (provider === undefined) throw new Error("agents provider not registered");
     const rows = await provider.getChildren(undefined);
-    expect(rows[0]).toMatchObject({ label: "Researcher", iconPath: expect.anything() });
+    // getChildren returns the raw SidebarItem rows (carrying iconId);
+    // applyThemeIcons maps iconId -> iconPath only inside getTreeItem (mirrors
+    // the audit provider test).
+    expect(rows[0]).toMatchObject({ label: "Researcher", iconId: "hubot" });
+    const item = provider.getTreeItem(rows[0]);
+    expect(item.iconPath).toBeDefined();
   });
 ```
 
@@ -594,6 +599,10 @@ In `src/extension.ts`, add a new command registration near the other index/sessi
     const [agent] = parseAgents([payload]);
     if (agent === undefined) return;
     activeAgent = agent.id;
+    // ensureChatController() creates+reveals the panel on first use (via
+    // chatPanelFactory.createOrReveal); for an already-open panel it returns
+    // early without revealing, so current()?.reveal() below covers that case.
+    // current() is therefore never undefined at the reveal point.
     const ctl = ensureChatController();
     if (ctl === undefined) return;
     await ctl.newConversation();
@@ -687,6 +696,23 @@ git commit -m "docs(sidebar): mark Agents view spec implemented"
 ```
 
 ---
+
+## Review notes (plan feedback 2026-06-28)
+
+- **iconId vs iconPath (Task 4 test) — fixed.** `getChildren()` returns raw rows
+  carrying `iconId`; `iconPath` only appears after `getTreeItem` runs
+  `applyThemeIcons`. Task 4's assertion now checks `iconId: "hubot"` on the row
+  and `iconPath` via `getTreeItem` (matching the audit provider test).
+- **Double-click reentrancy (Task 5) — deferred.** `ctl.newConversation()` is
+  reentrancy-tolerant (captures and nulls `active`, cancels, `sessionStore.clear()`
+  is idempotent, posts `reset`). `activeAgent` is set synchronously before the
+  await, so the final state equals the last click; concurrent clicks at worst emit
+  a redundant `reset`. No existing chat command guards double-invocation; a guard
+  here only would be inconsistent over-engineering for v1.
+- **Reveal safety (Task 5) — already correct.** `ensureChatController()` runs
+  before `current()?.reveal()`; on first use it creates+reveals via
+  `createOrReveal`, on later use `current()` is defined. Added a clarifying
+  comment; no behavior change.
 
 ## Self-Review
 
