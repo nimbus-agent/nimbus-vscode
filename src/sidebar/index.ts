@@ -37,6 +37,31 @@ const ITEM_TYPE_ICONS: Record<IndexItemType, string> = {
   task: "checklist",
 };
 
+// Brand-cased display names for known gateway service ids. Anything not listed
+// is prettified (see prettifyService); the "(unknown)" sentinel from
+// groupByService passes through unchanged.
+const SERVICE_LABELS: Record<string, string> = {
+  github: "GitHub",
+  gitlab: "GitLab",
+  slack: "Slack",
+  notion: "Notion",
+  gdrive: "Google Drive",
+  gmail: "Gmail",
+  local_files: "Local Workspace",
+};
+
+// A sensible codicon per known service; unknown services fall back to "folder"
+// (the generic collapsible-group look).
+const SERVICE_ICONS: Record<string, string> = {
+  github: "github",
+  gitlab: "github",
+  slack: "comment-discussion",
+  notion: "notebook",
+  gdrive: "cloud",
+  gmail: "mail",
+  local_files: "file-submodule",
+};
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null
     ? (value as Record<string, unknown>)
@@ -103,6 +128,28 @@ export function iconForItemType(itemType: IndexItem["itemType"]): string {
   return itemType === undefined ? "file" : ITEM_TYPE_ICONS[itemType];
 }
 
+// "local_files" -> "Local Files": the display fallback for services without an
+// explicit brand label. charAt (not value[0]!) keeps us clear of the
+// noNonNullAssertion lint rule.
+function prettifyService(service: string): string {
+  return service
+    .split(/[_-]/)
+    .filter((word) => word.length > 0)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+// User-facing service group label: brand-cased when known, prettified
+// otherwise, with the "(unknown)" sentinel passed through verbatim.
+export function labelForService(service: string): string {
+  if (SERVICE_LABELS[service] !== undefined) return SERVICE_LABELS[service];
+  return service === "(unknown)" ? service : prettifyService(service);
+}
+
+export function iconForService(service: string): string {
+  return SERVICE_ICONS[service] ?? "folder";
+}
+
 function itemToRow(item: IndexItem): SidebarItem {
   return {
     label: item.name,
@@ -125,9 +172,9 @@ function itemToRow(item: IndexItem): SidebarItem {
 // carrying its item rows as `children`.
 export function indexToTree(groups: ServiceGroup[]): SidebarItem[] {
   return groups.map((group) => ({
-    label: group.service,
+    label: labelForService(group.service),
     description: `${group.items.length}`,
-    iconId: "folder",
+    iconId: iconForService(group.service),
     children: group.items.map(itemToRow),
   }));
 }

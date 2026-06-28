@@ -509,7 +509,7 @@ describe("activateWithDeps", () => {
     if (provider === undefined) throw new Error("index provider not registered");
     const groups = await provider.getChildren(undefined);
     expect(queryItems).toHaveBeenCalledTimes(1);
-    expect(groups[0]).toMatchObject({ label: "gdrive", description: "2" });
+    expect(groups[0]).toMatchObject({ label: "Google Drive", description: "2" });
   });
 
   test("the index provider shows an error row when queryItems fails", async () => {

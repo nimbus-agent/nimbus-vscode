@@ -156,7 +156,7 @@ describe("createIndexView", () => {
     });
     const [group] = await view.getChildren();
     if (group === undefined) throw new Error("expected a service group");
-    expect(group.label).toBe("gdrive");
+    expect(group.label).toBe("Google Drive");
     expect(view.getTreeItem(group).collapsibleState).toBe(1);
     expect((await view.getChildren(group))[0]?.label).toBe("Doc");
   });

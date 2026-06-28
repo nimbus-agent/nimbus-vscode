@@ -4,8 +4,10 @@ import {
   buildAskPrompt,
   groupByService,
   iconForItemType,
+  iconForService,
   type IndexItem,
   indexToTree,
+  labelForService,
   parseIndexRow,
 } from "../../src/sidebar/index.js";
 
@@ -78,6 +80,25 @@ describe("iconForItemType", () => {
   });
 });
 
+describe("labelForService / iconForService", () => {
+  test("brand-cases known services with a matching codicon", () => {
+    expect(labelForService("github")).toBe("GitHub");
+    expect(iconForService("github")).toBe("github");
+    expect(labelForService("local_files")).toBe("Local Workspace");
+    expect(iconForService("slack")).toBe("comment-discussion");
+  });
+
+  test("prettifies unknown services and falls back to the folder icon", () => {
+    expect(labelForService("custom_source")).toBe("Custom Source");
+    expect(iconForService("custom_source")).toBe("folder");
+  });
+
+  test("passes the (unknown) sentinel through verbatim", () => {
+    expect(labelForService("(unknown)")).toBe("(unknown)");
+    expect(iconForService("(unknown)")).toBe("folder");
+  });
+});
+
 describe("indexToTree", () => {
   test("service rows are collapsible parents with counts; items carry open command only with a url", () => {
     const tree = indexToTree(
@@ -88,7 +109,8 @@ describe("indexToTree", () => {
     );
     expect(tree).toHaveLength(1);
     const parent = tree[0];
-    expect(parent?.label).toBe("slack");
+    expect(parent?.label).toBe("Slack");
+    expect(parent?.iconId).toBe("comment-discussion");
     expect(parent?.description).toBe("2");
     expect(parent?.children).toHaveLength(2);
 
