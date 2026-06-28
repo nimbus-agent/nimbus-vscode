@@ -12,8 +12,10 @@ The Agents sidebar view is currently a scaffold rendering a static
 `"No agents configured"` placeholder. This design makes it live: it reads a new
 `nimbus.agents` VS Code setting, renders one row per configured agent, and on
 click opens the chat panel in a **fresh conversation scoped to that agent**. The
-selected agent stays active for the panel until another is chosen (or the
-default `nimbus.askAgent` applies).
+selected agent stays active for the panel until another is chosen, or until a
+generic **New Conversation** clears the override back to the `nimbus.askAgent`
+default. The active agent is marked in the view (an `(active)` suffix) so the
+user always knows which agent is in effect.
 
 The data source is local settings, not the Gateway — so the feature is
 developable and testable without a running Gateway.
@@ -23,14 +25,20 @@ developable and testable without a running Gateway.
 - Render configured agents as clickable sidebar rows.
 - Clicking an agent reveals the chat panel, switches the active agent to the
   clicked one, and starts a new conversation.
+- A generic New Conversation clears the override back to the `nimbus.askAgent`
+  default (the path back to default).
+- Mark the active agent in the view so the current scope is visible.
 - Defensive parsing of the user-supplied setting (it is untrusted JSON).
-- Refresh the view when `nimbus.agents` changes.
+- Refresh the view when `nimbus.agents` changes or the active agent changes.
 
 ## Non-goals (v1)
 
 - The `client.agentInvoke()` one-shot invocation path.
 - Per-agent context menus.
-- A UI to revert the active agent back to the `nimbus.askAgent` default.
+- Click-to-toggle: clicking the already-active agent to clear the override
+  (New Conversation already provides the reset — see Deferred).
+- Per-agent custom icons in the setting (see Deferred).
+- Pre-populating built-in / system agents from the Gateway (see Deferred).
 - Editing / adding agents from the UI (configuration is done in settings).
 
 ## Setting schema
@@ -69,14 +77,16 @@ export interface Agent {
 // lacking a non-empty id; label falls back to id.
 export function parseAgents(raw: unknown): Agent[];
 
-// Project Agents into sidebar rows.
-export function agentsToRows(agents: Agent[]): SidebarItem[];
+// Project Agents into sidebar rows. activeAgentId marks the active row.
+export function agentsToRows(agents: Agent[], activeAgentId?: string): SidebarItem[];
 ```
 
 Each row produced by `agentsToRows`:
 
 - `label`: agent label
-- `description` / `tooltip`: agent description (omitted when absent)
+- `description`: agent description; the active agent's row appends `" (active)"`
+  (or just `"(active)"` when it has no description)
+- `tooltip`: agent description (omitted when absent)
 - `iconId`: `"hubot"` (codicon)
 - `contextValue`: `"nimbusAgent"`
 - `payload`: the `Agent` (so the click command can recover it from the node)
@@ -94,13 +104,14 @@ Replaces the `createPlaceholderView` scaffold with a `createDataView`:
 export function createAgentsView(deps: {
   connection: SidebarConnection;
   loadAgents: () => Agent[];
+  activeAgentId: () => string | undefined;
 }): SidebarView {
   return createDataView({
     connection: deps.connection,
     loadData: async () => {
       const agents = deps.loadAgents();
       if (agents.length === 0) return [{ label: "No agents configured" }];
-      return agentsToRows(agents);
+      return agentsToRows(agents, deps.activeAgentId());
     },
   });
 }
@@ -114,11 +125,17 @@ acceptable because the click action requires a connection anyway.
 
 - Add `settings.agents()` to `settings.ts`, returning the raw configured value
   (`unknown[]` / `unknown`) for `parseAgents` to coerce.
-- Inject `loadAgents: () => parseAgents(settings.agents())` into the view so the
-  schema coupling lives in the composition root.
+- Inject `loadAgents: () => parseAgents(settings.agents())` and
+  `activeAgentId: () => activeAgent` into the view so the schema coupling and
+  active-state both live in the composition root.
 - Introduce a mutable `activeAgent: string | undefined` (default `undefined`).
 - Change the chat controller's agent callback from `() => settings.askAgent()`
   to `() => activeAgent ?? settings.askAgent()`.
+- In the existing `nimbus.newConversation` command handler, reset
+  `activeAgent = undefined` and call `agentsView.refresh()` so a generic new
+  conversation returns to the default agent and updates the indicator. (This is
+  the only generic-new-conversation path — the webview posts no separate
+  new-conversation message.)
 - Extend `cfgSub` (`onDidChangeConfiguration`) so a change affecting
   `nimbus.agents` also calls `agentsView.refresh()`.
 
@@ -137,7 +154,8 @@ register("nimbus.openAgentChat", async (...args) => {
   const ctl = ensureChatController();
   if (ctl === undefined) return;
   await ctl.newConversation();
-  // Reveal the panel via the chat panel factory's createOrReveal.
+  chatPanelFactory.current()?.reveal();
+  agentsView.refresh();
 });
 ```
 
@@ -145,11 +163,15 @@ Registered in `package.json` `contributes.commands` and bound as the Agents view
 item's primary click (the row `command` above). No `view/item/context` entry in
 v1.
 
-> Implementation note: confirm during planning how an already-created chat panel
-> is revealed (the `nimbus.ask` / `askAboutIndexItem` paths rely on
-> `ensureChatController` / the panel factory's `createOrReveal`); reuse that
-> mechanism so `openAgentChat` reveals an existing panel rather than only
-> creating one.
+**Panel reveal (verified):** `ensureChatController` reveals the panel only when
+it *creates* it (`chatPanelFactory.createOrReveal()`). For an already-open panel,
+reveal explicitly via `chatPanelFactory.current()?.reveal()` — the same pattern
+used by `nimbus.showPendingHitl`.
+
+**Command palette (verified convention):** add a `menus.commandPalette` entry
+hiding `nimbus.openAgentChat` (`"when": "false"`), matching the existing
+payload-only commands (`openIndexItem`, `askAboutIndexItem`, `openSession`,
+`openAuditEntry`). The command is meaningless without a node payload.
 
 ## Data flow
 
@@ -165,8 +187,16 @@ click row
   -> nimbus.openAgentChat(node)   (extension.ts)
   -> parseAgents([node.payload])  (recover Agent)
   -> activeAgent = agent.id
-  -> ensureChatController().newConversation() + reveal
+  -> ensureChatController().newConversation()
+  -> chatPanelFactory.current()?.reveal()
+  -> agentsView.refresh()         (marks the active row)
   -> next askStream uses agent = activeAgent
+
+New Conversation (nimbus.newConversation)
+  -> activeAgent = undefined
+  -> ctl.newConversation()
+  -> agentsView.refresh()         (clears the active marker)
+  -> next askStream uses agent = settings.askAgent()
 ```
 
 ## Error handling
@@ -183,12 +213,29 @@ click row
   - `parseAgents`: valid entries; `label` falls back to `id`; entries without a
     usable `id` dropped; non-array / non-object inputs yield `[]`.
   - `agentsToRows`: row shape (label/description/icon/contextValue/payload),
-    primary command is `nimbus.openAgentChat`, empty input handling.
+    primary command is `nimbus.openAgentChat`, empty input handling, and the
+    `(active)` marker applied only to the matching `activeAgentId` row.
 - `test/unit/extension.test.ts` (extend):
   - The registered `nimbus.agentsView` provider renders configured agents from
     the setting.
   - `nimbus.openAgentChat` sets the active agent and starts a new conversation
     (assert the subsequent stream uses the clicked agent id).
+  - `nimbus.newConversation` clears the active agent (the subsequent stream falls
+    back to `settings.askAgent()`).
+
+## Deferred (with rationale)
+
+These were raised in review and intentionally deferred from v1:
+
+- **Click-to-toggle the active agent off** — New Conversation already provides a
+  clean reset path, so a second toggle interaction is redundant (YAGNI).
+- **Per-agent `icon` field in the setting** — pure polish; the field is optional
+  and additive, so it can be introduced later with no breaking change to
+  existing configs.
+- **Built-in / system agent discovery** — verified the typed `@nimbus-dev/client`
+  exposes no `listAgents`/discovery API (`agent` is only an *input* to
+  `agentInvoke`/`askStream`). Pre-populating system agents needs an upstream
+  client capability bump; same category as the deferred index auto-refresh.
 
 ## Stale-comment cleanup
 
