@@ -8,6 +8,7 @@ export interface Settings {
   statusBarPollMs(): number;
   transcriptHistoryLimit(): number;
   askAgent(): string;
+  agents(): unknown;
   hitlAlwaysModal(): boolean;
   logLevel(): LogLevel;
 }
@@ -20,6 +21,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     statusBarPollMs: () => cfg().get<number>("statusBarPollMs", 30000),
     transcriptHistoryLimit: () => cfg().get<number>("transcriptHistoryLimit", 50),
     askAgent: () => cfg().get<string>("askAgent", ""),
+    agents: () => cfg().get<unknown>("agents", []),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
     logLevel: () => {
       const lvl = cfg().get<string>("logLevel", "info");

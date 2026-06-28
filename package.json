@@ -245,6 +245,20 @@
           "default": "",
           "description": "Optional default agent name passed to askStream. Blank = Gateway default."
         },
+        "nimbus.agents": {
+          "type": "array",
+          "default": [],
+          "description": "Agents shown in the Agents sidebar view. Each item: { \"id\": string, \"label\": string, \"description\"?: string }. Clicking one opens a chat scoped to that agent.",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",
           "default": false,
