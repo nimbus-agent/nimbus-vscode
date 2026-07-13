@@ -1,0 +1,32 @@
+# GitLab CI — ported from .github/workflows/ci.yml (build-test job).
+# Warm-standby mirror of the GitHub Actions pipeline. GitHub Actions syntax
+# does not translate to GitLab, so this is a faithful re-expression of the
+# same gates, not a conversion. Kept in sync with package.json scripts.
+image: oven/bun:latest
+
+stages:
+  - verify
+
+# bun's global cache keyed on the lockfile — restored across jobs/pipelines.
+cache:
+  key:
+    files:
+      - bun.lock
+  paths:
+    - .bun-cache
+
+variables:
+  BUN_INSTALL_CACHE_DIR: "$CI_PROJECT_DIR/.bun-cache"
+  CI: "true"
+
+build-test:
+  stage: verify
+  interruptible: true
+  before_script:
+    - bun install --frozen-lockfile
+  script:
+    - bun run typecheck
+    - bun run lint
+    - bun run test
+    - bun run build
+    - bun run check-bundle
