@@ -41,6 +41,17 @@ shared `tree-view.ts` seam.
   else's receipt is a separate surface).
 - Streaming / pagination / "load more" beyond a single `limit`.
 - Workflow and share surfaces (still blocked upstream — no client RPCs).
+- **"Inspect Row" jump from a verify-failure toast** (review #1). Deferred: the
+  client has no by-id lookup (`egressList` takes `{ since?, until?, limit? }`
+  only), so it needs a full-ledger scan for `brokenAt`; verify-failure is a rare
+  tamper state, and a lone row's `rowHash`/`prevHash` without neighbours has
+  limited diagnostic value. Clean ~15-line follow-up if wanted.
+- **Auto-refresh on view visibility** (review #4). Deferred: `onDidChangeVisibility`
+  lives on a `TreeView` (`createTreeView`), but all four views register via
+  `registerTreeDataProvider` (`extension.ts`). Adopting it is a cross-cutting
+  change to the shared registration loop for every view — its own decision, not
+  part of this feature. (Note: verify/prove are read-only and don't mutate the
+  ledger, so no post-command refresh is warranted regardless.)
 
 ## Decisions (from brainstorm)
 
@@ -49,6 +60,11 @@ shared `tree-view.ts` seam.
   All time) → **always signed** → Save dialog writes the full proof JSON.
 - Row **icon** keys off `resultStatus` (`authorized`→`pass`, `blocked`→`error`)
   — the security-relevant signal — with `hitlStatus` folded into the tooltip.
+  Per the `0.4.0` client types, `resultStatus` is exactly `"authorized" |
+  "blocked"` and `hitlStatus` is `"approved" | "not_required" | "rejected"` —
+  there is **no** `pending`/`skipped` ledger state (pending *consent* is the
+  separate pre-dispatch `subscribeHitl` surface, not a ledger row), so `dash`
+  serves only as a defensive fallback for an unexpected value (review #3).
 - Egress view sits **immediately after Audit** in the `nimbus` container (they
   are the compliance pair).
 
@@ -131,17 +147,24 @@ Registered alongside the existing `register(...)` calls; view created next to
   3. `await egressProveWindow({ since, until, sign: true })` for the chosen preset
      (omit `since`/`until` when the preset leaves them open — respect
      `exactOptionalPropertyTypes`, build the params object incrementally).
-  4. `buildProofDocument(result, Date.now())` → `saveJson(filename, content)`.
-  5. throw → `showErrorMessage(...)` + `log.warn`.
+  4. `buildProofDocument(result, Date.now())` → `const saved = await saveJson(filename, content)`.
+  5. On a saved URI, `showInformationMessage("Egress proof saved.", "Open File")`;
+     if the user clicks "Open File", `window.showTextDocument(await
+     workspace.openTextDocument(saved))`. Cancelled save (`undefined`) → no-op,
+     no toast (review #2).
+  6. throw → `showErrorMessage(...)` + `log.warn`.
 
 ### `saveJson` opener seam
 
 A new injected opener alongside `openReadonlyJson`, defaulting (like
 `createReadonlyJsonOpener`) to a factory in `extension.ts`:
 
-- `saveJson(defaultName: string, content: string): Promise<void>` —
+- `saveJson(defaultName: string, content: string): Promise<Uri | undefined>` —
   `window.showSaveDialog({ defaultUri: <workspace or home>/defaultName, filters: { JSON: ["json"] } })`;
-  on a chosen URI, `workspace.fs.writeFile(uri, <utf8 bytes>)`; cancel → no-op.
+  on a chosen URI, `workspace.fs.writeFile(uri, <utf8 bytes>)` then **return the
+  URI**; cancel → return `undefined` (no write). Returning the URI lets the
+  command show the success toast + "Open File" action (review #2). Overwrite of
+  an existing same-named file is handled natively by `showSaveDialog` (review #5).
 
 The pure filename/content generation is in `buildProofDocument` (tested); the
 seam itself is thin glue exercised via the vscode stub.
@@ -204,10 +227,13 @@ Vitest, `vscode` aliased to the stub. Mirrors `audit.test.ts` / `audit-view.test
   yet", `egressList` throw → error row, happy path via a fake `EgressClientLike`.
 - Extension command coverage (extend existing `extension.test.ts` style):
   `verifyEgress` ok / broken / disconnected / throw; `proveEgressWindow`
-  cancelled Quick Pick / disconnected / saved (assert `saveJson`/`writeFile`
-  called with the built filename+content).
-- `test/unit/vscode-stub.ts`: add `showSaveDialog` and `workspace.fs.writeFile`
-  stubs (and `showQuickPick` if not already present).
+  disconnected / **cancelled Quick Pick** (no `egressProveWindow` call) /
+  **cancelled save dialog** (`saveJson`→`undefined`: no toast, no throw) /
+  saved (assert `writeFile` called with the built filename+content, then the
+  success toast; and "Open File" opens the saved URI) — review #5.
+- `test/unit/vscode-stub.ts`: add `showSaveDialog`, `workspace.fs.writeFile`,
+  and (for the "Open File" action) `workspace.openTextDocument` /
+  `window.showTextDocument` stubs (and `showQuickPick` if not already present).
 
 ## Verification
 
