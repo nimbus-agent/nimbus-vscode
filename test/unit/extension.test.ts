@@ -345,7 +345,7 @@ describe("activateWithDeps", () => {
     const before = exec.mock.calls.length;
     await cmd(f, "nimbus.quickActions")();
     // showQuickPick resolves undefined by default → no command dispatched.
-    expect(exec.mock.calls.length).toBe(before);
+    expect(exec.mock.calls).toHaveLength(before);
   });
 
   test("the registered audit provider loads client rows and resolves theme icons", async () => {
@@ -418,11 +418,15 @@ describe("activateWithDeps", () => {
     expect(f.openedDocs).toHaveLength(0);
   });
 
-  test("nimbus.refreshAudit refreshes the audit view without throwing", async () => {
+  test.each([
+    ["nimbus.refreshAudit", "audit"],
+    ["nimbus.refreshSessions", "sessions"],
+    ["nimbus.refreshIndex", "index"],
+  ])("%s refreshes the %s view without throwing", async (command) => {
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
-    expect(() => cmd(f, "nimbus.refreshAudit")()).not.toThrow();
+    expect(() => cmd(f, command)()).not.toThrow();
   });
 
   test("the registered sessions provider lists sessions via querySql", async () => {
@@ -485,13 +489,6 @@ describe("activateWithDeps", () => {
     expect(getSessionTranscript).not.toHaveBeenCalled();
   });
 
-  test("nimbus.refreshSessions refreshes the sessions view without throwing", async () => {
-    const f = makeFixture({});
-    activateWithDeps(f.ctx, f.deps);
-    await waitForConnect();
-    expect(() => cmd(f, "nimbus.refreshSessions")()).not.toThrow();
-  });
-
   test("the registered index provider groups items via queryItems", async () => {
     const queryItems = vi.fn(async () => ({
       items: [
@@ -525,13 +522,6 @@ describe("activateWithDeps", () => {
     if (provider === undefined) throw new Error("index provider not registered");
     const rows = (await provider.getChildren(undefined)) as Array<{ label: string }>;
     expect(rows[0]?.label).toMatch(/failed to load index/i);
-  });
-
-  test("nimbus.refreshIndex refreshes the index view without throwing", async () => {
-    const f = makeFixture({});
-    activateWithDeps(f.ctx, f.deps);
-    await waitForConnect();
-    expect(() => cmd(f, "nimbus.refreshIndex")()).not.toThrow();
   });
 
   test("nimbus.openIndexItem opens a url via the injected opener", async () => {

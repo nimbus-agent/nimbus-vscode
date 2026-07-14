@@ -44,7 +44,10 @@ export function agentsToRows(agents: Agent[], activeAgentId?: string): SidebarIt
   return agents.map((agent) => {
     const isActive = activeAgentId !== undefined && agent.id === activeAgentId;
     const base = agent.description ?? "";
-    const description = isActive ? (base.length > 0 ? `${base} (active)` : "(active)") : base;
+    let description = base;
+    if (isActive) {
+      description = base.length > 0 ? `${base} (active)` : "(active)";
+    }
     return {
       label: agent.label,
       iconId: "hubot",
