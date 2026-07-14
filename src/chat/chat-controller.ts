@@ -30,6 +30,7 @@ export interface ChatController {
   stop(): Promise<void>;
   newConversation(): Promise<void>;
   rehydrateIfNeeded(limit: number): Promise<void>;
+  resume(sessionId: string, limit: number): Promise<void>;
   isStreaming(): boolean;
 }
 
@@ -68,7 +69,17 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
     void deps.panel.postMessage(m);
   };
 
-  const handleEvent = async (ev: StreamEvent): Promise<boolean> => {
+  const hydrate = async (sessionId: string, limit: number): Promise<void> => {
+    try {
+      const r = await deps.client.getSessionTranscript({ sessionId, limit });
+      post({ type: "hydrate", turns: r.turns });
+    } catch (e) {
+      deps.log.warn(`getSessionTranscript failed: ${e instanceof Error ? e.message : String(e)}`);
+      post({ type: "emptyState", sub: "no-transcript" });
+    }
+  };
+
+  const handleEvent = async (ev: StreamEvent, handle: AskStreamHandle): Promise<boolean> => {
     if (ev.type === "token") {
       post({ type: "token", text: ev.text });
       return false;
@@ -88,7 +99,10 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
     }
     if (ev.type === "done") {
       post({ type: "done", reply: ev.reply, sessionId: ev.sessionId });
-      if (ev.sessionId.length > 0) {
+      // Only persist when this stream is still the active one — a concurrent
+      // resume()/stop()/newConversation() may have superseded it, and a late
+      // "done" must not clobber the session they switched to.
+      if (ev.sessionId.length > 0 && active === handle) {
         await deps.sessionStore.set(ev.sessionId);
       }
       return true;
@@ -117,7 +131,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
             deps.registerStreamWithHitl(handle.streamId);
             registered = true;
           }
-          if (await handleEvent(ev)) break;
+          if (await handleEvent(ev, handle)) break;
         }
       } finally {
         if (handle.streamId.length > 0) {
@@ -128,13 +142,15 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
     },
     async stop(): Promise<void> {
       if (active === undefined) return;
-      await active.cancel();
+      const handle = active;
       active = undefined;
+      await handle.cancel();
     },
     async newConversation(): Promise<void> {
       if (active !== undefined) {
-        await active.cancel();
+        const handle = active;
         active = undefined;
+        await handle.cancel();
       }
       await deps.sessionStore.clear();
       post({ type: "reset" });
@@ -145,13 +161,17 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
         post({ type: "emptyState", sub: "no-transcript" });
         return;
       }
-      try {
-        const r = await deps.client.getSessionTranscript({ sessionId: sid, limit });
-        post({ type: "hydrate", turns: r.turns });
-      } catch (e) {
-        deps.log.warn(`getSessionTranscript failed: ${e instanceof Error ? e.message : String(e)}`);
-        post({ type: "emptyState", sub: "no-transcript" });
+      await hydrate(sid, limit);
+    },
+    async resume(sessionId, limit): Promise<void> {
+      if (active !== undefined) {
+        const handle = active;
+        active = undefined;
+        await handle.cancel();
       }
+      await deps.sessionStore.set(sessionId);
+      post({ type: "reset" });
+      await hydrate(sessionId, limit);
     },
     isStreaming: () => active !== undefined,
   };

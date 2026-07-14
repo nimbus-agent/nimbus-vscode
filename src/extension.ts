@@ -14,11 +14,14 @@ import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
 import { createLogger, type Logger } from "./logging.js";
 import { createSettings } from "./settings.js";
+import { type Agent, parseAgents } from "./sidebar/agents.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
 import { formatAuditDetail } from "./sidebar/audit.js";
 import { createAuditView } from "./sidebar/audit-view.js";
+import { buildAskPrompt, type IndexItem, parseIndexRow } from "./sidebar/index.js";
 import { createIndexView } from "./sidebar/index-view.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
+import { parseSessionRow, type SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
 import { createStatusBarController } from "./status-bar/status-bar-item.js";
@@ -30,6 +33,16 @@ import type {
   WorkspaceApi,
 } from "./vscode-shim.js";
 
+// Mirrors the Gateway's session.list query against the local session_memory
+// table (reachable through the public read-only querySql).
+const SESSIONS_SQL =
+  "SELECT session_id AS sessionId, MAX(created_at) AS lastWriteAt, COUNT(*) AS chunkCount " +
+  "FROM session_memory GROUP BY session_id ORDER BY lastWriteAt DESC LIMIT 200";
+
+// Newest-N indexed items pulled for the Index view. The Gateway returns them
+// already ordered; we cap to keep the tree responsive (cf. the search handler).
+const INDEX_LIMIT = 100;
+
 export interface ActivateDeps {
   window: WindowApi;
   workspace: WorkspaceApi;
@@ -39,6 +52,7 @@ export interface ActivateDeps {
   chatPanelFactory?: (deps: { log: Logger }) => ChatPanelFactory;
   autoStarter?: AutoStarter;
   openReadonlyJson?: (title: string, content: string) => Promise<void>;
+  openSource?: (item: IndexItem) => Promise<void>;
 }
 
 export function activateWithDeps(
@@ -101,6 +115,7 @@ export function activateWithDeps(
   const chatPanelFactory = deps.chatPanelFactory?.({ log }) ?? createRealChatPanelFactory(log);
 
   let chatController: ChatController | undefined;
+  let activeAgent: string | undefined;
   const registeredHitlStreams = new Set<string>();
 
   const ensureChatController = (): ChatController | undefined => {
@@ -122,7 +137,7 @@ export function activateWithDeps(
         registeredHitlStreams.delete(id);
       },
       log,
-      agent: () => settings.askAgent(),
+      agent: () => activeAgent ?? settings.askAgent(),
     });
     panel.onMessage((msg) => {
       if (msg === null || typeof msg !== "object") return;
@@ -288,21 +303,71 @@ export function activateWithDeps(
 
   const cfgSub = deps.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration("nimbus")) renderStatusBar(connection.current());
+    if (e.affectsConfiguration("nimbus.agents")) agentsView.refresh();
   });
   ctx.subscriptions.push(cfgSub);
 
-  // Sidebar tree views (design surfaces #1/#3/#5/#6). The Audit view (#1) is
-  // live; the rest are scaffolds. Each refreshes off connection state and
-  // degrades gracefully when the Gateway is unreachable.
+  // Sidebar tree views (design surfaces #1/#3/#5/#6). All four are live (Audit,
+  // Agents, Index, Sessions). Each refreshes off connection state and degrades
+  // gracefully when the Gateway is unreachable.
   const auditView = createAuditView({
     connection,
     getClient: () => connection.client() as NimbusClient | undefined,
   });
+  const loadSessions = async (): Promise<SessionSummary[]> => {
+    const client = connection.client() as NimbusClient | undefined;
+    if (client === undefined) return [];
+    try {
+      const result = await client.querySql(SESSIONS_SQL);
+      const sessions: SessionSummary[] = [];
+      for (const row of result.rows) {
+        const parsed = parseSessionRow(row);
+        if (parsed !== undefined) sessions.push(parsed);
+      }
+      return sessions;
+    } catch (e) {
+      // e.g. an older Gateway without the session_memory table. Log a trail,
+      // then rethrow so the view renders its "Failed to load sessions" row.
+      log.warn(`loadSessions querySql failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+  };
+  // Session list comes from the Gateway's session_memory table via the public
+  // querySql (mirrors the Gateway's own session.list query). This schema
+  // coupling is isolated here so the view stays pure; swap for a typed
+  // client.listSessions() once the client exposes one.
+  const sessionsView = createSessionsView({ connection, loadSessions });
+  // Indexed items come from the Gateway via the public queryItems IPC. The
+  // schema coupling (field names) is isolated here so the view stays pure; swap
+  // for a typed client method once one exists.
+  const loadIndex = async (): Promise<IndexItem[]> => {
+    const client = connection.client() as NimbusClient | undefined;
+    if (client === undefined) return [];
+    try {
+      const { items } = await client.queryItems({ limit: INDEX_LIMIT });
+      const result: IndexItem[] = [];
+      for (const row of items) {
+        const parsed = parseIndexRow(row);
+        if (parsed !== undefined) result.push(parsed);
+      }
+      return result;
+    } catch (e) {
+      log.warn(`loadIndex queryItems failed: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
+  };
+  const indexView = createIndexView({ connection, loadIndex });
+  const loadAgents = (): Agent[] => parseAgents(settings.agents());
+  const agentsView = createAgentsView({
+    connection,
+    loadAgents,
+    activeAgentId: () => activeAgent,
+  });
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
     ["nimbus.auditView", auditView],
-    ["nimbus.agentsView", createAgentsView({ connection })],
-    ["nimbus.indexView", createIndexView({ connection })],
-    ["nimbus.sessionsView", createSessionsView({ connection })],
+    ["nimbus.agentsView", agentsView],
+    ["nimbus.indexView", indexView],
+    ["nimbus.sessionsView", sessionsView],
   ];
   for (const [viewId, view] of sidebarViews) {
     ctx.subscriptions.push(
@@ -315,6 +380,7 @@ export function activateWithDeps(
   }
 
   const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
+  const openSource = deps.openSource ?? createSourceOpener();
 
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 
@@ -360,9 +426,10 @@ export function activateWithDeps(
     try {
       const r = await c.queryItems({ limit: 50 });
       const items = r.items.map((it) => ({
-        label: displayText(it["title"]) ?? displayText(it["id"]) ?? "(untitled)",
+        // NimbusItem fields: name (not title) and url (there is no path).
+        label: displayText(it["name"]) ?? displayText(it["id"]) ?? "(untitled)",
         description: displayText(it["service"]) ?? "",
-        detail: displayText(it["url"]) ?? displayText(it["path"]) ?? "",
+        detail: displayText(it["url"]) ?? "",
       }));
       await deps.window.showQuickPick(items, {
         placeHolder: `${items.length} results for "${q.trim()}"`,
@@ -389,7 +456,27 @@ export function activateWithDeps(
   register("nimbus.newConversation", async () => {
     const ctl = ensureChatController();
     if (ctl === undefined) return;
+    activeAgent = undefined;
     await ctl.newConversation();
+    agentsView.refresh();
+  });
+
+  register("nimbus.openAgentChat", async (...args) => {
+    // Primary-click command: args[0] is the Agent we put in the row's
+    // command.arguments (see agentsToRows). Re-validate defensively via
+    // parseAgents (single-element array), mirroring openIndexItem.
+    const [agent] = parseAgents([args[0]]);
+    if (agent === undefined) return;
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    // Set the override only once we know a chat will actually start, so a
+    // disconnected click can't silently pin activeAgent for the next chat.
+    activeAgent = agent.id;
+    // ensureChatController() creates+reveals the panel on first use; for an
+    // already-open panel it returns early, so current()?.reveal() reveals it.
+    await ctl.newConversation();
+    chatPanelFactory.current()?.reveal();
+    agentsView.refresh();
   });
 
   register("nimbus.startGateway", async () => {
@@ -421,6 +508,53 @@ export function activateWithDeps(
 
   register("nimbus.refreshAudit", () => {
     auditView.refresh();
+  });
+
+  register("nimbus.refreshSessions", () => {
+    sessionsView.refresh();
+  });
+
+  register("nimbus.refreshIndex", () => {
+    indexView.refresh();
+  });
+
+  register("nimbus.openIndexItem", async (...args) => {
+    // Primary-click command: args[0] is the IndexItem we put in the row's
+    // command.arguments. Re-validate it defensively through parseIndexRow.
+    const item = parseIndexRow(args[0]);
+    if (item === undefined || item.url === undefined) return;
+    try {
+      await openSource(item);
+    } catch (e) {
+      void deps.window.showWarningMessage(
+        `Couldn't open ${item.name}: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+  });
+
+  register("nimbus.askAboutIndexItem", async (...args) => {
+    // A view/item/context command receives the tree NODE element (a SidebarItem),
+    // NOT the row's command.arguments. The IndexItem rides along on node.payload
+    // (see itemToRow). openIndexItem differs: it's the row's primary command, so
+    // it gets command.arguments[0] (the IndexItem) directly.
+    const node = args[0];
+    const payload =
+      typeof node === "object" && node !== null
+        ? (node as { payload?: unknown }).payload
+        : undefined;
+    const item = parseIndexRow(payload);
+    if (item === undefined) return;
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    await ctl.start(buildAskPrompt(item));
+  });
+
+  register("nimbus.openSession", async (...args) => {
+    const sessionId = typeof args[0] === "string" ? args[0] : "";
+    if (sessionId.length === 0) return;
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    await ctl.resume(sessionId, settings.transcriptHistoryLimit());
   });
 
   register("nimbus.openAuditEntry", async (...args) => {
@@ -545,6 +679,29 @@ function createReadonlyJsonOpener(
     }
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(`${scheme}:${path}`));
     await vscode.window.showTextDocument(doc, { preview: true });
+  };
+}
+
+function createSourceOpener(): (item: IndexItem) => Promise<void> {
+  return async (item) => {
+    const url = item.url;
+    if (url === undefined || url.length === 0) return;
+    // A Windows drive path (C:\...) is NOT a URI scheme — `C:` would otherwise
+    // parse as scheme "c". Treat it, and any bare path, as a file Uri; only a
+    // real >=2-char scheme (http/https/file/mailto/...) goes through Uri.parse.
+    const isWindowsDrivePath = /^[a-zA-Z]:[\\/]/.test(url);
+    const uri =
+      !isWindowsDrivePath && /^[a-z][a-z0-9+.-]+:/i.test(url)
+        ? vscode.Uri.parse(url)
+        : vscode.Uri.file(url);
+    if (uri.scheme === "file") {
+      await vscode.commands.executeCommand("vscode.open", uri);
+    } else {
+      // openExternal resolves `false` (it does not throw) when the OS handler
+      // declines; surface that through the command's catch -> warning path.
+      const ok = await vscode.env.openExternal(uri);
+      if (!ok) throw new Error("the system declined to open this URL");
+    }
   };
 }
 

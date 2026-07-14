@@ -1,11 +1,10 @@
 import { type AuditEntry, auditEntryToItem, parseAuditEntry } from "./audit.js";
 import {
-  connectionPlaceholder,
-  createEmitter,
+  createDataView,
+  errorRow,
   type SidebarConnection,
   type SidebarItem,
   type SidebarView,
-  toTreeItem,
 } from "./tree-view.js";
 
 // The Gateway client capability this view needs. The real NimbusClient
@@ -29,43 +28,24 @@ export function createAuditView(deps: {
   limit?: number;
   now?: () => number;
 }): SidebarView {
-  const emitter = createEmitter<SidebarItem | undefined>();
-  const sub = deps.connection.onState(() => emitter.fire(undefined));
-
-  const loadRows = async (): Promise<SidebarItem[]> => {
-    const placeholder = connectionPlaceholder(deps.connection.current());
-    if (placeholder !== undefined) return placeholder;
-    const client = deps.getClient();
-    if (client === undefined) return [NOT_CONNECTED_ROW];
-    try {
-      const raw = await client.auditList(deps.limit ?? 100);
-      const entries: AuditEntry[] = [];
-      for (const row of raw) {
-        const entry = parseAuditEntry(row);
-        if (entry !== undefined) entries.push(entry);
+  return createDataView({
+    connection: deps.connection,
+    loadData: async () => {
+      const client = deps.getClient();
+      if (client === undefined) return [NOT_CONNECTED_ROW];
+      try {
+        const raw = await client.auditList(deps.limit ?? 100);
+        const entries: AuditEntry[] = [];
+        for (const row of raw) {
+          const entry = parseAuditEntry(row);
+          if (entry !== undefined) entries.push(entry);
+        }
+        if (entries.length === 0) return [{ label: "No audit entries yet" }];
+        const now = (deps.now ?? Date.now)();
+        return entries.map((entry) => auditEntryToItem(entry, now));
+      } catch (err) {
+        return [errorRow("Failed to load the audit log", err)];
       }
-      if (entries.length === 0) return [{ label: "No audit entries yet" }];
-      const now = (deps.now ?? Date.now)();
-      return entries.map((entry) => auditEntryToItem(entry, now));
-    } catch (err) {
-      return [
-        {
-          label: "Failed to load the audit log",
-          tooltip: err instanceof Error ? err.message : String(err),
-          iconId: "error",
-        },
-      ];
-    }
-  };
-
-  return {
-    onDidChangeTreeData: emitter.event,
-    getTreeItem: (item) => toTreeItem(item),
-    getChildren: async (element) => (element === undefined ? await loadRows() : []),
-    refresh: () => emitter.fire(undefined),
-    dispose: () => {
-      sub.dispose();
-      emitter.dispose();
     },
-  };
+  });
 }

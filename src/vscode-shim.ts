@@ -73,6 +73,7 @@ export interface WindowApi {
     ...items: string[]
   ): Thenable<string | undefined>;
   showErrorMessage(msg: string, ...items: string[]): Thenable<string | undefined>;
+  showWarningMessage(msg: string, ...items: string[]): Thenable<string | undefined>;
   showInputBox(opts?: { prompt?: string; value?: string }): Thenable<string | undefined>;
   showQuickPick<T extends QuickPickItemLike>(
     items: readonly T[],

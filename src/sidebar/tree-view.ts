@@ -19,6 +19,17 @@ export interface SidebarItem {
   /** A vscode ThemeIcon id (codicon), e.g. "pass" / "error" / "dash". */
   readonly iconId?: string;
   readonly command?: { command: string; title: string; arguments?: unknown[] };
+  /** A vscode TreeItem contextValue, used to gate context-menu (view/item/context) commands. */
+  readonly contextValue?: string;
+  /** Child rows; when present and non-empty, this row renders collapsible. */
+  readonly children?: SidebarItem[];
+  /**
+   * Domain object carried on the tree node. VS Code passes the NODE element
+   * (this SidebarItem) — not `command.arguments` — to a view/item/context
+   * command, so a menu handler reads its data from here. Untyped because it's
+   * generic across views; consumers coerce it defensively.
+   */
+  readonly payload?: unknown;
 }
 
 export interface SidebarView extends TreeDataProviderLike<SidebarItem> {
@@ -88,19 +99,20 @@ export function connectionPlaceholder(state: ConnectionState): SidebarItem[] | u
   }
 }
 
-// The rows shown by an otherwise-empty view: the non-connected placeholder, or
-// the view's own `emptyLabel` when connected with nothing to show.
-export function placeholderItems(state: ConnectionState, emptyLabel: string): SidebarItem[] {
-  return connectionPlaceholder(state) ?? [{ label: emptyLabel }];
+// A standard error row for a view whose data load threw.
+export function errorRow(label: string, err: unknown): SidebarItem {
+  return { label, tooltip: err instanceof Error ? err.message : String(err), iconId: "error" };
 }
 
 export function toTreeItem(item: SidebarItem): TreeItemLike {
   // Build incrementally so we never assign `undefined` to an optional field
-  // (tsconfig has exactOptionalPropertyTypes). Phase 1 rows are leaf
-  // placeholders (TreeItemCollapsibleState.None = 0).
-  const treeItem: TreeItemLike = { label: item.label, collapsibleState: 0 };
+  // (tsconfig has exactOptionalPropertyTypes). A row with children renders
+  // Collapsed (1); otherwise it's a leaf (None = 0).
+  const collapsibleState = item.children !== undefined && item.children.length > 0 ? 1 : 0;
+  const treeItem: TreeItemLike = { label: item.label, collapsibleState };
   if (item.description !== undefined) treeItem.description = item.description;
   if (item.tooltip !== undefined) treeItem.tooltip = item.tooltip;
+  if (item.contextValue !== undefined) treeItem.contextValue = item.contextValue;
   if (item.iconId !== undefined) treeItem.iconId = item.iconId;
   if (item.command !== undefined) treeItem.command = item.command;
   return treeItem;
@@ -128,22 +140,41 @@ export function applyThemeIcons(
   return provider;
 }
 
-// Shared factory for the scaffold views: each renders connection-aware
-// placeholder rows and refreshes whenever the connection state changes.
-export function createPlaceholderView(deps: {
+// The shared sidebar view: connection-aware (renders a placeholder for any
+// non-connected state), refreshes on state change, and otherwise renders
+// `loadData()` rows. Every concrete view (audit, sessions, scaffolds) is a thin
+// wrapper that supplies its own `loadData`, so the provider boilerplate lives
+// in exactly one place.
+export function createDataView(deps: {
   connection: SidebarConnection;
-  emptyLabel: string;
+  loadData: () => Promise<SidebarItem[]>;
 }): SidebarView {
   const emitter = createEmitter<SidebarItem | undefined>();
   const sub = deps.connection.onState(() => emitter.fire(undefined));
+  const loadRows = async (): Promise<SidebarItem[]> => {
+    const placeholder = connectionPlaceholder(deps.connection.current());
+    return placeholder ?? (await deps.loadData());
+  };
   return {
     onDidChangeTreeData: emitter.event,
     getTreeItem: (item) => toTreeItem(item),
-    getChildren: () => placeholderItems(deps.connection.current(), deps.emptyLabel),
+    getChildren: async (element) =>
+      element === undefined ? await loadRows() : (element.children ?? []),
     refresh: () => emitter.fire(undefined),
     dispose: () => {
       sub.dispose();
       emitter.dispose();
     },
   };
+}
+
+// A scaffold view: shows `emptyLabel` when connected with no data yet.
+export function createPlaceholderView(deps: {
+  connection: SidebarConnection;
+  emptyLabel: string;
+}): SidebarView {
+  return createDataView({
+    connection: deps.connection,
+    loadData: async () => [{ label: deps.emptyLabel }],
+  });
 }

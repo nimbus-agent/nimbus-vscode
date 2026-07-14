@@ -25,6 +25,7 @@ describe("Settings", () => {
     expect(s.statusBarPollMs()).toBe(30000);
     expect(s.transcriptHistoryLimit()).toBe(50);
     expect(s.askAgent()).toBe("");
+    expect(s.agents()).toEqual([]);
     expect(s.hitlAlwaysModal()).toBe(false);
     expect(s.logLevel()).toBe("info");
   });
@@ -37,6 +38,7 @@ describe("Settings", () => {
         statusBarPollMs: 5000,
         transcriptHistoryLimit: 200,
         askAgent: "mainAgent",
+        agents: [{ id: "a", label: "A" }],
         hitlAlwaysModal: true,
         logLevel: "debug",
       }),
@@ -46,6 +48,7 @@ describe("Settings", () => {
     expect(s.statusBarPollMs()).toBe(5000);
     expect(s.transcriptHistoryLimit()).toBe(200);
     expect(s.askAgent()).toBe("mainAgent");
+    expect(s.agents()).toEqual([{ id: "a", label: "A" }]);
     expect(s.hitlAlwaysModal()).toBe(true);
     expect(s.logLevel()).toBe("debug");
   });

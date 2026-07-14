@@ -100,6 +100,38 @@
         "command": "nimbus.openAuditEntry",
         "title": "Open Audit Entry",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.refreshSessions",
+        "title": "Refresh Sessions",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nimbus.openSession",
+        "title": "Open Session",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.refreshIndex",
+        "title": "Refresh Index",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nimbus.openIndexItem",
+        "title": "Open Indexed Item",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.askAboutIndexItem",
+        "title": "Ask Nimbus about this",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.openAgentChat",
+        "title": "Open Agent Chat",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
@@ -136,12 +168,45 @@
         {
           "command": "nimbus.openAuditEntry",
           "when": "false"
+        },
+        {
+          "command": "nimbus.openSession",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.openIndexItem",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.askAboutIndexItem",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.openAgentChat",
+          "when": "false"
         }
       ],
       "view/title": [
         {
           "command": "nimbus.refreshAudit",
           "when": "view == nimbus.auditView",
+          "group": "navigation"
+        },
+        {
+          "command": "nimbus.refreshSessions",
+          "when": "view == nimbus.sessionsView",
+          "group": "navigation"
+        },
+        {
+          "command": "nimbus.refreshIndex",
+          "when": "view == nimbus.indexView",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "nimbus.askAboutIndexItem",
+          "when": "view == nimbus.indexView && viewItem == nimbusIndexItem",
           "group": "navigation"
         }
       ],
@@ -188,6 +253,20 @@
           "type": "string",
           "default": "",
           "description": "Optional default agent name passed to askStream. Blank = Gateway default."
+        },
+        "nimbus.agents": {
+          "type": "array",
+          "default": [],
+          "description": "Agents shown in the Agents sidebar view. Each item: { \"id\": string, \"label\": string, \"description\"?: string }. Clicking one opens a chat scoped to that agent.",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": { "type": "string" },
+              "label": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
         },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",

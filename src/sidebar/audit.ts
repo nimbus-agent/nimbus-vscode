@@ -1,3 +1,4 @@
+import { formatRelativeTime } from "./relative-time.js";
 import type { SidebarItem } from "./tree-view.js";
 
 export type HitlStatus = "approved" | "rejected" | "not_required";
@@ -54,20 +55,6 @@ const STATUS_LABEL: Record<HitlStatus, string> = {
   rejected: "rejected",
   not_required: "no consent required",
 };
-
-// Compact "x ago" relative time. `now` is injected so callers/tests are
-// deterministic. Future timestamps (clock skew) read as "just now".
-export function formatRelativeTime(now: number, timestamp: number): string {
-  const deltaSec = Math.floor((now - timestamp) / 1000);
-  if (deltaSec < 5) return "just now";
-  if (deltaSec < 60) return `${deltaSec}s ago`;
-  const min = Math.floor(deltaSec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  return `${day}d ago`;
-}
 
 export function auditEntryToItem(entry: AuditEntry, now: number): SidebarItem {
   return {

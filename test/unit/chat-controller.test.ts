@@ -1,4 +1,4 @@
-import type { AskStreamHandle } from "@nimbus-dev/client";
+import type { AskStreamHandle, StreamEvent } from "@nimbus-dev/client";
 import { MockClient } from "@nimbus-dev/client";
 import { describe, expect, test, vi } from "vitest";
 import { type ChatClientLike, createChatController } from "../../src/chat/chat-controller.js";
@@ -65,7 +65,105 @@ function postedTypes(posted: unknown[]): string[] {
   return posted.map((m) => (m as { type: string }).type);
 }
 
+function fakeChatClient(over: Partial<ChatClientLike> = {}): ChatClientLike {
+  return {
+    askStream: () => pendingStream().handle,
+    cancelStream: async () => ({ ok: true }),
+    getSessionTranscript: async () => ({ sessionId: "", turns: [], hasMore: false }),
+    ...over,
+  };
+}
+
 describe("ChatController", () => {
+  test("resume sets the session, resets the panel, then hydrates the transcript", async () => {
+    const set = vi.fn(async () => undefined);
+    const getSessionTranscript = vi.fn(async () => ({
+      sessionId: "s9",
+      turns: [{ role: "user" as const, text: "hi", timestamp: 1 }],
+      hasMore: false,
+    }));
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ getSessionTranscript }), {
+        panel,
+        sessionStore: { get: () => undefined, set, clear: async () => undefined },
+      }),
+    );
+    await ctrl.resume("s9", 50);
+    expect(set).toHaveBeenCalledWith("s9");
+    expect(postedTypes(posted)).toEqual(["reset", "hydrate"]);
+    expect(getSessionTranscript).toHaveBeenCalledWith({ sessionId: "s9", limit: 50 });
+  });
+
+  test("resume cancels an in-flight stream before switching sessions", async () => {
+    const { handle, cancel } = pendingStream();
+    const { panel } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => handle }), { panel }),
+    );
+    const p = ctrl.start("hi");
+    await Promise.resolve();
+    expect(ctrl.isStreaming()).toBe(true);
+    await ctrl.resume("s2", 10);
+    expect(cancel).toHaveBeenCalled();
+    expect(ctrl.isStreaming()).toBe(false);
+    await p;
+  });
+
+  test("a superseded stream's late done does not clobber the resumed session", async () => {
+    // A stream that emits done(sessionId:"old") only after cancel() releases it.
+    let release = (): void => undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const handle = {
+      streamId: "s1",
+      cancel: vi.fn(async () => release()),
+      [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
+        let sent = false;
+        return {
+          async next(): Promise<IteratorResult<StreamEvent>> {
+            if (sent) return { value: undefined as never, done: true };
+            await gate;
+            sent = true;
+            return { value: { type: "done", reply: "", sessionId: "old" }, done: false };
+          },
+        };
+      },
+    } as unknown as AskStreamHandle;
+    const set = vi.fn(async (_id: string) => undefined);
+    const { panel } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => handle }), {
+        panel,
+        sessionStore: { get: () => undefined, set, clear: async () => undefined },
+      }),
+    );
+    const p = ctrl.start("hi");
+    await Promise.resolve();
+    await ctrl.resume("new", 10);
+    await p;
+    const written = set.mock.calls.map((c) => c[0]);
+    expect(written).toContain("new");
+    expect(written).not.toContain("old");
+  });
+
+  test("resume posts an empty state when the transcript load fails", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          getSessionTranscript: async () => {
+            throw new Error("nope");
+          },
+        }),
+        { panel },
+      ),
+    );
+    await ctrl.resume("s3", 5);
+    expect(postedTypes(posted)).toEqual(["reset", "emptyState"]);
+  });
+
   test("askStream messages get translated to webview postMessage", async () => {
     const panel = createNoopChatPanel();
     const posted: unknown[] = [];
@@ -141,7 +239,9 @@ describe("ChatController", () => {
 
   test("stop() cancels the in-flight stream and clears the streaming flag", async () => {
     const { handle, cancel } = pendingStream();
-    const ctrl = createChatController(baseDeps({ askStream: () => handle } as unknown as ChatClientLike));
+    const ctrl = createChatController(
+      baseDeps({ askStream: () => handle } as unknown as ChatClientLike),
+    );
     const p = ctrl.start("hi");
     await Promise.resolve();
     expect(ctrl.isStreaming()).toBe(true);

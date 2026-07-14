@@ -3,11 +3,12 @@ import { describe, expect, test } from "vitest";
 import type { ConnectionState } from "../../src/connection/connection-manager.js";
 import { createAgentsView } from "../../src/sidebar/agents-view.js";
 import { createIndexView } from "../../src/sidebar/index-view.js";
-import { createSessionsView } from "../../src/sidebar/sessions-view.js";
 import {
   applyThemeIcons,
+  connectionPlaceholder,
+  createDataView,
   createPlaceholderView,
-  placeholderItems,
+  toTreeItem,
   type SidebarConnection,
 } from "../../src/sidebar/tree-view.js";
 
@@ -40,10 +41,9 @@ function makeConnection(initial: ConnectionState): {
   };
 }
 
-describe("placeholderItems", () => {
-  test("connected shows the view's empty label", () => {
-    const items = placeholderItems({ kind: "connected", socketPath: "/s" }, "No audit entries yet");
-    expect(items).toEqual([{ label: "No audit entries yet" }]);
+describe("connectionPlaceholder", () => {
+  test("returns undefined when connected (the view renders its own data)", () => {
+    expect(connectionPlaceholder({ kind: "connected", socketPath: "/s" })).toBeUndefined();
   });
 
   test("idle / connecting / starting-gateway all show a connecting row", () => {
@@ -53,26 +53,27 @@ describe("placeholderItems", () => {
       { kind: "starting-gateway", socketPath: "/s" },
     ];
     for (const s of states) {
-      const items = placeholderItems(s, "empty");
+      const items = connectionPlaceholder(s);
       expect(items).toHaveLength(1);
-      expect(items[0]?.label).toMatch(/Connecting/);
-      expect(items[0]?.command).toBeUndefined();
+      expect(items?.[0]?.label).toMatch(/Connecting/);
+      expect(items?.[0]?.command).toBeUndefined();
     }
   });
 
   test("disconnected offers a reconnect command and surfaces the reason", () => {
-    const items = placeholderItems(
-      { kind: "disconnected", socketPath: "/s", reason: "ECONNREFUSED" },
-      "empty",
-    );
-    expect(items[0]?.command?.command).toBe("nimbus.reconnect");
-    expect(items[0]?.tooltip).toBe("ECONNREFUSED");
+    const items = connectionPlaceholder({
+      kind: "disconnected",
+      socketPath: "/s",
+      reason: "ECONNREFUSED",
+    });
+    expect(items?.[0]?.command?.command).toBe("nimbus.reconnect");
+    expect(items?.[0]?.tooltip).toBe("ECONNREFUSED");
   });
 
   test("permission-denied points at the logs", () => {
-    const items = placeholderItems({ kind: "permission-denied", socketPath: "/sock" }, "empty");
-    expect(items[0]?.command?.command).toBe("nimbus.openLogs");
-    expect(items[0]?.tooltip).toContain("/sock");
+    const items = connectionPlaceholder({ kind: "permission-denied", socketPath: "/sock" });
+    expect(items?.[0]?.command?.command).toBe("nimbus.openLogs");
+    expect(items?.[0]?.tooltip).toContain("/sock");
   });
 });
 
@@ -115,19 +116,89 @@ describe("createPlaceholderView", () => {
     view.dispose();
     expect(c.listenerCount()).toBe(0);
   });
+
+  test("disposing an onDidChangeTreeData subscription stops further notifications", () => {
+    const c = makeConnection({ kind: "connected", socketPath: "/s" });
+    const view = createPlaceholderView({ connection: c.connection, emptyLabel: "x" });
+    let fired = 0;
+    const sub = view.onDidChangeTreeData?.(() => {
+      fired += 1;
+    });
+    c.set({ kind: "idle" });
+    sub?.dispose();
+    c.set({ kind: "connected", socketPath: "/s" });
+    expect(fired).toBe(1);
+  });
 });
 
-describe("scaffold view factories", () => {
-  test("each placeholder view exposes its own connected empty label", async () => {
-    const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
-    const cases: Array<[ReturnType<typeof createAgentsView>, RegExp]> = [
-      [createAgentsView({ connection: makeConnection(connected).connection }), /agents/i],
-      [createIndexView({ connection: makeConnection(connected).connection }), /indexed/i],
-      [createSessionsView({ connection: makeConnection(connected).connection }), /sessions/i],
-    ];
-    for (const [view, pattern] of cases) {
-      expect((await view.getChildren())[0]?.label).toMatch(pattern);
-    }
+describe("createAgentsView", () => {
+  const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
+
+  test("shows the empty label when no agents are configured", async () => {
+    const view = createAgentsView({
+      connection: makeConnection(connected).connection,
+      loadAgents: () => [],
+      activeAgentId: () => undefined,
+    });
+    expect((await view.getChildren())[0]?.label).toMatch(/no agents configured/i);
+  });
+
+  test("renders configured agents as clickable rows", async () => {
+    const view = createAgentsView({
+      connection: makeConnection(connected).connection,
+      loadAgents: () => [{ id: "researcher", label: "Researcher" }],
+      activeAgentId: () => undefined,
+    });
+    const [row] = await view.getChildren();
+    expect(row?.label).toBe("Researcher");
+    expect(row?.command?.command).toBe("nimbus.openAgentChat");
+    expect(row?.description).toBeUndefined();
+  });
+
+  test("marks the active agent", async () => {
+    const view = createAgentsView({
+      connection: makeConnection(connected).connection,
+      loadAgents: () => [{ id: "researcher", label: "Researcher" }],
+      activeAgentId: () => "researcher",
+    });
+    const [row] = await view.getChildren();
+    expect(row?.description).toBe("(active)");
+  });
+});
+
+describe("createIndexView", () => {
+  const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
+
+  test("empty index shows the empty-state row", async () => {
+    const c = makeConnection(connected);
+    const view = createIndexView({ connection: c.connection, loadIndex: async () => [] });
+    expect((await view.getChildren())[0]?.label).toMatch(/no indexed items/i);
+  });
+
+  test("loaded items render as collapsible service groups", async () => {
+    const c = makeConnection(connected);
+    const view = createIndexView({
+      connection: c.connection,
+      loadIndex: async () => [{ id: "a", name: "Doc", service: "gdrive", url: "https://x" }],
+    });
+    const [group] = await view.getChildren();
+    if (group === undefined) throw new Error("expected a service group");
+    expect(group.label).toBe("Google Drive");
+    expect(view.getTreeItem(group).collapsibleState).toBe(1);
+    expect((await view.getChildren(group))[0]?.label).toBe("Doc");
+  });
+
+  test("a failing loadIndex renders a single error row", async () => {
+    const c = makeConnection(connected);
+    const view = createIndexView({
+      connection: c.connection,
+      loadIndex: async () => {
+        throw new Error("index offline");
+      },
+    });
+    const rows = (await view.getChildren()) as Array<{ label: string; tooltip?: string }>;
+    expect(rows[0]?.label).toMatch(/failed to load index/i);
+    expect(rows[0]?.tooltip).toBe("index offline");
   });
 });
 
@@ -165,5 +236,32 @@ describe("applyThemeIcons", () => {
     });
     c.set({ kind: "idle" });
     expect(fired).toBe(1);
+  });
+});
+
+describe("one-level nesting", () => {
+  test("toTreeItem marks a row with children collapsible and forwards contextValue", () => {
+    const item = toTreeItem({ label: "svc", contextValue: "grp", children: [{ label: "kid" }] });
+    expect(item.collapsibleState).toBe(1);
+    expect(item.contextValue).toBe("grp");
+  });
+
+  test("toTreeItem leaves a childless row as a leaf", () => {
+    expect(toTreeItem({ label: "leaf" }).collapsibleState).toBe(0);
+    expect(toTreeItem({ label: "leaf", children: [] }).collapsibleState).toBe(0);
+  });
+
+  test("createDataView returns a parent's children, and [] for leaves", async () => {
+    const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
+    const c = makeConnection(connected);
+    const view = createDataView({
+      connection: c.connection,
+      loadData: async () => [{ label: "svc", children: [{ label: "kid" }] }],
+    });
+    const [parent] = await view.getChildren();
+    if (parent === undefined) throw new Error("expected a parent row");
+    expect(await view.getChildren(parent)).toEqual([{ label: "kid" }]);
+    const [kid] = (await view.getChildren(parent)) as Array<{ label: string }>;
+    expect(await view.getChildren(kid as never)).toEqual([]);
   });
 });

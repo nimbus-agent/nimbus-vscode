@@ -49,6 +49,7 @@ interface Captured {
   outputAppendLines: string[];
   outputShownGetter: number;
   errorMessages: string[];
+  warnMessages: string[];
   infoMessages: string[];
   configChangeHandlers: Array<(e: ConfigurationChangeEventLike) => void>;
   cfgValues: Record<string, unknown>;
@@ -93,6 +94,7 @@ function makeFixture(opts: {
   const outputAppendLines: string[] = [];
   let outputShown = 0;
   const errorMessages: string[] = [];
+  const warnMessages: string[] = [];
   const infoMessages: string[] = [];
   const configChangeHandlers: Array<(e: ConfigurationChangeEventLike) => void> = [];
   const cfgValues = opts.cfg ?? {};
@@ -148,6 +150,10 @@ function makeFixture(opts: {
     }),
     showErrorMessage: vi.fn(async (m: string) => {
       errorMessages.push(m);
+      return undefined;
+    }),
+    showWarningMessage: vi.fn(async (m: string) => {
+      warnMessages.push(m);
       return undefined;
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
@@ -227,6 +233,7 @@ function makeFixture(opts: {
       return outputShown;
     },
     errorMessages,
+    warnMessages,
     infoMessages,
     configChangeHandlers,
     cfgValues,
@@ -293,6 +300,11 @@ describe("activateWithDeps", () => {
       "nimbus.quickActions",
       "nimbus.refreshAudit",
       "nimbus.openAuditEntry",
+      "nimbus.refreshSessions",
+      "nimbus.openSession",
+      "nimbus.refreshIndex",
+      "nimbus.openIndexItem",
+      "nimbus.askAboutIndexItem",
     ];
     for (const id of expected) {
       expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
@@ -368,7 +380,13 @@ describe("activateWithDeps", () => {
     const open = cmd(f, "nimbus.openAuditEntry");
     // Open more than the eviction cap (50) to drive the prune loop.
     for (let i = 0; i < 55; i++) {
-      await open({ id: i, actionType: "x", hitlStatus: "approved", actionJson: "{}", timestamp: i });
+      await open({
+        id: i,
+        actionType: "x",
+        hitlStatus: "approved",
+        actionJson: "{}",
+        timestamp: i,
+      });
     }
     expect(f.ctx.subscriptions.length).toBeGreaterThan(0);
   });
@@ -405,6 +423,179 @@ describe("activateWithDeps", () => {
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
     expect(() => cmd(f, "nimbus.refreshAudit")()).not.toThrow();
+  });
+
+  test("the registered sessions provider lists sessions via querySql", async () => {
+    const querySql = vi.fn(async () => ({
+      rows: [{ sessionId: "s1", lastWriteAt: 1, chunkCount: 2 }],
+    }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ querySql } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.sessionsView");
+    if (provider === undefined) throw new Error("sessions provider not registered");
+    const rows = await provider.getChildren(undefined);
+    expect(querySql).toHaveBeenCalled();
+    expect(rows[0]).toMatchObject({ label: "Session s1" });
+  });
+
+  test("the sessions provider shows an error row when querySql fails", async () => {
+    const querySql = vi.fn(async () => {
+      throw new Error("no such table: session_memory");
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ querySql } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.sessionsView");
+    if (provider === undefined) throw new Error("sessions provider not registered");
+    const rows = (await provider.getChildren(undefined)) as Array<{ label: string }>;
+    expect(querySql).toHaveBeenCalled();
+    expect(rows[0]?.label).toMatch(/failed to load/i);
+  });
+
+  test("nimbus.openSession resumes the chosen session in the chat panel", async () => {
+    const getSessionTranscript = vi.fn(async (_p: { sessionId: string; limit?: number }) => ({
+      sessionId: "s5",
+      turns: [],
+      hasMore: false,
+    }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ getSessionTranscript } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openSession")("s5");
+    expect(f.panelRevealedCount).toBeGreaterThanOrEqual(0);
+    const call = getSessionTranscript.mock.calls[0]?.[0] as { sessionId: string } | undefined;
+    expect(call?.sessionId).toBe("s5");
+  });
+
+  test("nimbus.openSession is a no-op for a non-string argument", async () => {
+    const getSessionTranscript = vi.fn(async () => ({ sessionId: "", turns: [], hasMore: false }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ getSessionTranscript } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openSession")(undefined);
+    expect(getSessionTranscript).not.toHaveBeenCalled();
+  });
+
+  test("nimbus.refreshSessions refreshes the sessions view without throwing", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(() => cmd(f, "nimbus.refreshSessions")()).not.toThrow();
+  });
+
+  test("the registered index provider groups items via queryItems", async () => {
+    const queryItems = vi.fn(async () => ({
+      items: [
+        { id: "a", name: "Doc", service: "gdrive", itemType: "file", url: "https://x" },
+        { id: "b", name: "Note", service: "gdrive", itemType: "file" },
+      ],
+      meta: { limit: 100, total: 2 },
+    }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.indexView");
+    if (provider === undefined) throw new Error("index provider not registered");
+    const groups = await provider.getChildren(undefined);
+    expect(queryItems).toHaveBeenCalledTimes(1);
+    expect(groups[0]).toMatchObject({ label: "Google Drive", description: "2" });
+  });
+
+  test("the index provider shows an error row when queryItems fails", async () => {
+    const queryItems = vi.fn(async () => {
+      throw new Error("index offline");
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.indexView");
+    if (provider === undefined) throw new Error("index provider not registered");
+    const rows = (await provider.getChildren(undefined)) as Array<{ label: string }>;
+    expect(rows[0]?.label).toMatch(/failed to load index/i);
+  });
+
+  test("nimbus.refreshIndex refreshes the index view without throwing", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(() => cmd(f, "nimbus.refreshIndex")()).not.toThrow();
+  });
+
+  test("nimbus.openIndexItem opens a url via the injected opener", async () => {
+    const opened: string[] = [];
+    const f = makeFixture({});
+    f.deps.openSource = async (item) => {
+      if (item.url !== undefined) opened.push(item.url);
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openIndexItem")({ id: "a", name: "Doc", service: "s", url: "https://x" });
+    expect(opened).toEqual(["https://x"]);
+  });
+
+  test("nimbus.openIndexItem is a no-op for an item without a url", async () => {
+    const opener = vi.fn(async () => undefined);
+    const f = makeFixture({});
+    f.deps.openSource = opener;
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openIndexItem")({ id: "a", name: "Doc", service: "s" });
+    expect(opener).not.toHaveBeenCalled();
+  });
+
+  test("nimbus.openIndexItem warns (not errors) when the open throws", async () => {
+    const f = makeFixture({});
+    f.deps.openSource = async () => {
+      throw new Error("file is gone");
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.openIndexItem")({ id: "a", name: "Doc", service: "s", url: "file:///x" });
+    expect(f.warnMessages.some((m) => m.includes("file is gone"))).toBe(true);
+  });
+
+  test("nimbus.askAboutIndexItem seeds the chat from the node payload", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // The argument shape VS Code passes to a context-menu command: the tree
+    // NODE (a SidebarItem), carrying the IndexItem on `payload`. A bare
+    // IndexItem here would (correctly) fail to extract — that's the bug guard.
+    await cmd(f, "nimbus.askAboutIndexItem")({
+      label: "Q3 Deck",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
+    });
+    const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
+    expect(sent).toContain("Q3 Deck");
+    expect(sent).toContain("- Service: gdrive");
+  });
+
+  test("nimbus.askAboutIndexItem is a no-op for a node without a payload", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutIndexItem")({ label: "x", contextValue: "nimbusIndexItem" });
+    expect(askStream).not.toHaveBeenCalled();
   });
 
   test("falls back to the real read-only JSON opener when none is injected", async () => {
@@ -517,13 +708,15 @@ describe("activateWithDeps", () => {
     expect(f.ctx.subscriptions.length).toBeGreaterThan(0);
   });
 
-  test("nimbus.search formats results, coercing non-string fields and falling back", async () => {
+  test("nimbus.search reads NimbusItem fields (name/url), coercing and falling back", async () => {
+    // Rows use the real NimbusItem field names: name (not title) and url (no
+    // path field exists). The search handler must read these.
     const queryItems = vi.fn(async () => ({
       items: [
-        { title: "T1", service: "svc", url: "u1" },
-        { id: "ID2" }, // title missing → id fallback
-        { title: { nested: true } }, // object → not stringified → "(untitled)"
-        { title: 42, service: true, path: "p4" }, // number/boolean coerced
+        { name: "T1", service: "svc", url: "u1" },
+        { id: "ID2" }, // name missing → id fallback
+        { name: { nested: true } }, // object → not stringified, no id → "(untitled)"
+        { name: 42, service: true }, // number/boolean coerced; no url → empty detail
       ],
     }));
     const f = makeFixture({
@@ -548,7 +741,7 @@ describe("activateWithDeps", () => {
     expect(items[2]?.label).toBe("(untitled)");
     expect(items[3]?.label).toBe("42");
     expect(items[3]?.description).toBe("true");
-    expect(items[3]?.detail).toBe("p4");
+    expect(items[3]?.detail).toBe("");
   });
 
   test("nimbus.search is a no-op for a blank query", async () => {
@@ -740,5 +933,72 @@ describe("activateWithDeps", () => {
     // wrapWebviewPanel, then a full ChatController.start() over the wrapper.
     await expect(cmd(f, "nimbus.ask")()).resolves.toBeUndefined();
     expect(askStream).toHaveBeenCalledTimes(1);
+  });
+
+  test("the registered agents provider renders configured agents from settings", async () => {
+    const f = makeFixture({
+      cfg: { agents: [{ id: "researcher", label: "Researcher", description: "Deep research" }] },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.agentsView");
+    if (provider === undefined) throw new Error("agents provider not registered");
+    const rows = await provider.getChildren(undefined);
+    // getChildren returns the raw SidebarItem rows (carrying iconId);
+    // applyThemeIcons maps iconId -> iconPath only inside getTreeItem (mirrors
+    // the audit provider test).
+    expect(rows[0]).toMatchObject({ label: "Researcher", iconId: "hubot" });
+    const item = provider.getTreeItem(rows[0]);
+    expect(item.iconPath).toBeDefined();
+  });
+
+  test("nimbus.openAgentChat scopes the next stream to the clicked agent", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      cfg: { askAgent: "default-agent" },
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // Primary-click shape: VS Code passes command.arguments[0] = the bare Agent
+    // object (not a SidebarItem wrapper). The handler must read args[0] directly.
+    await cmd(f, "nimbus.openAgentChat")({ id: "researcher", label: "Researcher" });
+    // A new conversation was started; now send a message and inspect the agent.
+    for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
+    await waitForConnect();
+    const opts = askStream.mock.calls[0]?.[1] as { agent?: string } | undefined;
+    expect(opts?.agent).toBe("researcher");
+  });
+
+  test("nimbus.openAgentChat is a no-op for an arg without a usable agent id", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // No id field → parseAgents drops the entry → handler returns early.
+    await cmd(f, "nimbus.openAgentChat")({ label: "x" });
+    for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
+    await waitForConnect();
+    const opts = askStream.mock.calls[0]?.[1] as { agent?: string } | undefined;
+    expect(opts?.agent).toBeUndefined();
+  });
+
+  test("nimbus.newConversation clears the active agent back to the default", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      cfg: { askAgent: "default-agent" },
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // Primary-click shape: bare Agent object.
+    await cmd(f, "nimbus.openAgentChat")({ id: "researcher", label: "Researcher" });
+    await cmd(f, "nimbus.newConversation")();
+    for (const h of f.webviewMessageHandlers) h({ type: "submitAsk", text: "hi" });
+    await waitForConnect();
+    const opts = askStream.mock.calls[0]?.[1] as { agent?: string } | undefined;
+    expect(opts?.agent).toBe("default-agent");
   });
 });
