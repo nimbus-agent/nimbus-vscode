@@ -1,0 +1,37 @@
+# GitLab CI — ported from .github/workflows/ci.yml (build-test job).
+# Warm-standby mirror of the GitHub Actions pipeline. GitHub Actions syntax
+# does not translate to GitLab, so this is a faithful re-expression of the
+# same gates, not a conversion. Kept in sync with package.json scripts.
+image: oven/bun:latest
+
+stages:
+  - verify
+
+# bun's global cache keyed on the lockfile — restored across jobs/pipelines.
+cache:
+  key:
+    files:
+      - bun.lock
+  paths:
+    - .bun-cache
+
+variables:
+  BUN_INSTALL_CACHE_DIR: "$CI_PROJECT_DIR/.bun-cache"
+  CI: "true"
+
+build-test:
+  stage: verify
+  interruptible: true
+  before_script:
+    # The oven/bun image ships without git; biome's ignore-file resolution
+    # (vcs.useIgnoreFile) needs it or it scans node_modules. Install it, then
+    # trust the workspace (root-owned runner checkout).
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
+    - git config --global --add safe.directory '*'
+    - bun install --frozen-lockfile
+  script:
+    - bun run typecheck
+    - bun run lint
+    - bun run test
+    - bun run build
+    - bun run check-bundle
