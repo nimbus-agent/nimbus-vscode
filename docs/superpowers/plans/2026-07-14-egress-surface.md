@@ -708,6 +708,11 @@ In `contributes.menus.commandPalette`, add:
 Run: `node -e "JSON.parse(require('fs').readFileSync('package.json','utf8')); console.log('ok')"`
 Expected: prints `ok` (no JSON syntax error from the edits).
 
+> **Note (review #2):** This command uses only single quotes inside the outer
+> double quotes, so it runs unchanged in Git Bash, PowerShell, and cmd.exe
+> (verified in PowerShell → `ok`). Do **not** rewrite the inner quotes as escaped
+> `\"fs\"` — that form breaks in POSIX shells like this repo's Bash tool.
+
 - [ ] **Step 6: Commit**
 
 ```bash
@@ -1033,6 +1038,13 @@ function createProofSaver(): (
   };
 }
 ```
+
+> **Note (review #1):** `TextEncoder` is a global in the Electron/Node extension
+> host and is typed by `@types/node` — no import or polyfill is needed. (A Node
+> `Buffer.from(content, "utf8")` would also work, but the codebase uses neither
+> today; the standards-based `TextEncoder` is the better default.) `target` is a
+> real `vscode.Uri`, which conforms structurally to the seam's `{ fsPath: string }`
+> return type (review #3) — return it directly, no wrapping.
 
 - [ ] **Step 8: Add the stub surface for the default seam**
 
