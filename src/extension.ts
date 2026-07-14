@@ -375,8 +375,8 @@ export function activateWithDeps(
         viewId,
         applyThemeIcons(view, (id) => new vscode.ThemeIcon(id)),
       ),
+      { dispose: () => view.dispose() },
     );
-    ctx.subscriptions.push({ dispose: () => view.dispose() });
   }
 
   const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
@@ -522,7 +522,7 @@ export function activateWithDeps(
     // Primary-click command: args[0] is the IndexItem we put in the row's
     // command.arguments. Re-validate it defensively through parseIndexRow.
     const item = parseIndexRow(args[0]);
-    if (item === undefined || item.url === undefined) return;
+    if (item?.url === undefined) return;
     try {
       await openSource(item);
     } catch (e) {
