@@ -10,11 +10,11 @@ Extracted from the Nimbus monorepo (`packages/vscode-extension`) on 2026-06-22 s
 
 - **IPC-only.** All Gateway interaction goes through `@nimbus-dev/client` (published to npm). There are no direct cloud/network calls and **no imports from the Nimbus gateway source** — the only Nimbus dependency is `@nimbus-dev/client`.
 - **Bundled.** `esbuild.mjs` bundles `src/extension.ts` (node CJS) and the webview entry `src/chat/webview/main.ts` (browser IIFE) into `dist/` + `media/`, with only `vscode` external. The published `.vsix` therefore has **no runtime npm dependency** on `@nimbus-dev/client` — it's inlined at build time; the dep is build/typecheck-time only.
-- **Surface today:** Ask (streaming chat panel), Search (Quick Pick over the local index), Ask/Search Selection, plus connection + HITL plumbing. Workflow / share / egress surfaces are intentionally **not** implemented yet.
+- **Surface today:** Ask (streaming chat panel), Search (Quick Pick over the local index), Ask/Search Selection; a Nimbus activity-bar sidebar with **Audit**, **Sessions** (with chat resume), **Index**, and **Agents** views; plus a status-bar quick menu and connection + HITL plumbing. Workflow / share / egress surfaces are **not implemented yet** — they are blocked upstream, not deferred by choice: no published `@nimbus-dev/client` exposes those RPCs (checked through `0.3.0`), and the non-negotiable below forbids reaching past the typed client. Building them starts with the Gateway shipping the RPCs and the client surfacing them typed.
 
 ## Layout
 
-- `src/` — extension-host code (`extension.ts` entry); `src/chat/` (chat controller/panel + `webview/` browser bundle); `src/connection/`, `src/hitl/`, `src/status-bar/`, `src/logging.ts`, `src/settings.ts`
+- `src/` — extension-host code (`extension.ts` entry); `src/chat/` (chat controller/panel + `webview/` browser bundle); `src/sidebar/` (activity-bar tree views — audit, sessions, index, agents — plus quick-actions, over a shared `tree-view.ts` seam); `src/connection/`, `src/hitl/`, `src/status-bar/`, `src/logging.ts`, `src/settings.ts`
 - `src/vscode-shim.ts` — the seam over the `vscode` API (stubbed in tests via `test/unit/vscode-stub.ts`)
 - `test/unit/` — Vitest unit tests; `vscode` is aliased to the stub in `vitest.config.ts`
 - `esbuild.mjs` — build
