@@ -2,10 +2,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
+import { commands, env } from "vscode";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
-import { activateWithDeps } from "../../src/extension.js";
+import { activateWithDeps, createSourceOpener } from "../../src/extension.js";
+import type { IndexItem } from "../../src/sidebar/index.js";
 import type {
   CommandsApi,
   ConfigurationChangeEventLike,
@@ -990,5 +992,128 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     const opts = askStream.mock.calls[0]?.[1] as { agent?: string } | undefined;
     expect(opts?.agent).toBe("default-agent");
+  });
+
+  test("a chat command errors when the Gateway is not connected", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.newConversation")();
+    expect(f.errorMessages.some((m) => m.includes("not connected to the Gateway"))).toBe(true);
+    for (const s of f.ctx.subscriptions) s.dispose();
+  });
+
+  test("nimbus.reconnect is a no-op while already connected", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await expect(cmd(f, "nimbus.reconnect")()).resolves.toBeUndefined();
+  });
+
+  test("nimbus.startGateway surfaces a spawn error", async () => {
+    const f = makeFixture({
+      autoStarter: { spawn: async () => ({ kind: "spawn-error", message: "no nimbus binary" }) },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.startGateway")();
+    expect(f.errorMessages.some((m) => m.includes("no nimbus binary"))).toBe(true);
+    for (const s of f.ctx.subscriptions) s.dispose();
+  });
+
+  test("nimbus.startGateway surfaces a socket timeout", async () => {
+    const f = makeFixture({
+      autoStarter: { spawn: async () => ({ kind: "timeout", socketPath: "/tmp/nimbus.sock" }) },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.startGateway")();
+    expect(f.errorMessages.some((m) => m.includes("Timed out"))).toBe(true);
+    for (const s of f.ctx.subscriptions) s.dispose();
+  });
+
+  test("auto-start logs a spawn error on a disconnect", async () => {
+    const f = makeFixture({
+      cfg: { autoStartGateway: true },
+      openClient: disconnectedClient(),
+      autoStarter: { spawn: async () => ({ kind: "spawn-error", message: "boom" }) },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(f.outputAppendLines.some((l) => l.includes("Auto-start failed"))).toBe(true);
+    for (const s of f.ctx.subscriptions) s.dispose();
+  });
+
+  test("auto-start warns on a socket timeout during a disconnect", async () => {
+    const f = makeFixture({
+      cfg: { autoStartGateway: true },
+      openClient: disconnectedClient(),
+      autoStarter: { spawn: async () => ({ kind: "timeout", socketPath: "/tmp/y.sock" }) },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(f.outputAppendLines.some((l) => l.includes("Auto-start timeout"))).toBe(true);
+    for (const s of f.ctx.subscriptions) s.dispose();
+  });
+
+  test("the openExternal webview message logs a warning when the OS declines", async () => {
+    const spy = vi.spyOn(env, "openExternal").mockRejectedValue(new Error("nope"));
+    const f = makeFixture({
+      inputBoxAnswers: ["hi"],
+      openClient: makeFakeClient({ askStream: doneAskStream() } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.ask")(); // creates the controller → registers the webview handler
+    const fire = f.webviewMessageHandlers[0];
+    if (fire === undefined) throw new Error("no webview message handler registered");
+    fire({ type: "openExternal", url: "https://example.com" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(f.outputAppendLines.some((l) => l.includes("openExternal failed"))).toBe(true);
+    spy.mockRestore();
+  });
+
+});
+
+describe("createSourceOpener", () => {
+  const item = (url: string): IndexItem => ({ name: "x", url }) as unknown as IndexItem;
+
+  test("opens a bare file path through the vscode.open command", async () => {
+    const exec = vi.spyOn(commands, "executeCommand").mockResolvedValue(undefined);
+    await createSourceOpener()(item("/abs/notes.txt"));
+    expect(exec).toHaveBeenCalledWith("vscode.open", expect.objectContaining({ scheme: "file" }));
+    exec.mockRestore();
+  });
+
+  test("treats a Windows drive path as a file, not a URI scheme", async () => {
+    const exec = vi.spyOn(commands, "executeCommand").mockResolvedValue(undefined);
+    await createSourceOpener()(item("C:\\proj\\file.ts"));
+    expect(exec).toHaveBeenCalledWith("vscode.open", expect.objectContaining({ scheme: "file" }));
+    exec.mockRestore();
+  });
+
+  test("opens an https url externally", async () => {
+    const openExternal = vi.spyOn(env, "openExternal").mockResolvedValue(true);
+    await createSourceOpener()(item("https://example.com/issue/1"));
+    expect(openExternal).toHaveBeenCalledWith(expect.objectContaining({ scheme: "https" }));
+    openExternal.mockRestore();
+  });
+
+  test("throws when the OS declines to open an external url", async () => {
+    const openExternal = vi.spyOn(env, "openExternal").mockResolvedValue(false);
+    await expect(createSourceOpener()(item("mailto:a@b.com"))).rejects.toThrow(/declined/);
+    openExternal.mockRestore();
+  });
+
+  test("is a no-op for an item with an empty url", async () => {
+    const exec = vi.spyOn(commands, "executeCommand").mockResolvedValue(undefined);
+    const openExternal = vi.spyOn(env, "openExternal").mockResolvedValue(true);
+    await createSourceOpener()(item(""));
+    expect(exec).not.toHaveBeenCalled();
+    expect(openExternal).not.toHaveBeenCalled();
+    exec.mockRestore();
+    openExternal.mockRestore();
   });
 });
