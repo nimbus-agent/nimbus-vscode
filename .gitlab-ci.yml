@@ -23,6 +23,10 @@ build-test:
   stage: verify
   interruptible: true
   before_script:
+    # GitLab runners execute as root; the checkout is owned by another uid, so
+    # git reports "dubious ownership" and any git-aware tool (biome's ignore-file
+    # resolution) misbehaves. Trust the workspace.
+    - git config --global --add safe.directory '*'
     - bun install --frozen-lockfile
   script:
     - bun run typecheck
