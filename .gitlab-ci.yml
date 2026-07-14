@@ -23,9 +23,10 @@ build-test:
   stage: verify
   interruptible: true
   before_script:
-    # GitLab runners execute as root; the checkout is owned by another uid, so
-    # git reports "dubious ownership" and any git-aware tool (biome's ignore-file
-    # resolution) misbehaves. Trust the workspace.
+    # The oven/bun image ships without git; biome's ignore-file resolution
+    # (vcs.useIgnoreFile) needs it or it scans node_modules. Install it, then
+    # trust the workspace (root-owned runner checkout).
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git
     - git config --global --add safe.directory '*'
     - bun install --frozen-lockfile
   script:
