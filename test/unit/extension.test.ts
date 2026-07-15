@@ -1002,6 +1002,27 @@ describe("activateWithDeps", () => {
     expect(f.infoMessages.some((m) => /No source to open/.test(m))).toBe(true);
   });
 
+  test("accepting an openable result whose openSource rejects shows a warning toast", async () => {
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openSource: async () => {
+        throw new Error("declined");
+      },
+      openClient: makeFakeClient({
+        searchRanked: async () => [{ name: "R", service: "s", score: 1, url: "https://x" }],
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("r");
+    await flush();
+    qp.accept([qp.items[0]]);
+    await flush();
+    expect(f.warnMessages.some((m) => /Couldn't open/.test(m))).toBe(true);
+  });
+
   test("Search Selection prefills the box with the normalized selection and searches", async () => {
     const calls: Array<{ name?: string }> = [];
     const f = makeFixture({
@@ -1068,6 +1089,7 @@ describe("activateWithDeps", () => {
     cmd(f, "nimbus.search")();
     expect(f.errorMessages.some((m) => /not connected/i.test(m))).toBe(true);
     expect(f.quickPicks).toHaveLength(0);
+    for (const s of f.ctx.subscriptions) s.dispose();
   });
 
   test("a searchRanked rejection shows an error toast and clears busy", async () => {

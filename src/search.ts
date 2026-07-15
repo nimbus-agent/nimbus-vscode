@@ -36,7 +36,10 @@ export function parseRankedItem(raw: unknown): RankedResult | undefined {
   const url = asNonEmptyString(rec["canonicalUrl"]) ?? asNonEmptyString(rec["url"]);
   if (url !== undefined) result.url = url;
   const snippet = asNonEmptyString(rec["semanticSnippet"]);
-  if (snippet !== undefined) result.snippet = normalizeInline(snippet);
+  if (snippet !== undefined) {
+    const normalized = normalizeInline(snippet);
+    if (normalized.length > 0) result.snippet = normalized;
+  }
   return result;
 }
 

@@ -71,6 +71,11 @@ describe("parseRankedItem", () => {
     const r = parseRankedItem({ name: "x", score: "nope" });
     expect(r).toMatchObject({ score: 0, service: "" });
   });
+  test("omits snippet when it is whitespace-only after normalizing", () => {
+    const r = parseRankedItem(row({ semanticSnippet: "   \n  " }));
+    expect(r).toBeDefined();
+    expect("snippet" in (r as object)).toBe(false);
+  });
 });
 
 describe("rankedResultToPick", () => {
@@ -98,6 +103,11 @@ describe("rankedResultToPick", () => {
   test("detail falls back to url when there is no snippet", () => {
     const pick = rankedResultToPick({ name: "n", service: "s", score: 1, url: "u" });
     expect(pick.detail).toBe("u");
+  });
+  test("a whitespace-only-snippet row's pick detail falls back to url", () => {
+    const parsed = parseRankedItem(row({ semanticSnippet: "   \n  ", canonicalUrl: undefined }));
+    const pick = rankedResultToPick(parsed as never);
+    expect(pick.detail).toBe("https://drive/x");
   });
 });
 

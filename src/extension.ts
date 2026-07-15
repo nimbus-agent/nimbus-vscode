@@ -486,7 +486,10 @@ export function activateWithDeps(
       const pick = qp.selectedItems[0];
       if (pick === undefined || pick.isStatus === true) return;
       if (pick.canOpen && pick.url !== undefined) {
-        void openSource({ url: pick.url });
+        const url = pick.url;
+        void openSource({ url }).catch((e) => {
+          void deps.window.showWarningMessage(`Couldn't open "${pick.label}": ${errMsg(e)}`);
+        });
       } else {
         void deps.window.showInformationMessage(`No source to open for "${pick.label}".`, {});
       }
@@ -502,6 +505,11 @@ export function activateWithDeps(
     if (initialValue !== undefined) {
       const seed = normalizeInline(initialValue, SELECTION_PREFILL_MAX);
       qp.value = seed;
+      // Query directly rather than relying on onDidChangeValue: in real VS Code,
+      // setting .value may or may not fire an onDidChangeValue echo, so we can't
+      // depend on it to kick off the search. If it does fire, the resulting
+      // duplicate runQuery("...") is harmless — the latest-wins `seq` guard
+      // dedupes it against this call.
       void runQuery(seed);
     }
     qp.show();
