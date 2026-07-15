@@ -200,9 +200,9 @@ const runSearch = (initialValue?: string): void => {
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const runQuery = async (value: string): Promise<void> => {
-    const q = value.trim();
+    const mine = ++seq;                  // bump first: clearing the box must
+    const q = value.trim();              // invalidate an in-flight non-empty query
     if (q.length === 0) { qp.items = []; qp.busy = false; return; }
-    const mine = ++seq;
     qp.busy = true;
     try {
       const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });

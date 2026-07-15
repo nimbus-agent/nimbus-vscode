@@ -793,13 +793,13 @@ In `src/extension.ts`, replace the entire `register("nimbus.search", …)` and
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const runQuery = async (value: string): Promise<void> => {
-      const q = value.trim();
+      const mine = ++seq; // bump before the emptiness check so clearing the box
+      const q = value.trim(); // invalidates any still-in-flight non-empty query
       if (q.length === 0) {
         qp.items = [];
         qp.busy = false;
         return;
       }
-      const mine = ++seq;
       qp.busy = true;
       try {
         const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });
