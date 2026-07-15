@@ -1,7 +1,7 @@
 # Ranked Search — design
 
 **Date:** 2026-07-15
-**Status:** Approved (brainstorm + review feedback rounds 1–2), pending implementation plan
+**Status:** Implemented (see `feat/ranked-search`)
 **Branch:** `feat/ranked-search`
 
 ## Summary
