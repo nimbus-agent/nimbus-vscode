@@ -10,6 +10,11 @@ export interface Logger {
   debug(msg: string): void;
 }
 
+// Normalize an unknown thrown value to a display string.
+export function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}
+
 export function createLogger(channel: OutputChannelHandle, getLevel: () => LogLevel): Logger {
   const emit = (level: LogLevel, msg: string): void => {
     if (ORDER[level] > ORDER[getLevel()]) return;

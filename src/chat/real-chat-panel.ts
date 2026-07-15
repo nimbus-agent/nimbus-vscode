@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import * as vscode from "vscode";
-import type { Logger } from "../logging.js";
+import { errMsg, type Logger } from "../logging.js";
 import type { ChatPanel, ChatPanelFactory, WebviewPanelLike } from "./chat-panel.js";
 
 // The production ChatPanel/ChatPanelFactory backed by a real VS Code webview
@@ -54,9 +54,7 @@ function wrapWebviewPanel(
       try {
         l();
       } catch (e) {
-        log.warn(
-          `chatPanel onDispose handler threw: ${e instanceof Error ? e.message : String(e)}`,
-        );
+        log.warn(`chatPanel onDispose handler threw: ${errMsg(e)}`);
       }
     }
   });

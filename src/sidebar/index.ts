@@ -1,3 +1,4 @@
+import { asFiniteNumber, asNonEmptyString, asRecord } from "./parse-helpers.js";
 import type { SidebarItem } from "./tree-view.js";
 
 // The closed itemType enum mirrored from NimbusItem (we do not import the SDK).
@@ -61,20 +62,6 @@ const SERVICE_ICONS: Record<string, string> = {
   gmail: "mail",
   local_files: "file-submodule",
 };
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function asNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-function asFiniteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
 
 // Coerce one queryItems row (or any unknown) into an IndexItem, or undefined
 // when it lacks a usable id. Reads NimbusItem field names: name/service/

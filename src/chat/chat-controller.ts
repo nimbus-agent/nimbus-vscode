@@ -1,6 +1,6 @@
 import type { AskStreamHandle, AskStreamOptions, StreamEvent } from "@nimbus-dev/client";
 
-import type { Logger } from "../logging.js";
+import { errMsg, type Logger } from "../logging.js";
 import type { ChatPanel } from "./chat-panel.js";
 import type { ExtensionToWebview } from "./chat-protocol.js";
 import type { SessionStore } from "./session-store.js";
@@ -74,7 +74,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       const r = await deps.client.getSessionTranscript({ sessionId, limit });
       post({ type: "hydrate", turns: r.turns });
     } catch (e) {
-      deps.log.warn(`getSessionTranscript failed: ${e instanceof Error ? e.message : String(e)}`);
+      deps.log.warn(`getSessionTranscript failed: ${errMsg(e)}`);
       post({ type: "emptyState", sub: "no-transcript" });
     }
   };

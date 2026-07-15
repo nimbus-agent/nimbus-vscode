@@ -1,3 +1,4 @@
+import { asFiniteNumber, asRecord } from "./parse-helpers.js";
 import { formatRelativeTime } from "./relative-time.js";
 import type { SidebarItem } from "./tree-view.js";
 
@@ -9,16 +10,6 @@ export interface SessionSummary {
   chunkCount: number;
 }
 
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function asCount(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
 // Coerce one query row (or any unknown) into a SessionSummary, or undefined
 // when it lacks a usable session id / timestamp.
 export function parseSessionRow(raw: unknown): SessionSummary | undefined {
@@ -28,7 +19,7 @@ export function parseSessionRow(raw: unknown): SessionSummary | undefined {
   const lastWriteAt = rec["lastWriteAt"];
   if (typeof sessionId !== "string" || sessionId.length === 0) return undefined;
   if (typeof lastWriteAt !== "number" || !Number.isFinite(lastWriteAt)) return undefined;
-  return { sessionId, lastWriteAt, chunkCount: asCount(rec["chunkCount"]) };
+  return { sessionId, lastWriteAt, chunkCount: asFiniteNumber(rec["chunkCount"]) ?? 0 };
 }
 
 function shortId(sessionId: string): string {

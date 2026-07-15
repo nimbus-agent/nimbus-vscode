@@ -1,4 +1,4 @@
-import type { Logger } from "../logging.js";
+import { errMsg, type Logger } from "../logging.js";
 
 export type ConnectionState =
   | { kind: "idle" }
@@ -60,7 +60,7 @@ export function createConnectionManager(deps: ConnectionDeps): ConnectionManager
         scheduleReconnect();
         return;
       }
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errMsg(e);
       deps.log.warn(`Connect failed (${errno ?? "unknown"}): ${msg}`);
       setState({ kind: "disconnected", socketPath: disc.socketPath, reason: msg });
       scheduleReconnect();
