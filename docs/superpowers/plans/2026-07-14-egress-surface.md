@@ -1000,7 +1000,7 @@ After the `register("nimbus.openAuditEntry", ...)` block, add:
       if (saved === undefined) return;
       const action = await deps.window.showInformationMessage("Egress proof saved.", {}, "Open File");
       if (action === "Open File") {
-        await deps.commands.executeCommand("vscode.open", saved);
+        await deps.commands.executeCommand("vscode.open", vscode.Uri.file(saved.fsPath));
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -1024,14 +1024,13 @@ function createProofSaver(): (
 ) => Promise<{ fsPath: string } | undefined> {
   return async (defaultName, content) => {
     const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
-    const defaultUri =
-      folder !== undefined
-        ? vscode.Uri.joinPath(folder, defaultName)
-        : vscode.Uri.file(defaultName);
-    const target = await vscode.window.showSaveDialog({
-      defaultUri,
+    // showSaveDialog wants an absolute defaultUri; with no workspace folder we
+    // have no absolute base, so omit it rather than pass a relative path.
+    const options: { filters: Record<string, string[]>; defaultUri?: vscode.Uri } = {
       filters: { JSON: ["json"] },
-    });
+    };
+    if (folder !== undefined) options.defaultUri = vscode.Uri.joinPath(folder, defaultName);
+    const target = await vscode.window.showSaveDialog(options);
     if (target === undefined) return undefined;
     await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
     return target;

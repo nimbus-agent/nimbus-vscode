@@ -1145,7 +1145,10 @@ describe("activateWithDeps", () => {
     expect(f.saveJsonCalls[0]?.defaultName).toMatch(/^egress-proof-\d+\.json$/);
     expect(f.infoMessages.some((m) => /proof saved/i.test(m))).toBe(true);
     const exec = f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>;
-    expect(exec).toHaveBeenCalledWith("vscode.open", savedUri);
+    expect(exec).toHaveBeenCalledWith(
+      "vscode.open",
+      expect.objectContaining({ scheme: "file", fsPath: savedUri.fsPath }),
+    );
   });
 
   test("proveEgressWindow does nothing when the window picker is cancelled", async () => {

@@ -1,8 +1,8 @@
 # Egress surface — design
 
 **Date:** 2026-07-14
-**Status:** Approved (brainstorm), pending implementation plan
-**Branch:** TBD (suggest `feat/egress-surface`)
+**Status:** Implemented (see `feat/egress-surface`)
+**Branch:** `feat/egress-surface`
 
 ## Summary
 
@@ -184,7 +184,7 @@ seam itself is thin glue exercised via the vscode stub.
 
 ## Data flow
 
-```
+```text
 egressView.getChildren()
   → connectionPlaceholder | loadData()
       → getClient().egressList({ limit })
