@@ -26,6 +26,22 @@ export interface QuickPickItemLike {
   detail?: string;
 }
 
+export interface QuickPickLike<T> {
+  value: string;
+  placeholder: string | undefined;
+  items: readonly T[];
+  busy: boolean;
+  matchOnDescription: boolean;
+  matchOnDetail: boolean;
+  readonly selectedItems: readonly T[];
+  onDidChangeValue(cb: (value: string) => void): DisposableLike;
+  onDidAccept(cb: () => void): DisposableLike;
+  onDidHide(cb: () => void): DisposableLike;
+  show(): void;
+  hide(): void;
+  dispose(): void;
+}
+
 export interface TreeItemCommandLike {
   command: string;
   title: string;
@@ -79,6 +95,7 @@ export interface WindowApi {
     items: readonly T[],
     opts?: { placeHolder?: string; matchOnDescription?: boolean; matchOnDetail?: boolean },
   ): Thenable<T | undefined>;
+  createQuickPick<T extends QuickPickItemLike>(): QuickPickLike<T>;
   registerTreeDataProvider<T>(viewId: string, provider: TreeDataProviderLike<T>): DisposableLike;
   activeTextEditor: TextEditorLike | undefined;
 }

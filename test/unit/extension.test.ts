@@ -13,6 +13,7 @@ import type {
   ConfigurationChangeEventLike,
   ExtensionContextLike,
   MementoLike,
+  QuickPickLike,
   StatusBarItemHandle,
   WindowApi,
   WorkspaceApi,
@@ -62,6 +63,7 @@ interface Captured {
   openedDocs: Array<{ title: string; content: string }>;
   treeProviders: Map<string, RegisteredProvider>;
   saveJsonCalls: Array<{ defaultName: string; content: string }>;
+  quickPicks: FakeQuickPick[];
 }
 
 // The minimal shape the extension registers per tree view, captured so tests
@@ -76,6 +78,86 @@ const TEST_SOCKET_PATH = join(tmpdir(), `nimbus-test-${process.pid}.sock`);
 // A no-op auto-starter so tests never spawn a real `nimbus` process or poll a
 // real socket. The real implementation is covered in auto-start.test.ts.
 const okAutoStarter: AutoStarter = { spawn: async () => ({ kind: "ok" }) };
+
+interface FakeQuickPick {
+  value: string;
+  placeholder: string | undefined;
+  items: readonly unknown[];
+  busy: boolean;
+  matchOnDescription: boolean;
+  matchOnDetail: boolean;
+  selectedItems: readonly unknown[];
+  onDidChangeValue(cb: (v: string) => void): { dispose(): void };
+  onDidAccept(cb: () => void): { dispose(): void };
+  onDidHide(cb: () => void): { dispose(): void };
+  show(): void;
+  hide(): void;
+  dispose(): void;
+  shown: boolean;
+  disposed: boolean;
+  setValueAndFire(v: string): void;
+  accept(sel: readonly unknown[]): void;
+}
+
+function makeFakeQuickPick(): FakeQuickPick {
+  const changeCbs: Array<(v: string) => void> = [];
+  const acceptCbs: Array<() => void> = [];
+  const hideCbs: Array<() => void> = [];
+  const qp: FakeQuickPick = {
+    value: "",
+    placeholder: undefined,
+    items: [],
+    busy: false,
+    matchOnDescription: false,
+    matchOnDetail: false,
+    selectedItems: [],
+    onDidChangeValue: (cb) => {
+      changeCbs.push(cb);
+      return { dispose: () => undefined };
+    },
+    onDidAccept: (cb) => {
+      acceptCbs.push(cb);
+      return { dispose: () => undefined };
+    },
+    onDidHide: (cb) => {
+      hideCbs.push(cb);
+      return { dispose: () => undefined };
+    },
+    show: () => {
+      qp.shown = true;
+    },
+    hide: () => {
+      for (const cb of hideCbs) cb();
+    },
+    dispose: () => {
+      qp.disposed = true;
+    },
+    shown: false,
+    disposed: false,
+    setValueAndFire: (v) => {
+      qp.value = v;
+      for (const cb of changeCbs) cb(v);
+    },
+    accept: (sel) => {
+      qp.selectedItems = sel;
+      for (const cb of acceptCbs) cb();
+    },
+  };
+  return qp;
+}
+
+const flush = async (): Promise<void> => {
+  await new Promise((r) => setTimeout(r, 0));
+  await new Promise((r) => setTimeout(r, 0));
+};
+
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
 
 function makeFixture(opts: {
   cfg?: Record<string, unknown>;
@@ -92,6 +174,8 @@ function makeFixture(opts: {
   quickPickAnswers?: Array<{ label: string } | undefined>;
   infoMessageClicks?: Array<string | undefined>;
   saveJsonResult?: { fsPath: string } | undefined;
+  openSource?: (item: { url?: string }) => Promise<void>;
+  searchDebounceMs?: number;
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -109,6 +193,7 @@ function makeFixture(opts: {
   const quickPickAnswers = [...(opts.quickPickAnswers ?? [])];
   const infoClicks = [...(opts.infoMessageClicks ?? [])];
   const saveJsonCalls: Array<{ defaultName: string; content: string }> = [];
+  const quickPicks: FakeQuickPick[] = [];
 
   const webviewMessageHandlers: Array<(msg: unknown) => void> = [];
   const openedDocs: Array<{ title: string; content: string }> = [];
@@ -172,6 +257,11 @@ function makeFixture(opts: {
     showQuickPick: vi.fn(async () =>
       quickPickAnswers.shift(),
     ) as unknown as WindowApi["showQuickPick"],
+    createQuickPick: (<T>() => {
+      const qp = makeFakeQuickPick();
+      quickPicks.push(qp);
+      return qp as unknown as QuickPickLike<T>;
+    }) as WindowApi["createQuickPick"],
     registerTreeDataProvider: vi.fn((viewId: string, provider: unknown) => {
       treeProviders.set(viewId, provider as RegisteredProvider);
       return { dispose: () => undefined };
@@ -244,6 +334,8 @@ function makeFixture(opts: {
   // Drop the injected saveJson so activate() falls back to createProofSaver(),
   // exercising the real vscode.window.showSaveDialog / workspace.fs path.
   if (opts.realProofSave === true) delete deps.saveJson;
+  if (opts.openSource !== undefined) deps.openSource = opts.openSource;
+  if (opts.searchDebounceMs !== undefined) deps.searchDebounceMs = opts.searchDebounceMs;
 
   return {
     ctx,
@@ -265,6 +357,7 @@ function makeFixture(opts: {
     openedDocs,
     treeProviders,
     saveJsonCalls,
+    quickPicks,
     deps,
   };
 }
@@ -590,7 +683,10 @@ describe("activateWithDeps", () => {
     // The argument shape VS Code passes to a context-menu command: the tree
     // NODE (a SidebarItem), carrying the IndexItem on `payload`. A bare
     // IndexItem here would (correctly) fail to extract — that's the bug guard.
-    await cmd(f, "nimbus.askAboutIndexItem")({
+    await cmd(
+      f,
+      "nimbus.askAboutIndexItem",
+    )({
       label: "Q3 Deck",
       contextValue: "nimbusIndexItem",
       payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
@@ -721,77 +817,6 @@ describe("activateWithDeps", () => {
     expect(f.ctx.subscriptions.length).toBeGreaterThan(0);
   });
 
-  test("nimbus.search reads NimbusItem fields (name/url), coercing and falling back", async () => {
-    // Rows use the real NimbusItem field names: name (not title) and url (no
-    // path field exists). The search handler must read these.
-    const queryItems = vi.fn(async () => ({
-      items: [
-        { name: "T1", service: "svc", url: "u1" },
-        { id: "ID2" }, // name missing → id fallback
-        { name: { nested: true } }, // object → not stringified, no id → "(untitled)"
-        { name: 42, service: true }, // number/boolean coerced; no url → empty detail
-      ],
-    }));
-    const f = makeFixture({
-      inputBoxAnswers: ["needle"],
-      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
-    });
-    activateWithDeps(f.ctx, f.deps);
-    await waitForConnect();
-    await cmd(f, "nimbus.search")();
-
-    expect(queryItems).toHaveBeenCalledTimes(1);
-    const qp = f.deps.window.showQuickPick as unknown as ReturnType<typeof vi.fn>;
-    const firstCall = qp.mock.calls[0];
-    if (firstCall === undefined) throw new Error("showQuickPick was not called");
-    const items = firstCall[0] as Array<{
-      label: string;
-      description: string;
-      detail: string;
-    }>;
-    expect(items[0]).toEqual({ label: "T1", description: "svc", detail: "u1" });
-    expect(items[1]?.label).toBe("ID2");
-    expect(items[2]?.label).toBe("(untitled)");
-    expect(items[3]?.label).toBe("42");
-    expect(items[3]?.description).toBe("true");
-    expect(items[3]?.detail).toBe("");
-  });
-
-  test("nimbus.search is a no-op for a blank query", async () => {
-    const queryItems = vi.fn(async () => ({ items: [] }));
-    const f = makeFixture({
-      inputBoxAnswers: ["   "],
-      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
-    });
-    activateWithDeps(f.ctx, f.deps);
-    await waitForConnect();
-    await cmd(f, "nimbus.search")();
-    expect(queryItems).not.toHaveBeenCalled();
-  });
-
-  test("nimbus.search reports an error when the query fails", async () => {
-    const queryItems = vi.fn(async () => {
-      throw new Error("index offline");
-    });
-    const f = makeFixture({
-      inputBoxAnswers: ["needle"],
-      openClient: makeFakeClient({ queryItems } as unknown as Partial<ClientLike>),
-    });
-    activateWithDeps(f.ctx, f.deps);
-    await waitForConnect();
-    await cmd(f, "nimbus.search")();
-    expect(f.errorMessages.some((m) => m.includes("index offline"))).toBe(true);
-  });
-
-  test("nimbus.search errors when not connected to the Gateway", async () => {
-    const f = makeFixture({ inputBoxAnswers: ["needle"], openClient: disconnectedClient() });
-    activateWithDeps(f.ctx, f.deps);
-    await waitForConnect();
-    await cmd(f, "nimbus.search")();
-    expect(f.errorMessages.some((m) => m.includes("not connected"))).toBe(true);
-    for (const s of f.ctx.subscriptions) s.dispose(); // clear the reconnect timer
-  });
-
   test("nimbus.askAboutSelection prefixes the prompt and starts a stream", async () => {
     const askStream = doneAskStream();
     const f = makeFixture({
@@ -840,13 +865,250 @@ describe("activateWithDeps", () => {
     expect(askStream).not.toHaveBeenCalled();
   });
 
-  test("nimbus.searchSelection delegates to nimbus.search when text is selected", async () => {
-    const f = makeFixture({ activeEditor: { text: "selected" } });
+  test("typing runs a ranked search and lists results with alwaysShow", async () => {
+    const calls: Array<{ name?: string; limit?: number }> = [];
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({
+        searchRanked: async (p: { name?: string; limit?: number }) => {
+          calls.push(p);
+          return [
+            {
+              name: "Report.pdf",
+              service: "gdrive",
+              itemType: "file",
+              score: 0.91,
+              url: "https://x/r",
+            },
+          ];
+        },
+      } as never),
+    });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
-    await cmd(f, "nimbus.searchSelection")();
-    const exec = f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>;
-    expect(exec.mock.calls.some((c) => c[0] === "nimbus.search")).toBe(true);
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("report");
+    await flush();
+    expect(calls).toEqual([{ name: "report", limit: 50 }]);
+    expect(qp.items).toHaveLength(1);
+    expect((qp.items[0] as { label: string; alwaysShow?: boolean }).label).toBe("Report.pdf");
+    expect((qp.items[0] as { alwaysShow?: boolean }).alwaysShow).toBe(true);
+    expect(qp.shown).toBe(true);
+  });
+
+  test("an empty value never calls the Gateway", async () => {
+    let searchCalls = 0;
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({
+        searchRanked: async () => {
+          searchCalls += 1;
+          return [];
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    (f.quickPicks[0] as FakeQuickPick).setValueAndFire("   ");
+    await flush();
+    expect(searchCalls).toBe(0);
+  });
+
+  test("a slow earlier query does not overwrite a newer one (latest wins)", async () => {
+    const d1 = deferred<unknown[]>();
+    const d2 = deferred<unknown[]>();
+    const queue = [d1, d2];
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({
+        searchRanked: async () => (queue.shift() as { promise: Promise<unknown[]> }).promise,
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("a");
+    await flush();
+    qp.setValueAndFire("ab");
+    await flush();
+    d2.resolve([{ name: "New", service: "s", score: 1, url: "u2" }]);
+    await flush();
+    d1.resolve([{ name: "Old", service: "s", score: 1, url: "u1" }]);
+    await flush();
+    expect((qp.items as Array<{ label: string }>).map((i) => i.label)).toEqual(["New"]);
+  });
+
+  test("zero results shows a non-selectable status row", async () => {
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("zzz");
+    await flush();
+    expect(qp.items).toHaveLength(1);
+    expect((qp.items[0] as { isStatus?: boolean }).isStatus).toBe(true);
+    qp.accept([qp.items[0]]);
+    expect(f.infoMessages.some((m) => /No source to open/.test(m))).toBe(false);
+  });
+
+  test("accepting an openable result opens it via openSource", async () => {
+    const opened: Array<{ url?: string }> = [];
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openSource: async (item) => {
+        opened.push(item);
+      },
+      openClient: makeFakeClient({
+        searchRanked: async () => [{ name: "R", service: "s", score: 1, url: "https://x" }],
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("r");
+    await flush();
+    qp.accept([qp.items[0]]);
+    expect(opened).toEqual([{ url: "https://x" }]);
+    expect(qp.disposed).toBe(true);
+  });
+
+  test("accepting a result with no source shows an info toast, not openSource", async () => {
+    const opened: Array<{ url?: string }> = [];
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openSource: async (item) => {
+        opened.push(item);
+      },
+      openClient: makeFakeClient({
+        searchRanked: async () => [{ name: "NoUrl", service: "s", score: 1 }],
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("n");
+    await flush();
+    qp.accept([qp.items[0]]);
+    expect(opened).toHaveLength(0);
+    expect(f.infoMessages.some((m) => /No source to open/.test(m))).toBe(true);
+  });
+
+  test("accepting an openable result whose openSource rejects shows a warning toast", async () => {
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openSource: async () => {
+        throw new Error("declined");
+      },
+      openClient: makeFakeClient({
+        searchRanked: async () => [{ name: "R", service: "s", score: 1, url: "https://x" }],
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("r");
+    await flush();
+    qp.accept([qp.items[0]]);
+    await flush();
+    expect(f.warnMessages.some((m) => /Couldn't open/.test(m))).toBe(true);
+  });
+
+  test("Search Selection prefills the box with the normalized selection and searches", async () => {
+    const calls: Array<{ name?: string }> = [];
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      activeEditor: { empty: false, text: "  multi\nline   selection  " },
+      openClient: makeFakeClient({
+        searchRanked: async (p: { name?: string }) => {
+          calls.push(p);
+          return [];
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.searchSelection")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    expect(qp.value).toBe("multi line selection");
+    await flush();
+    expect(calls[0]?.name).toBe("multi line selection");
+  });
+
+  test("results arriving after the pick is hidden do not mutate it", async () => {
+    const d = deferred<unknown[]>();
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({ searchRanked: async () => d.promise } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("r");
+    await flush(); // search in-flight
+    qp.hide(); // onDidHide → disposed = true, dispose()
+    expect(qp.disposed).toBe(true);
+    d.resolve([{ name: "Late", service: "s", score: 1, url: "u" }]);
+    await flush();
+    expect(qp.items).toHaveLength(0); // guard blocked the post-dispose write
+  });
+
+  test("clearing the box to empty drops a still-in-flight query's stale result", async () => {
+    const d = deferred<unknown[]>();
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({ searchRanked: async () => d.promise } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("abc"); // in-flight (mine = 1)
+    await flush();
+    qp.setValueAndFire(""); // empty branch — must bump seq so the stale result is dropped
+    await flush();
+    d.resolve([{ name: "Stale", service: "s", score: 1, url: "u" }]);
+    await flush();
+    expect(qp.items).toHaveLength(0);
+  });
+
+  test("search warns and opens no QuickPick when disconnected", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    expect(f.errorMessages.some((m) => /not connected/i.test(m))).toBe(true);
+    expect(f.quickPicks).toHaveLength(0);
+    for (const s of f.ctx.subscriptions) s.dispose();
+  });
+
+  test("a searchRanked rejection shows an error toast and clears busy", async () => {
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({
+        searchRanked: async () => {
+          throw new Error("idx down");
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("x");
+    await flush();
+    expect(f.errorMessages.some((m) => /search failed: idx down/i.test(m))).toBe(true);
+    expect(qp.busy).toBe(false);
   });
 
   test("nimbus.searchSelection errors when there is no selection", async () => {
@@ -1219,7 +1481,10 @@ describe("activateWithDeps", () => {
   test("openEgressEntry opens the row detail as read-only JSON", async () => {
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);
-    await cmd(f, "nimbus.openEgressEntry")({
+    await cmd(
+      f,
+      "nimbus.openEgressEntry",
+    )({
       id: 9,
       timestamp: 0,
       destination: "gmail",
@@ -1245,7 +1510,6 @@ describe("activateWithDeps", () => {
     // The stub's showSaveDialog returns a fsPath, so a success toast is shown.
     expect(f.infoMessages.some((m) => /proof saved/i.test(m))).toBe(true);
   });
-
 });
 
 describe("createSourceOpener", () => {

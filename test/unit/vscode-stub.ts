@@ -9,6 +9,24 @@ export const window = {
   showWarningMessage: async () => undefined,
   showInputBox: async () => undefined,
   showQuickPick: async () => undefined,
+  createQuickPick: () => {
+    const sub = () => ({ dispose: () => undefined });
+    return {
+      value: "",
+      placeholder: undefined,
+      items: [],
+      busy: false,
+      matchOnDescription: false,
+      matchOnDetail: false,
+      selectedItems: [],
+      onDidChangeValue: sub,
+      onDidAccept: sub,
+      onDidHide: sub,
+      show: () => undefined,
+      hide: () => undefined,
+      dispose: () => undefined,
+    };
+  },
   registerTreeDataProvider: (_viewId: string, _provider: unknown) => ({ dispose: () => undefined }),
   showTextDocument: async (_doc: unknown, _opts?: unknown) => undefined,
   showSaveDialog: async (_opts?: unknown) => ({ fsPath: "/tmp/egress-proof.json", scheme: "file" }),

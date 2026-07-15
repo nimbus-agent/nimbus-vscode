@@ -3,7 +3,7 @@
 Local-first AI agent for the editor. Ask and search against your private [Nimbus](https://github.com/nimbus-agent/Nimbus) index — all running on your machine.
 
 - **Ask** — chat with the Nimbus agent in a side panel; responses stream token-by-token.
-- **Search** — query your local Nimbus index across every connected service from the command palette.
+- **Search** — live ranked (semantic + keyword) search over your local Nimbus index; results update as you type, and selecting one opens its source (or notifies you when it has none). **Search Selection** seeds it from the editor.
 - **Selection-aware** — right-click a selection to *Ask About Selection* or *Search Selection*.
 - **Nimbus sidebar** — activity-bar views for Sessions (with chat resume), the local Index, and Agents.
 - **Audit & Egress ledgers** — inspect what the agent did and everything it sent off-device; verify the egress hash-chain and export a signed proof for any time window, all locally.
