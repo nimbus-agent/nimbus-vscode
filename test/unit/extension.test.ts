@@ -61,6 +61,7 @@ interface Captured {
   panelRevealedCount: number;
   openedDocs: Array<{ title: string; content: string }>;
   treeProviders: Map<string, RegisteredProvider>;
+  saveJsonCalls: Array<{ defaultName: string; content: string }>;
 }
 
 // The minimal shape the extension registers per tree view, captured so tests
@@ -87,6 +88,10 @@ function makeFixture(opts: {
   panelActive?: boolean;
   realChatPanel?: boolean;
   realAuditDetail?: boolean;
+  realProofSave?: boolean;
+  quickPickAnswers?: Array<{ label: string } | undefined>;
+  infoMessageClicks?: Array<string | undefined>;
+  saveJsonResult?: { fsPath: string } | undefined;
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -101,6 +106,9 @@ function makeFixture(opts: {
   const configChangeHandlers: Array<(e: ConfigurationChangeEventLike) => void> = [];
   const cfgValues = opts.cfg ?? {};
   const inputAnswers = [...(opts.inputBoxAnswers ?? [])];
+  const quickPickAnswers = [...(opts.quickPickAnswers ?? [])];
+  const infoClicks = [...(opts.infoMessageClicks ?? [])];
+  const saveJsonCalls: Array<{ defaultName: string; content: string }> = [];
 
   const webviewMessageHandlers: Array<(msg: unknown) => void> = [];
   const openedDocs: Array<{ title: string; content: string }> = [];
@@ -148,7 +156,7 @@ function makeFixture(opts: {
     createStatusBarItem: () => statusItem,
     showInformationMessage: vi.fn(async (m: string) => {
       infoMessages.push(m);
-      return undefined;
+      return infoClicks.shift();
     }),
     showErrorMessage: vi.fn(async (m: string) => {
       errorMessages.push(m);
@@ -159,7 +167,11 @@ function makeFixture(opts: {
       return undefined;
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
-    showQuickPick: vi.fn(async () => undefined),
+    // vi.fn() collapses the generic <T> of showQuickPick, so cast to the exact
+    // slot type; other tests recover the mock interface via their own casts.
+    showQuickPick: vi.fn(async () =>
+      quickPickAnswers.shift(),
+    ) as unknown as WindowApi["showQuickPick"],
     registerTreeDataProvider: vi.fn((viewId: string, provider: unknown) => {
       treeProviders.set(viewId, provider as RegisteredProvider);
       return { dispose: () => undefined };
@@ -217,6 +229,10 @@ function makeFixture(opts: {
     openReadonlyJson: async (title: string, content: string) => {
       openedDocs.push({ title, content });
     },
+    saveJson: async (defaultName: string, content: string) => {
+      saveJsonCalls.push({ defaultName, content });
+      return opts.saveJsonResult;
+    },
   };
 
   // Drop the injected factory so activate() falls back to the real VS Code
@@ -225,6 +241,9 @@ function makeFixture(opts: {
   // Drop the injected opener so activate() exercises the real content-provider
   // path (backed by the vscode stub).
   if (opts.realAuditDetail === true) delete deps.openReadonlyJson;
+  // Drop the injected saveJson so activate() falls back to createProofSaver(),
+  // exercising the real vscode.window.showSaveDialog / workspace.fs path.
+  if (opts.realProofSave === true) delete deps.saveJson;
 
   return {
     ctx,
@@ -245,6 +264,7 @@ function makeFixture(opts: {
     },
     openedDocs,
     treeProviders,
+    saveJsonCalls,
     deps,
   };
 }
@@ -314,7 +334,7 @@ describe("activateWithDeps", () => {
     expect(f.ctx.subscriptions.length).toBeGreaterThanOrEqual(16);
   });
 
-  test("registers the four sidebar tree views in the nimbus container", async () => {
+  test("registers the five sidebar tree views in the nimbus container", async () => {
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
@@ -322,6 +342,7 @@ describe("activateWithDeps", () => {
     const viewIds = reg.mock.calls.map((c) => c[0]);
     expect(viewIds).toEqual([
       "nimbus.auditView",
+      "nimbus.egressView",
       "nimbus.agentsView",
       "nimbus.indexView",
       "nimbus.sessionsView",
@@ -1073,6 +1094,126 @@ describe("activateWithDeps", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(f.outputAppendLines.some((l) => l.includes("openExternal failed"))).toBe(true);
     spy.mockRestore();
+  });
+
+  test("verifyEgress reports an intact ledger", async () => {
+    const f = makeFixture({
+      openClient: makeFakeClient({
+        egressVerify: async () => ({ ok: true, verifiedRows: 12 }),
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.verifyEgress")();
+    expect(f.infoMessages.some((m) => /intact — 12 rows/.test(m))).toBe(true);
+  });
+
+  test("verifyEgress reports a broken chain with the row and reason", async () => {
+    const f = makeFixture({
+      openClient: makeFakeClient({
+        egressVerify: async () => ({ ok: false, verifiedRows: 3, brokenAt: 4, reason: "hash" }),
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.verifyEgress")();
+    expect(f.errorMessages.some((m) => /broke at row 4: hash/.test(m))).toBe(true);
+  });
+
+  test("verifyEgress warns when disconnected", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.verifyEgress")();
+    expect(f.warnMessages.some((m) => /not connected/i.test(m))).toBe(true);
+  });
+
+  test("proveEgressWindow saves a proof and offers to open it", async () => {
+    const savedUri = { fsPath: "/tmp/egress-proof.json" };
+    const f = makeFixture({
+      quickPickAnswers: [{ label: "Last hour" }],
+      infoMessageClicks: ["Open File"],
+      saveJsonResult: savedUri,
+      openClient: makeFakeClient({
+        egressProveWindow: async (params: unknown) => ({ params, rows: [], verify: { ok: true } }),
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.proveEgressWindow")();
+    expect(f.saveJsonCalls).toHaveLength(1);
+    expect(f.saveJsonCalls[0]?.defaultName).toMatch(/^egress-proof-\d+\.json$/);
+    expect(f.infoMessages.some((m) => /proof saved/i.test(m))).toBe(true);
+    const exec = f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>;
+    expect(exec).toHaveBeenCalledWith(
+      "vscode.open",
+      expect.objectContaining({ scheme: "file", fsPath: savedUri.fsPath }),
+    );
+  });
+
+  test("proveEgressWindow does nothing when the window picker is cancelled", async () => {
+    let proveCalls = 0;
+    const f = makeFixture({
+      quickPickAnswers: [undefined],
+      openClient: makeFakeClient({
+        egressProveWindow: async () => {
+          proveCalls += 1;
+          return { rows: [] };
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.proveEgressWindow")();
+    expect(proveCalls).toBe(0);
+    expect(f.saveJsonCalls).toHaveLength(0);
+  });
+
+  test("proveEgressWindow is silent when the save dialog is cancelled", async () => {
+    const f = makeFixture({
+      quickPickAnswers: [{ label: "All time" }],
+      saveJsonResult: undefined,
+      openClient: makeFakeClient({
+        egressProveWindow: async () => ({ rows: [] }),
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.proveEgressWindow")();
+    expect(f.saveJsonCalls).toHaveLength(1);
+    expect(f.infoMessages.some((m) => /proof saved/i.test(m))).toBe(false);
+    const exec = f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>;
+    expect(exec).not.toHaveBeenCalledWith("vscode.open", expect.anything());
+  });
+
+  test("openEgressEntry opens the row detail as read-only JSON", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await cmd(f, "nimbus.openEgressEntry")({
+      id: 9,
+      timestamp: 0,
+      destination: "gmail",
+      method: "send",
+      resultStatus: "authorized",
+      hitlStatus: "approved",
+    });
+    expect(f.openedDocs.some((d) => d.title === "egress-9.json")).toBe(true);
+  });
+
+  test("the default proof saver writes through the save dialog", async () => {
+    const f = makeFixture({
+      realProofSave: true,
+      quickPickAnswers: [{ label: "Last 7 days" }],
+      infoMessageClicks: [undefined],
+      openClient: makeFakeClient({
+        egressProveWindow: async () => ({ rows: [], verify: { ok: true } }),
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.proveEgressWindow")();
+    // The stub's showSaveDialog returns a fsPath, so a success toast is shown.
+    expect(f.infoMessages.some((m) => /proof saved/i.test(m))).toBe(true);
   });
 
 });

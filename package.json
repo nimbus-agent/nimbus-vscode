@@ -132,6 +132,27 @@
         "command": "nimbus.openAgentChat",
         "title": "Open Agent Chat",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.refreshEgress",
+        "title": "Refresh Egress",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nimbus.openEgressEntry",
+        "title": "Open Egress Entry",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.verifyEgress",
+        "title": "Verify Egress Ledger",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.proveEgressWindow",
+        "title": "Prove Egress Window",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
@@ -148,6 +169,10 @@
         {
           "id": "nimbus.auditView",
           "name": "Audit"
+        },
+        {
+          "id": "nimbus.egressView",
+          "name": "Egress"
         },
         {
           "id": "nimbus.agentsView",
@@ -184,6 +209,10 @@
         {
           "command": "nimbus.openAgentChat",
           "when": "false"
+        },
+        {
+          "command": "nimbus.openEgressEntry",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -201,6 +230,21 @@
           "command": "nimbus.refreshIndex",
           "when": "view == nimbus.indexView",
           "group": "navigation"
+        },
+        {
+          "command": "nimbus.refreshEgress",
+          "when": "view == nimbus.egressView",
+          "group": "navigation"
+        },
+        {
+          "command": "nimbus.verifyEgress",
+          "when": "view == nimbus.egressView",
+          "group": "1_egress"
+        },
+        {
+          "command": "nimbus.proveEgressWindow",
+          "when": "view == nimbus.egressView",
+          "group": "1_egress"
         }
       ],
       "view/item/context": [
@@ -299,7 +343,7 @@
     "clean": "node scripts/clean.mjs"
   },
   "dependencies": {
-    "@nimbus-dev/client": "^0.2.4",
+    "@nimbus-dev/client": "^0.4.0",
     "dompurify": "^3.4.8",
     "marked": "^18.0.5"
   },

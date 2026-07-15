@@ -18,6 +18,8 @@ import { type Agent, parseAgents } from "./sidebar/agents.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
 import { formatAuditDetail } from "./sidebar/audit.js";
 import { createAuditView } from "./sidebar/audit-view.js";
+import { buildProofDocument, egressWindowPresets, formatEgressDetail } from "./sidebar/egress.js";
+import { createEgressView } from "./sidebar/egress-view.js";
 import { buildAskPrompt, type IndexItem, parseIndexRow } from "./sidebar/index.js";
 import { createIndexView } from "./sidebar/index-view.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
@@ -53,6 +55,7 @@ export interface ActivateDeps {
   autoStarter?: AutoStarter;
   openReadonlyJson?: (title: string, content: string) => Promise<void>;
   openSource?: (item: IndexItem) => Promise<void>;
+  saveJson?: (defaultName: string, content: string) => Promise<{ fsPath: string } | undefined>;
 }
 
 export function activateWithDeps(
@@ -314,6 +317,10 @@ export function activateWithDeps(
     connection,
     getClient: () => connection.client() as NimbusClient | undefined,
   });
+  const egressView = createEgressView({
+    connection,
+    getClient: () => connection.client() as NimbusClient | undefined,
+  });
   const loadSessions = async (): Promise<SessionSummary[]> => {
     const client = connection.client() as NimbusClient | undefined;
     if (client === undefined) return [];
@@ -365,6 +372,7 @@ export function activateWithDeps(
   });
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
     ["nimbus.auditView", auditView],
+    ["nimbus.egressView", egressView],
     ["nimbus.agentsView", agentsView],
     ["nimbus.indexView", indexView],
     ["nimbus.sessionsView", sessionsView],
@@ -381,6 +389,7 @@ export function activateWithDeps(
 
   const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
   const openSource = deps.openSource ?? createSourceOpener();
+  const saveJson = deps.saveJson ?? createProofSaver();
 
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 
@@ -510,6 +519,10 @@ export function activateWithDeps(
     auditView.refresh();
   });
 
+  register("nimbus.refreshEgress", () => {
+    egressView.refresh();
+  });
+
   register("nimbus.refreshSessions", () => {
     sessionsView.refresh();
   });
@@ -561,6 +574,74 @@ export function activateWithDeps(
     const detail = formatAuditDetail(args[0]);
     if (detail === undefined) return;
     await openReadonlyJson(detail.title, detail.content);
+  });
+
+  register("nimbus.openEgressEntry", async (...args) => {
+    const detail = formatEgressDetail(args[0]);
+    if (detail === undefined) return;
+    await openReadonlyJson(detail.title, detail.content);
+  });
+
+  register("nimbus.verifyEgress", async () => {
+    const client = connection.client() as NimbusClient | undefined;
+    if (client === undefined) {
+      void deps.window.showWarningMessage("Nimbus: not connected to the Gateway.");
+      return;
+    }
+    try {
+      const result = await client.egressVerify();
+      if (result.ok) {
+        void deps.window.showInformationMessage(
+          `Egress ledger intact — ${result.verifiedRows} rows verified.`,
+          {},
+        );
+      } else {
+        const at = result.brokenAt ?? "?";
+        const reason = result.reason !== undefined ? `: ${result.reason}` : "";
+        void deps.window.showErrorMessage(`Egress chain broke at row ${at}${reason}.`);
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.warn(`egress verify failed: ${msg}`);
+      void deps.window.showErrorMessage(`Nimbus: egress verify failed: ${msg}`);
+    }
+  });
+
+  register("nimbus.proveEgressWindow", async () => {
+    const client = connection.client() as NimbusClient | undefined;
+    if (client === undefined) {
+      void deps.window.showWarningMessage("Nimbus: not connected to the Gateway.");
+      return;
+    }
+    const presets = egressWindowPresets(Date.now());
+    const pick = await deps.window.showQuickPick(
+      presets.map((p) => ({ label: p.label })),
+      { placeHolder: "Prove egress for which window?" },
+    );
+    if (pick === undefined) return;
+    const preset = presets.find((p) => p.label === pick.label);
+    if (preset === undefined) return;
+    try {
+      const params: { since?: number; until?: number; sign: boolean } = { sign: true };
+      if (preset.since !== undefined) params.since = preset.since;
+      if (preset.until !== undefined) params.until = preset.until;
+      const result = await client.egressProveWindow(params);
+      const doc = buildProofDocument(result, Date.now());
+      const saved = await saveJson(doc.filename, doc.content);
+      if (saved === undefined) return;
+      const action = await deps.window.showInformationMessage(
+        "Egress proof saved.",
+        {},
+        "Open File",
+      );
+      if (action === "Open File") {
+        await deps.commands.executeCommand("vscode.open", vscode.Uri.file(saved.fsPath));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log.warn(`egress prove failed: ${msg}`);
+      void deps.window.showErrorMessage(`Nimbus: egress prove failed: ${msg}`);
+    }
   });
 
   register("nimbus.showPendingHitl", () => {
@@ -702,5 +783,28 @@ export function createSourceOpener(): (item: IndexItem) => Promise<void> {
       const ok = await vscode.env.openExternal(uri);
       if (!ok) throw new Error("the system declined to open this URL");
     }
+  };
+}
+
+// Save a JSON document to disk via a native Save dialog; returns the chosen Uri
+// (with fsPath) or undefined when cancelled. Injectable as deps.saveJson so
+// tests don't touch vscode.
+function createProofSaver(): (
+  defaultName: string,
+  content: string,
+) => Promise<{ fsPath: string } | undefined> {
+  return async (defaultName, content) => {
+    const folder = vscode.workspace.workspaceFolders?.[0]?.uri;
+    // showSaveDialog wants an absolute defaultUri; with no workspace folder we
+    // have no absolute base, so omit it and let the dialog pick its own default
+    // rather than passing a relative path.
+    const options: { filters: Record<string, string[]>; defaultUri?: vscode.Uri } = {
+      filters: { JSON: ["json"] },
+    };
+    if (folder !== undefined) options.defaultUri = vscode.Uri.joinPath(folder, defaultName);
+    const target = await vscode.window.showSaveDialog(options);
+    if (target === undefined) return undefined;
+    await vscode.workspace.fs.writeFile(target, new TextEncoder().encode(content));
+    return target;
   };
 }
