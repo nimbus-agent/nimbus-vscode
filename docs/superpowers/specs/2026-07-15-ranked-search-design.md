@@ -228,9 +228,13 @@ const runSearch = (initialValue?: string): void => {
     const pick = qp.selectedItems[0];
     if (pick === undefined || pick.isStatus === true) return;   // #8: ignore status rows
     if (pick.canOpen && pick.url !== undefined) {
-      void openSource({ url: pick.url });
+      const url = pick.url;
+      // openSource throws when the OS handler declines — surface it, don't swallow.
+      void openSource({ url }).catch((e) => {
+        void deps.window.showWarningMessage(`Couldn't open "${pick.label}": ${errMsg(e)}`);
+      });
     } else {
-      void deps.window.showInformationMessage(`No source to open for "${pick.label}".`);
+      void deps.window.showInformationMessage(`No source to open for "${pick.label}".`, {});
     }
     qp.hide();
   });
@@ -340,6 +344,9 @@ runSearch(initial?):
 - **Result without a URL (review #4):** `detail` reads "No source URL available"
   and `canOpen` is false; accepting it shows an explicit info toast instead of a
   silent no-op.
+- **Open failure:** `openSource` throws when the OS handler declines the URL; the
+  accept handler catches it and shows a `Couldn't open …` warning (matching the
+  Index-view open path) rather than leaking an unhandled rejection.
 - **Multi-line snippet / huge selection (review #3/#5):** `normalizeInline`
   collapses whitespace/newlines and truncates, so neither the `detail` nor the
   Search-Selection prefill breaks the single-line surfaces.

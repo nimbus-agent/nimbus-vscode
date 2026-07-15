@@ -14,8 +14,8 @@
     time window). Backed by the egress RPCs in `@nimbus-dev/client@0.4.0`.
 - **Search** now queries the local index for real via the Gateway's ranked
   search (semantic + keyword), updating results live as you type; picking a
-  result opens it, and **Search Selection** seeds the query with the selected
-  text.
+  result opens its source when it has one (otherwise a notice is shown), and
+  **Search Selection** seeds the query with the selected text.
 - Status-bar quick menu for common Nimbus actions.
 
 ## 0.2.0
