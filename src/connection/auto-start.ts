@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 
-import type { Logger } from "../logging.js";
+import { errMsg, type Logger } from "../logging.js";
 
 export type AutoStartResult =
   | { kind: "ok" }
@@ -29,7 +29,7 @@ export function createAutoStarter(deps: AutoStartDeps): AutoStarter {
       try {
         proc = deps.spawn("nimbus", ["start"]);
       } catch (e) {
-        return { kind: "spawn-error", message: e instanceof Error ? e.message : String(e) };
+        return { kind: "spawn-error", message: errMsg(e) };
       }
       proc.on("error", (err) => {
         spawnError = err.message;

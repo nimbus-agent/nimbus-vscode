@@ -12,7 +12,7 @@ import { pingSocket } from "./connection/ping-socket.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
-import { createLogger, type Logger } from "./logging.js";
+import { createLogger, errMsg, type Logger } from "./logging.js";
 import { createSettings } from "./settings.js";
 import { type Agent, parseAgents } from "./sidebar/agents.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
@@ -88,6 +88,10 @@ export function activateWithDeps(
     log,
   });
   ctx.subscriptions.push({ dispose: () => void connection.dispose() });
+
+  // The connection manager is typed to the minimal NimbusClientLike; every real
+  // call site needs the full NimbusClient. Narrow it in one place.
+  const nimbus = (): NimbusClient | undefined => connection.client() as NimbusClient | undefined;
 
   const autoStart =
     deps.autoStarter ??
@@ -169,7 +173,7 @@ export function activateWithDeps(
     try {
       await ctl.start(text);
     } catch (e) {
-      log.error(`submitAsk failed: ${e instanceof Error ? e.message : String(e)}`);
+      log.error(`submitAsk failed: ${errMsg(e)}`);
     }
   };
 
@@ -177,7 +181,7 @@ export function activateWithDeps(
     try {
       await chatController?.stop();
     } catch (e) {
-      log.warn(`stopStream failed: ${e instanceof Error ? e.message : String(e)}`);
+      log.warn(`stopStream failed: ${errMsg(e)}`);
     }
   };
 
@@ -198,7 +202,7 @@ export function activateWithDeps(
     try {
       await vscode.env.openExternal(vscode.Uri.parse(url));
     } catch (e) {
-      log.warn(`openExternal failed: ${e instanceof Error ? e.message : String(e)}`);
+      log.warn(`openExternal failed: ${errMsg(e)}`);
     }
   };
 
@@ -239,7 +243,7 @@ export function activateWithDeps(
     showToast: createToastSurface(deps.window),
     showModal: createModalSurface(deps.window),
     sendResponse: async (requestId, decision) => {
-      const c = connection.client() as NimbusClient | undefined;
+      const c = nimbus();
       if (c === undefined) {
         log.warn("HITL response dropped: no Gateway connection");
         return;
@@ -247,7 +251,7 @@ export function activateWithDeps(
       try {
         await sendConsentResponse(c, requestId, decision);
       } catch (e) {
-        log.error(`HITL sendResponse failed: ${e instanceof Error ? e.message : String(e)}`);
+        log.error(`HITL sendResponse failed: ${errMsg(e)}`);
       }
     },
     onCountChange: (count) => {
@@ -261,7 +265,7 @@ export function activateWithDeps(
   const stateSub = connection.onState((s) => {
     renderStatusBar(s);
     if (s.kind === "connected") {
-      const c = connection.client() as NimbusClient | undefined;
+      const c = nimbus();
       if (c !== undefined) {
         if (hitlSubscription !== undefined) {
           try {
@@ -315,14 +319,14 @@ export function activateWithDeps(
   // gracefully when the Gateway is unreachable.
   const auditView = createAuditView({
     connection,
-    getClient: () => connection.client() as NimbusClient | undefined,
+    getClient: () => nimbus(),
   });
   const egressView = createEgressView({
     connection,
-    getClient: () => connection.client() as NimbusClient | undefined,
+    getClient: () => nimbus(),
   });
   const loadSessions = async (): Promise<SessionSummary[]> => {
-    const client = connection.client() as NimbusClient | undefined;
+    const client = nimbus();
     if (client === undefined) return [];
     try {
       const result = await client.querySql(SESSIONS_SQL);
@@ -335,7 +339,7 @@ export function activateWithDeps(
     } catch (e) {
       // e.g. an older Gateway without the session_memory table. Log a trail,
       // then rethrow so the view renders its "Failed to load sessions" row.
-      log.warn(`loadSessions querySql failed: ${e instanceof Error ? e.message : String(e)}`);
+      log.warn(`loadSessions querySql failed: ${errMsg(e)}`);
       throw e;
     }
   };
@@ -348,7 +352,7 @@ export function activateWithDeps(
   // schema coupling (field names) is isolated here so the view stays pure; swap
   // for a typed client method once one exists.
   const loadIndex = async (): Promise<IndexItem[]> => {
-    const client = connection.client() as NimbusClient | undefined;
+    const client = nimbus();
     if (client === undefined) return [];
     try {
       const { items } = await client.queryItems({ limit: INDEX_LIMIT });
@@ -359,7 +363,7 @@ export function activateWithDeps(
       }
       return result;
     } catch (e) {
-      log.warn(`loadIndex queryItems failed: ${e instanceof Error ? e.message : String(e)}`);
+      log.warn(`loadIndex queryItems failed: ${errMsg(e)}`);
       throw e;
     }
   };
@@ -425,7 +429,7 @@ export function activateWithDeps(
   });
 
   register("nimbus.search", async () => {
-    const c = connection.client() as NimbusClient | undefined;
+    const c = nimbus();
     if (c === undefined) {
       void deps.window.showErrorMessage("Nimbus: not connected to Gateway.");
       return;
@@ -446,10 +450,8 @@ export function activateWithDeps(
         matchOnDetail: true,
       });
     } catch (e) {
-      log.error(`nimbus.search failed: ${e instanceof Error ? e.message : String(e)}`);
-      void deps.window.showErrorMessage(
-        `Nimbus search failed: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      log.error(`nimbus.search failed: ${errMsg(e)}`);
+      void deps.window.showErrorMessage(`Nimbus search failed: ${errMsg(e)}`);
     }
   });
 
@@ -539,9 +541,7 @@ export function activateWithDeps(
     try {
       await openSource(item);
     } catch (e) {
-      void deps.window.showWarningMessage(
-        `Couldn't open ${item.name}: ${e instanceof Error ? e.message : String(e)}`,
-      );
+      void deps.window.showWarningMessage(`Couldn't open ${item.name}: ${errMsg(e)}`);
     }
   });
 
@@ -583,7 +583,7 @@ export function activateWithDeps(
   });
 
   register("nimbus.verifyEgress", async () => {
-    const client = connection.client() as NimbusClient | undefined;
+    const client = nimbus();
     if (client === undefined) {
       void deps.window.showWarningMessage("Nimbus: not connected to the Gateway.");
       return;
@@ -601,14 +601,14 @@ export function activateWithDeps(
         void deps.window.showErrorMessage(`Egress chain broke at row ${at}${reason}.`);
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errMsg(e);
       log.warn(`egress verify failed: ${msg}`);
       void deps.window.showErrorMessage(`Nimbus: egress verify failed: ${msg}`);
     }
   });
 
   register("nimbus.proveEgressWindow", async () => {
-    const client = connection.client() as NimbusClient | undefined;
+    const client = nimbus();
     if (client === undefined) {
       void deps.window.showWarningMessage("Nimbus: not connected to the Gateway.");
       return;
@@ -638,7 +638,7 @@ export function activateWithDeps(
         await deps.commands.executeCommand("vscode.open", vscode.Uri.file(saved.fsPath));
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errMsg(e);
       log.warn(`egress prove failed: ${msg}`);
       void deps.window.showErrorMessage(`Nimbus: egress prove failed: ${msg}`);
     }

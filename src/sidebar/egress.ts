@@ -1,3 +1,4 @@
+import { asRecord } from "./parse-helpers.js";
 import { formatRelativeTime } from "./relative-time.js";
 import type { SidebarItem } from "./tree-view.js";
 
@@ -15,12 +16,6 @@ export interface EgressRow {
   resultStatus: string;
   rowHash: string;
   prevHash: string;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
 }
 
 function str(value: unknown, fallback: string): string {

@@ -349,11 +349,9 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
-    "@types/dompurify": "^3.0.0",
     "@types/node": "^26.0.0",
     "@types/vscode": "^1.90.0",
     "@vitest/coverage-v8": "^4.1.9",
-    "@vscode/test-electron": "^3.0.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
     "jsdom": "^29.1.1",

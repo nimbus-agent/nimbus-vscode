@@ -1,4 +1,5 @@
 import type { ConnectionState } from "../connection/connection-manager.js";
+import { errMsg } from "../logging.js";
 import type { DisposableLike, TreeDataProviderLike, TreeItemLike } from "../vscode-shim.js";
 
 // The slice of the connection manager a sidebar view needs: the current state
@@ -101,7 +102,7 @@ export function connectionPlaceholder(state: ConnectionState): SidebarItem[] | u
 
 // A standard error row for a view whose data load threw.
 export function errorRow(label: string, err: unknown): SidebarItem {
-  return { label, tooltip: err instanceof Error ? err.message : String(err), iconId: "error" };
+  return { label, tooltip: errMsg(err), iconId: "error" };
 }
 
 export function toTreeItem(item: SidebarItem): TreeItemLike {

@@ -75,6 +75,7 @@ code paths without a running editor. Keep `src/` and `test/` self-contained.
 | Area | Responsibility |
 | --- | --- |
 | `src/extension.ts` | Activation entry: registers commands, wires the connection manager, status bar, and HITL router. |
+| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, …) stay `vscode`-free. |
 | `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). |
 | `src/connection/` | Connection manager and optional `nimbus start` auto-start. |
 | `src/hitl/` | Human-in-the-loop consent: router + modal / toast / details surfaces. |

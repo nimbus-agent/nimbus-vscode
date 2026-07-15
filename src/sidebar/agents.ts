@@ -1,3 +1,4 @@
+import { asNonEmptyString, asRecord } from "./parse-helpers.js";
 import type { SidebarItem } from "./tree-view.js";
 
 // One configurable agent from the nimbus.agents setting. We own this type; it is
@@ -6,16 +7,6 @@ export interface Agent {
   id: string;
   label: string;
   description?: string;
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function asNonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 // Coerce the untrusted nimbus.agents setting value into Agents. Non-array input

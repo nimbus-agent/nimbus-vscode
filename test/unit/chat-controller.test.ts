@@ -32,6 +32,23 @@ function pendingStream(streamId = "s1"): {
   return { handle: handle as unknown as AskStreamHandle, cancel };
 }
 
+// A stream handle that yields a fixed list of events, then completes.
+function streamOf(events: StreamEvent[], streamId = "s1"): AskStreamHandle {
+  return {
+    streamId,
+    cancel: vi.fn(async () => undefined),
+    [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
+      let i = 0;
+      return {
+        async next(): Promise<IteratorResult<StreamEvent>> {
+          if (i >= events.length) return { value: undefined as never, done: true };
+          return { value: events[i++] as StreamEvent, done: false };
+        },
+      };
+    },
+  } as unknown as AskStreamHandle;
+}
+
 function capturingPanel(): { panel: ChatPanel; posted: unknown[] } {
   const panel = createNoopChatPanel();
   const posted: unknown[] = [];
@@ -189,6 +206,48 @@ describe("ChatController", () => {
     expect(types).toContain("userMessage");
     expect(types).toContain("token");
     expect(types).toContain("done");
+  });
+
+  test("a stream error event posts an error message and logs it", async () => {
+    const { panel, posted } = capturingPanel();
+    const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () => streamOf([{ type: "error", code: "E_BOOM", message: "kaboom" }]),
+        }),
+        { panel, log },
+      ),
+    );
+    await ctrl.start("hi");
+    const err = posted.find((m) => (m as { type: string }).type === "error") as
+      | { message?: string }
+      | undefined;
+    expect(err?.message).toBe("kaboom");
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("kaboom"));
+    expect(ctrl.isStreaming()).toBe(false);
+  });
+
+  test("a hitlBatch event posts an inline HITL prompt", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () =>
+            streamOf([
+              { type: "hitlBatch", requestId: "req-1", prompt: "allow?", details: { foo: 1 } },
+              { type: "done", reply: "", sessionId: "" },
+            ]),
+        }),
+        { panel },
+      ),
+    );
+    await ctrl.start("hi");
+    const inline = posted.find((m) => (m as { type: string }).type === "hitlInline") as
+      | { requestId?: string; prompt?: string }
+      | undefined;
+    expect(inline?.requestId).toBe("req-1");
+    expect(inline?.prompt).toBe("allow?");
   });
 
   test("rejects start while a stream is in progress", async () => {
