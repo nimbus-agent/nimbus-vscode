@@ -1,7 +1,7 @@
 # Ranked Search — design
 
 **Date:** 2026-07-15
-**Status:** Approved (brainstorm + review feedback), pending implementation plan
+**Status:** Approved (brainstorm + review feedback rounds 1–2), pending implementation plan
 **Branch:** `feat/ranked-search`
 
 ## Summary
@@ -39,6 +39,11 @@ No client bump is required — `searchRanked` is already in the pinned `^0.4.0`.
 - A semantic on/off toggle (`semantic` defaults to `true` on the Gateway).
 - `contextChunks` tuning.
 - Multi-action result rows (Open + Ask buttons). v1 opens on accept.
+- **Duplicate badges** (review #9): `RankedSearchItem.duplicates` could show a
+  `+N duplicates` hint, but it is enrichment, not core to search working — deferred.
+- **Configurable result limit** (review #10): a `nimbus.search.limit` setting.
+  `SEARCH_LIMIT = 50` is a sensible *picker* cap (the Gateway's 500 ceiling is far
+  more than a QuickPick should list); a knob can follow if users ask.
 
 ## Global constraints
 
@@ -121,20 +126,21 @@ export function normalizeInline(s: string, max?: number): string;
 export interface RankedResult {
   name: string;
   service: string;
-  itemType?: string;
+  itemType?: string;   // NimbusItem.itemType, else indexedType (review #7)
   score: number;
-  url?: string;      // canonicalUrl ?? url
-  snippet?: string;  // semanticSnippet, normalized
+  url?: string;        // canonicalUrl ?? url
+  snippet?: string;    // semanticSnippet, normalized
 }
 
 // Defensively coerce one searchRanked row (typed by the client, parsed here for
 // resilience, consistent with the Audit/Egress views). Requires a name; drops
-// rows without one.
+// rows without one. itemType prefers the user-facing NimbusItem.itemType and
+// falls back to the index's indexedType (review #7).
 export function parseRankedItem(raw: unknown): RankedResult | undefined;
 
 // QuickPick view-model. Structurally a QuickPickItem (+ carried fields).
 //   label       = name
-//   description = "<service> · score <score.toFixed(2)>"   (review #6: labeled)
+//   description = "<service>[ · <itemType>] · score <score.toFixed(2)>"  (#6/#7)
 //   detail      = normalized snippet, else url, else "No source URL available"
 //   alwaysShow  = true                                     (review #1/#2)
 //   url         = RankedResult.url (may be undefined)
@@ -146,11 +152,16 @@ export interface SearchPick {
   alwaysShow: true;
   url?: string;
   canOpen: boolean;
+  isStatus?: boolean;  // a non-selectable status row (e.g. "No results") — #8
 }
 export function rankedResultToPick(r: RankedResult): SearchPick;
 
 // Map + drop-malformed, for the command layer and direct unit tests.
 export function buildPicks(rawRows: unknown[]): SearchPick[];
+
+// A non-selectable status row (alwaysShow, canOpen:false, isStatus:true) used to
+// show "No matching index records" instead of a blank list (review #8).
+export function statusPick(label: string): SearchPick;
 ```
 
 Notes:
@@ -195,7 +206,8 @@ const runSearch = (initialValue?: string): void => {
     try {
       const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });
       if (mine !== seq) return;          // a newer keystroke superseded this one
-      qp.items = buildPicks(rows);
+      const picks = buildPicks(rows);
+      qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
     } catch (e) {
       if (mine !== seq) return;
       log.error(`nimbus.search failed: ${errMsg(e)}`);
@@ -213,7 +225,7 @@ const runSearch = (initialValue?: string): void => {
 
   qp.onDidAccept(() => {
     const pick = qp.selectedItems[0];
-    if (pick === undefined) return;
+    if (pick === undefined || pick.isStatus === true) return;   // #8: ignore status rows
     if (pick.canOpen && pick.url !== undefined) {
       void openSource({ url: pick.url });
     } else {
@@ -317,7 +329,9 @@ runSearch(initial?):
 - **Empty query:** no Gateway call; empty list.
 - **Stale responses:** a monotonic `seq` guard drops out-of-order results so a
   slow early query cannot overwrite a newer one (latest-wins).
-- **No results:** empty item list (VS Code shows its own "No results" affordance).
+- **No results (review #8):** a single non-selectable status row
+  ("No matching index records", `isStatus:true`, `canOpen:false`) rather than a
+  blank list; accepting it does nothing.
 - **Result without a URL (review #4):** `detail` reads "No source URL available"
   and `canOpen` is false; accepting it shows an explicit info toast instead of a
   silent no-op.
@@ -335,18 +349,24 @@ Vitest, `vscode` aliased to the stub. `MockClient` provides `rankedItems`.
     truncates to `max` with ellipsis; no-op when short; `max` omitted → no trunc.
   - `parseRankedItem`: full row; `canonicalUrl` preferred over `url`; falls back
     to `url`; missing `name` → `undefined`; non-object/`null` → `undefined`;
-    optional `itemType`/`snippet` coerced/omitted.
+    optional `itemType`/`snippet` coerced/omitted; **`itemType` falls back to
+    `indexedType`** when the NimbusItem field is absent (review #7).
   - `rankedResultToPick`: label/description/detail composition; `alwaysShow` true;
-    score labeled + 2-dp; snippet normalized into `detail`; no-url →
+    score labeled + 2-dp; **`itemType` segment included in description when
+    present** (review #7); snippet normalized into `detail`; no-url →
     `canOpen:false` and the "No source URL available" detail.
   - `buildPicks`: maps rows, drops malformed, preserves order.
+  - `statusPick`: `isStatus:true`, `canOpen:false`, `alwaysShow:true` (review #8).
 - `test/unit/extension.test.ts` (orchestration; drive the stub QuickPick):
   - Typing fires `searchRanked({ name, limit: 50 })` after the debounce; items set
     with `alwaysShow`.
   - **Stale guard:** an earlier slow query resolving after a later one does not
     overwrite the newer items.
   - Accept on an openable pick calls `openSource` with the url; accept on a
-    no-url pick shows the info toast and does **not** call `openSource`.
+    no-url pick shows the info toast and does **not** call `openSource`; accept on
+    a status row (empty results) is a no-op (review #8).
+  - A query returning zero rows shows the single "No matching index records"
+    status row, not a blank list (review #8).
   - Search Selection prefills `qp.value` with the normalized selection and runs
     an immediate query.
   - Empty selection → "select text first"; disconnected → not-connected toast and
@@ -392,3 +412,11 @@ Vitest, `vscode` aliased to the stub. `MockClient` provides `rankedItems`.
 - **#5 (multi-line snippet in detail)** — fixed via `normalizeInline(snippet)`.
 - **#6 (score format/range)** — display labeled + 2-dp now; exact wording for an
   unbounded-range score deferred to a live-response check in the plan.
+- **#7 (itemType in description)** — fixed: `service · itemType · score`;
+  `parseRankedItem` prefers `NimbusItem.itemType`, falls back to `indexedType`.
+- **#8 (empty result set)** — fixed: a non-selectable "No matching index records"
+  status row instead of a blank list; accept ignores status rows.
+- **#9 (duplicate badges)** — deferred (see non-goals): enrichment, not core to
+  search functioning.
+- **#10 (configurable limit)** — deferred (see non-goals): `SEARCH_LIMIT = 50` is
+  a sensible picker cap; a `nimbus.search.limit` setting can follow on demand.
