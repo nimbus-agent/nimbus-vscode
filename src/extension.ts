@@ -454,13 +454,13 @@ export function activateWithDeps(
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const runQuery = async (value: string): Promise<void> => {
+      const mine = ++seq;
       const q = value.trim();
       if (q.length === 0) {
         qp.items = [];
         qp.busy = false;
         return;
       }
-      const mine = ++seq;
       qp.busy = true;
       try {
         const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });

@@ -1042,6 +1042,25 @@ describe("activateWithDeps", () => {
     expect(qp.items).toHaveLength(0); // guard blocked the post-dispose write
   });
 
+  test("clearing the box to empty drops a still-in-flight query's stale result", async () => {
+    const d = deferred<unknown[]>();
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({ searchRanked: async () => d.promise } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("abc"); // in-flight (mine = 1)
+    await flush();
+    qp.setValueAndFire(""); // empty branch — must bump seq so the stale result is dropped
+    await flush();
+    d.resolve([{ name: "Stale", service: "s", score: 1, url: "u" }]);
+    await flush();
+    expect(qp.items).toHaveLength(0);
+  });
+
   test("search warns and opens no QuickPick when disconnected", async () => {
     const f = makeFixture({ openClient: disconnectedClient() });
     activateWithDeps(f.ctx, f.deps);
