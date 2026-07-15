@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Nimbus activity-bar sidebar** with live, connection-aware tree views:
+  - **Audit** — recent audit-log entries; click one to open its read-only detail.
+  - **Sessions** — session history browser with chat resume.
+  - **Index** — the local Nimbus index, with open-source and Ask actions.
+  - **Agents** — configured agents, with an open-agent-chat action.
+  - **Egress** — the egress ledger (destination.method + relative time, icon by
+    result status); click a row for its read-only detail. Adds two commands:
+    `Nimbus: Verify Egress Ledger` (hash-chain integrity check) and
+    `Nimbus: Prove Egress Window` (saves a signed proof artifact for a chosen
+    time window). Backed by the egress RPCs in `@nimbus-dev/client@0.4.0`.
+- Status-bar quick menu for common Nimbus actions.
+
 ## 0.2.0
 
 - Extracted into its own repository (`nimbus-agent/nimbus-vscode`); consumes
