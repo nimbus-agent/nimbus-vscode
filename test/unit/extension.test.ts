@@ -1128,6 +1128,36 @@ describe("activateWithDeps", () => {
     expect(f.warnMessages.some((m) => /not connected/i.test(m))).toBe(true);
   });
 
+  test("verifyEgress surfaces an error toast when the RPC rejects", async () => {
+    const f = makeFixture({
+      openClient: makeFakeClient({
+        egressVerify: async () => {
+          throw new Error("ipc down");
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.verifyEgress")();
+    expect(f.errorMessages.some((m) => /egress verify failed: ipc down/.test(m))).toBe(true);
+  });
+
+  test("proveEgressWindow surfaces an error toast when the RPC rejects", async () => {
+    const f = makeFixture({
+      quickPickAnswers: [{ label: "All time" }],
+      openClient: makeFakeClient({
+        egressProveWindow: async () => {
+          throw new Error("prove boom");
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.proveEgressWindow")();
+    expect(f.errorMessages.some((m) => /egress prove failed: prove boom/.test(m))).toBe(true);
+    expect(f.saveJsonCalls).toHaveLength(0);
+  });
+
   test("proveEgressWindow saves a proof and offers to open it", async () => {
     const savedUri = { fsPath: "/tmp/egress-proof.json" };
     const f = makeFixture({

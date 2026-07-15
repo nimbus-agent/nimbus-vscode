@@ -46,6 +46,11 @@ describe("ToastSurface", () => {
     const r = await surf({ requestId: "r1", prompt: "ok?" });
     expect(r).toBeUndefined();
   });
+  test("returns undefined when the user clicks View Details", async () => {
+    const surf = createToastSurface(fakeWindow("View Details"));
+    const r = await surf({ requestId: "r1", prompt: "ok?" });
+    expect(r).toBeUndefined();
+  });
 });
 
 describe("ModalSurface", () => {
@@ -61,5 +66,20 @@ describe("ModalSurface", () => {
     const surf = createModalSurface(window);
     await surf({ requestId: "r1", prompt: "ok?" });
     expect(calls[0]?.args[1]).toEqual({ modal: true });
+  });
+
+  test("returns approve when user clicks Approve", async () => {
+    const surf = createModalSurface(fakeWindow("Approve"));
+    expect(await surf({ requestId: "r1", prompt: "ok?" })).toBe("approve");
+  });
+
+  test("returns reject when user clicks Reject", async () => {
+    const surf = createModalSurface(fakeWindow("Reject"));
+    expect(await surf({ requestId: "r1", prompt: "ok?" })).toBe("reject");
+  });
+
+  test("returns undefined when the modal is dismissed", async () => {
+    const surf = createModalSurface(fakeWindow(undefined));
+    expect(await surf({ requestId: "r1", prompt: "ok?" })).toBeUndefined();
   });
 });

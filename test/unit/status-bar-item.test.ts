@@ -32,6 +32,25 @@ describe("formatStatusBar", () => {
     expect(r.command).toBe("nimbus.startGateway");
   });
 
+  test("disconnected with autostart on shows starting-Gateway", () => {
+    const r = formatStatusBar(
+      inputs({
+        connection: { kind: "disconnected", socketPath: "/x", reason: "no socket" },
+        autoStartGateway: true,
+      }),
+    );
+    expect(r.text).toMatch(/starting Gateway/);
+    expect(r.command).toBeUndefined();
+    expect(r.backgroundColor).toBeUndefined();
+  });
+
+  test("starting-gateway state is a non-actionable spinner", () => {
+    const r = formatStatusBar(inputs({ connection: { kind: "starting-gateway", socketPath: "/x" } }));
+    expect(r.text).toMatch(/starting Gateway/);
+    expect(r.tooltip).toContain("waiting for socket");
+    expect(r.command).toBeUndefined();
+  });
+
   test("permission denied has distinct state and tooltip", () => {
     const r = formatStatusBar(
       inputs({ connection: { kind: "permission-denied", socketPath: "/sock" } }),
