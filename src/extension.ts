@@ -13,6 +13,7 @@ import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
 import { createLogger, errMsg, type Logger } from "./logging.js";
+import { buildPicks, normalizeInline, type SearchPick, statusPick } from "./search.js";
 import { createSettings } from "./settings.js";
 import { type Agent, parseAgents } from "./sidebar/agents.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
@@ -45,6 +46,12 @@ const SESSIONS_SQL =
 // already ordered; we cap to keep the tree responsive (cf. the search handler).
 const INDEX_LIMIT = 100;
 
+// Search result cap (a sensible picker size; the Gateway clamps to 1..500) and
+// the type-to-search debounce.
+const SEARCH_LIMIT = 50;
+const SEARCH_DEBOUNCE_MS = 200;
+const SELECTION_PREFILL_MAX = 150;
+
 export interface ActivateDeps {
   window: WindowApi;
   workspace: WorkspaceApi;
@@ -54,8 +61,9 @@ export interface ActivateDeps {
   chatPanelFactory?: (deps: { log: Logger }) => ChatPanelFactory;
   autoStarter?: AutoStarter;
   openReadonlyJson?: (title: string, content: string) => Promise<void>;
-  openSource?: (item: IndexItem) => Promise<void>;
+  openSource?: (item: { url?: string }) => Promise<void>;
   saveJson?: (defaultName: string, content: string) => Promise<{ fsPath: string } | undefined>;
+  searchDebounceMs?: number;
 }
 
 export function activateWithDeps(
@@ -428,40 +436,88 @@ export function activateWithDeps(
     await ctl.start(`${prefix.trim()}\n\n${trimmed}`);
   });
 
-  register("nimbus.search", async () => {
-    const c = nimbus();
-    if (c === undefined) {
+  const runSearch = (initialValue?: string): void => {
+    const client = nimbus();
+    if (client === undefined) {
       void deps.window.showErrorMessage("Nimbus: not connected to Gateway.");
       return;
     }
-    const q = await deps.window.showInputBox({ prompt: "Search local index" });
-    if (q === undefined || q.trim().length === 0) return;
-    try {
-      const r = await c.queryItems({ limit: 50 });
-      const items = r.items.map((it) => ({
-        // NimbusItem fields: name (not title) and url (there is no path).
-        label: displayText(it["name"]) ?? displayText(it["id"]) ?? "(untitled)",
-        description: displayText(it["service"]) ?? "",
-        detail: displayText(it["url"]) ?? "",
-      }));
-      await deps.window.showQuickPick(items, {
-        placeHolder: `${items.length} results for "${q.trim()}"`,
-        matchOnDescription: true,
-        matchOnDetail: true,
-      });
-    } catch (e) {
-      log.error(`nimbus.search failed: ${errMsg(e)}`);
-      void deps.window.showErrorMessage(`Nimbus search failed: ${errMsg(e)}`);
+    const qp = deps.window.createQuickPick<SearchPick>();
+    qp.placeholder = "Search the local Nimbus index";
+    // alwaysShow on every result makes these largely moot (VS Code can't filter
+    // out our rows), but set both for parity with the intended UX.
+    qp.matchOnDescription = true;
+    qp.matchOnDetail = true;
+    const debounceMs = deps.searchDebounceMs ?? SEARCH_DEBOUNCE_MS;
+    let seq = 0;
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const runQuery = async (value: string): Promise<void> => {
+      const q = value.trim();
+      if (q.length === 0) {
+        qp.items = [];
+        qp.busy = false;
+        return;
+      }
+      const mine = ++seq;
+      qp.busy = true;
+      try {
+        const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });
+        if (disposed || mine !== seq) return; // pick closed, or a newer keystroke won
+        const picks = buildPicks(rows);
+        qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
+      } catch (e) {
+        if (disposed || mine !== seq) return;
+        log.error(`nimbus.search failed: ${errMsg(e)}`);
+        qp.items = [];
+        void deps.window.showErrorMessage(`Nimbus search failed: ${errMsg(e)}`);
+      } finally {
+        if (!disposed && mine === seq) qp.busy = false;
+      }
+    };
+
+    qp.onDidChangeValue((value) => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = setTimeout(() => void runQuery(value), debounceMs);
+    });
+
+    qp.onDidAccept(() => {
+      const pick = qp.selectedItems[0];
+      if (pick === undefined || pick.isStatus === true) return;
+      if (pick.canOpen && pick.url !== undefined) {
+        void openSource({ url: pick.url });
+      } else {
+        void deps.window.showInformationMessage(`No source to open for "${pick.label}".`, {});
+      }
+      qp.hide();
+    });
+
+    qp.onDidHide(() => {
+      disposed = true; // guard in-flight runQuery from writing to a disposed pick
+      if (timer !== undefined) clearTimeout(timer);
+      qp.dispose();
+    });
+
+    if (initialValue !== undefined) {
+      const seed = normalizeInline(initialValue, SELECTION_PREFILL_MAX);
+      qp.value = seed;
+      void runQuery(seed);
     }
+    qp.show();
+  };
+
+  register("nimbus.search", () => {
+    runSearch();
   });
 
-  register("nimbus.searchSelection", async () => {
+  register("nimbus.searchSelection", () => {
     const editor = deps.window.activeTextEditor;
     if (editor === undefined || editor.selection.isEmpty) {
       void deps.window.showErrorMessage("Nimbus: select text first.");
       return;
     }
-    await deps.commands.executeCommand("nimbus.search");
+    runSearch(editor.document.getText(editor.selection));
   });
 
   register("nimbus.newConversation", async () => {
@@ -718,14 +774,6 @@ export function createInlineHitlSurface(args: {
   };
 }
 
-// Coerce an unknown index field to a display string, ignoring non-primitives so
-// search results never render Object's "[object Object]" default (Sonar S6551).
-function displayText(value: unknown): string | undefined {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return undefined;
-}
-
 // Opens read-only JSON in an editor tab via a custom-scheme content provider.
 // The provider is registered lazily on first use; each call gets a unique URI
 // so VS Code re-resolves the content. The `.json` path extension drives syntax
@@ -763,7 +811,7 @@ function createReadonlyJsonOpener(
   };
 }
 
-export function createSourceOpener(): (item: IndexItem) => Promise<void> {
+export function createSourceOpener(): (item: { url?: string }) => Promise<void> {
   return async (item) => {
     const url = item.url;
     if (url === undefined || url.length === 0) return;
