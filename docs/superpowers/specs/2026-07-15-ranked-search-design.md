@@ -193,9 +193,10 @@ const runSearch = (initialValue?: string): void => {
   }
   const qp = deps.window.createQuickPick<SearchPick>();
   qp.placeholder = "Search the local Nimbus index";
-  qp.matchOnDetail = true;               // labels already alwaysShow; this only
-                                          // helps when the user narrows manually
+  qp.matchOnDescription = true;           // moot given alwaysShow, set for parity
+  qp.matchOnDetail = true;
   let seq = 0;                            // stale-response guard (latest wins)
+  let disposed = false;                   // guard writes after the pick is hidden
   let timer: ReturnType<typeof setTimeout> | undefined;
 
   const runQuery = async (value: string): Promise<void> => {
@@ -205,16 +206,16 @@ const runSearch = (initialValue?: string): void => {
     qp.busy = true;
     try {
       const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });
-      if (mine !== seq) return;          // a newer keystroke superseded this one
+      if (disposed || mine !== seq) return;  // pick closed, or superseded
       const picks = buildPicks(rows);
       qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
     } catch (e) {
-      if (mine !== seq) return;
+      if (disposed || mine !== seq) return;
       log.error(`nimbus.search failed: ${errMsg(e)}`);
       qp.items = [];
       void deps.window.showErrorMessage(`Nimbus search failed: ${errMsg(e)}`);
     } finally {
-      if (mine === seq) qp.busy = false;
+      if (!disposed && mine === seq) qp.busy = false;
     }
   };
 
@@ -235,6 +236,7 @@ const runSearch = (initialValue?: string): void => {
   });
 
   qp.onDidHide(() => {
+    disposed = true;
     if (timer !== undefined) clearTimeout(timer);
     qp.dispose();
   });
@@ -329,6 +331,9 @@ runSearch(initial?):
 - **Empty query:** no Gateway call; empty list.
 - **Stale responses:** a monotonic `seq` guard drops out-of-order results so a
   slow early query cannot overwrite a newer one (latest-wins).
+- **Pick closed mid-flight:** a `disposed` flag (set in `onDidHide`) guards the
+  post-`await` writes so a late `searchRanked` result never mutates a disposed
+  QuickPick (which VS Code would throw on).
 - **No results (review #8):** a single non-selectable status row
   ("No matching index records", `isStatus:true`, `canOpen:false`) rather than a
   blank list; accepting it does nothing.

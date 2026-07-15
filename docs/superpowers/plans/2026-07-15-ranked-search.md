@@ -715,6 +715,25 @@ In their place, add:
     expect(calls[0]?.name).toBe("multi line selection");
   });
 
+  test("results arriving after the pick is hidden do not mutate it", async () => {
+    const d = deferred<unknown[]>();
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({ searchRanked: async () => d.promise } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("r");
+    await flush(); // search in-flight
+    qp.hide(); // onDidHide → disposed = true, dispose()
+    expect(qp.disposed).toBe(true);
+    d.resolve([{ name: "Late", service: "s", score: 1, url: "u" }]);
+    await flush();
+    expect(qp.items).toHaveLength(0); // guard blocked the post-dispose write
+  });
+
   test("search warns and opens no QuickPick when disconnected", async () => {
     const f = makeFixture({ openClient: disconnectedClient() });
     activateWithDeps(f.ctx, f.deps);
@@ -764,9 +783,13 @@ In `src/extension.ts`, replace the entire `register("nimbus.search", …)` and
     }
     const qp = deps.window.createQuickPick<SearchPick>();
     qp.placeholder = "Search the local Nimbus index";
+    // alwaysShow on every result makes these largely moot (VS Code can't filter
+    // out our rows), but set both for parity with the intended UX.
+    qp.matchOnDescription = true;
     qp.matchOnDetail = true;
     const debounceMs = deps.searchDebounceMs ?? SEARCH_DEBOUNCE_MS;
     let seq = 0;
+    let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const runQuery = async (value: string): Promise<void> => {
@@ -780,16 +803,16 @@ In `src/extension.ts`, replace the entire `register("nimbus.search", …)` and
       qp.busy = true;
       try {
         const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });
-        if (mine !== seq) return;
+        if (disposed || mine !== seq) return; // pick closed, or a newer keystroke won
         const picks = buildPicks(rows);
         qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
       } catch (e) {
-        if (mine !== seq) return;
+        if (disposed || mine !== seq) return;
         log.error(`nimbus.search failed: ${errMsg(e)}`);
         qp.items = [];
         void deps.window.showErrorMessage(`Nimbus search failed: ${errMsg(e)}`);
       } finally {
-        if (mine === seq) qp.busy = false;
+        if (!disposed && mine === seq) qp.busy = false;
       }
     };
 
@@ -810,6 +833,7 @@ In `src/extension.ts`, replace the entire `register("nimbus.search", …)` and
     });
 
     qp.onDidHide(() => {
+      disposed = true; // guard in-flight runQuery from writing to a disposed pick
       if (timer !== undefined) clearTimeout(timer);
       qp.dispose();
     });
@@ -927,6 +951,18 @@ git commit -m "docs: ranked search is live (client 0.4.0 searchRanked)"
 **Placeholder scan:** No TBD/TODO; every code step shows complete code. The only
 deferred detail is the score-label *wording* for an unbounded-range score, called
 out explicitly (needs a live response to confirm) — not a placeholder in the code.
+
+**Plan-review disposition:**
+- **#1 (mutating a disposed QuickPick)** — fixed: a `disposed` flag set in
+  `onDidHide` guards both `runQuery` resolution paths and the `busy` write; a new
+  test ("results arriving after the pick is hidden do not mutate it") exercises it.
+- **#2 (missing `matchOnDescription`)** — fixed for parity, with a caveat: because
+  every result sets `alwaysShow: true`, VS Code's local filter is bypassed, so
+  `matchOnDescription`/`matchOnDetail` have no functional effect on our rows.
+- **#3 (`setTimeout` typing)** — rejected. `ReturnType<typeof setTimeout>` already
+  compiles cleanly in this repo (`connection-manager.ts:39` uses the identical
+  pattern), and the proposed `any`/cast remedy would violate the no-`any`
+  non-negotiable (Biome `noExplicitAny`). Task 1/2 typecheck steps cover it.
 
 **Type consistency:** `SearchPick`/`RankedResult` identical across Tasks 1–2.
 `QuickPickLike<T>` used by the shim (Task 2 Step 1), the stub (Step 2), the
