@@ -91,5 +91,7 @@ TypeScript **strict**, **no `any`** (use `unknown` for external data). Biome
 ## Current surface
 
 Implemented: Ask (streaming chat panel), Search (Quick Pick over the local
-index), Ask/Search Selection, plus connection + HITL plumbing. Workflow / share /
-egress surfaces are intentionally **not** implemented yet.
+index), Ask/Search Selection; a Nimbus sidebar with Audit, Sessions, Index,
+Agents, and an **Egress** ledger viewer (with Verify-ledger and Prove-window
+commands); plus connection + HITL plumbing. Workflow / share surfaces are
+intentionally **not** implemented yet.
