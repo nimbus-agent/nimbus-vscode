@@ -11,6 +11,7 @@ export const window = {
   showQuickPick: async () => undefined,
   registerTreeDataProvider: (_viewId: string, _provider: unknown) => ({ dispose: () => undefined }),
   showTextDocument: async (_doc: unknown, _opts?: unknown) => undefined,
+  showSaveDialog: async (_opts?: unknown) => ({ fsPath: "/tmp/egress-proof.json", scheme: "file" }),
   createStatusBarItem: () => ({
     text: "",
     tooltip: "",
@@ -53,6 +54,10 @@ export const workspace = {
     dispose: () => undefined,
   }),
   openTextDocument: async (uri: unknown) => ({ uri }),
+  workspaceFolders: undefined as Array<{ uri: unknown }> | undefined,
+  fs: {
+    writeFile: async (_uri: unknown, _content: Uint8Array) => undefined,
+  },
 };
 export const commands = {
   registerCommand: () => ({ dispose: () => undefined }),
