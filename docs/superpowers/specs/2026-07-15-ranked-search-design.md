@@ -1,37 +1,44 @@
 # Ranked Search — design
 
 **Date:** 2026-07-15
-**Status:** Approved (brainstorm), pending implementation plan
+**Status:** Approved (brainstorm + review feedback), pending implementation plan
 **Branch:** `feat/ranked-search`
 
 ## Summary
 
-Make the **Search** surface actually search the local Nimbus index. Today
-`nimbus.search` ignores the user's query: it fetches 50 arbitrary recent items
-via `queryItems({ limit: 50 })` and relies on VS Code's Quick Pick to
-fuzzy-filter *those 50* client-side. The typed query never reaches the Gateway.
+Make the **Search** surface actually search the local Nimbus index, as a live,
+type-to-search experience. Today `nimbus.search` ignores the user's query: it
+fetches 50 arbitrary recent items via `queryItems({ limit: 50 })` and relies on
+VS Code's Quick Pick to fuzzy-filter *those 50* client-side. The typed query
+never reaches the Gateway.
 
 `@nimbus-dev/client@0.4.0` exposes `searchRanked(params?)`, a real
-semantic+keyword index search. This design rewrites Search on top of it, fixes
-**Search Selection** (which currently re-prompts and drops the selection), and
-gives results a purpose: selecting one **opens the item** through the Index
-view's existing `openSource` seam.
+semantic+keyword index search. This design rebuilds Search on top of it using a
+single `window.createQuickPick()` surface that re-queries the Gateway (debounced)
+as the user types, fixes **Search Selection** (which currently re-prompts and
+drops the selection), and gives results a purpose: selecting one **opens the
+item** through the Index view's existing `openSource` seam.
 
 No client bump is required — `searchRanked` is already in the pinned `^0.4.0`.
 
 ## Goals / non-goals
 
 **Goals**
-- Send the user's query to the Gateway via `searchRanked({ name, limit })`.
-- Rank/display results by the Gateway's relevance ordering.
-- **Search Selection** prefills the query with the selected text (user can edit).
-- Selecting a result opens it (external URL or in-editor file) via `openSource`.
+- Live search: each debounced keystroke runs `searchRanked({ name })` on the
+  Gateway and updates the result list — no disjoint input-box → popup hop, and no
+  stale client-side filtering of a pre-fetched set.
+- Results shown in the Gateway's relevance order (semantic + keyword).
+- **Search Selection** seeds the search box with the (normalized, truncated)
+  selected text.
+- Selecting a result opens it (external URL or in-editor file) via `openSource`;
+  a result with no source URL is clearly marked and gives explicit feedback
+  rather than silently doing nothing.
 
 **Non-goals (YAGNI for v1; future work)**
 - `service` / `itemType` filter pickers.
 - A semantic on/off toggle (`semantic` defaults to `true` on the Gateway).
 - `contextChunks` tuning.
-- Multi-action result rows (Open + Ask buttons). v1 is Open-on-select only.
+- Multi-action result rows (Open + Ask buttons). v1 opens on accept.
 
 ## Global constraints
 
@@ -77,26 +84,47 @@ type RankedSearchItem = NimbusItem & {
 ```
 
 `MockClient` supports a `rankedItems` fixture and implements `searchRanked`, so
-tests need no bespoke fake.
+tests need no bespoke fake for the client.
+
+## Load-bearing VS Code constraint (review #1/#2)
+
+`window.createQuickPick()` **always** applies built-in fuzzy filtering of its
+items against the typed value (matching `label`, plus `description`/`detail` when
+`matchOnDescription`/`matchOnDetail` are set). There is **no** public toggle to
+disable it (`QuickPick` has no `matchOnLabel`/`sortByLabel`/`filterText`).
+
+For a *semantic* search this would hide good results whose label does not contain
+the query substring. The supported escape hatch is per item:
+**`QuickPickItem.alwaysShow = true`** forces VS Code to display the item
+regardless of the filter. Every result pick therefore sets `alwaysShow: true`, so
+the **Gateway's ranking is authoritative** and VS Code never re-filters our
+results. This is not optional polish — without it live semantic search silently
+drops matches.
 
 ## Architecture
 
-A pure logic module parses and formats results; the extension command layer owns
-the Quick Pick / input-box interaction and the client call; a lightly widened
-`openSource` seam opens the chosen result.
+A pure logic module parses/normalizes/formats results; the extension command
+layer owns the live `QuickPick` orchestration and the client calls; a lightly
+widened `openSource` seam opens the chosen result; the `vscode-shim` gains a
+`createQuickPick` seam.
 
 ### Component 1 — `src/search.ts` (new, pure, `vscode`-free)
 
 Mirrors the sidebar parse modules; reuses `src/sidebar/parse-helpers.ts`.
 
 ```ts
+// Collapse all whitespace (incl. newlines) to single spaces, trim, and truncate
+// to `max` chars with an ellipsis. Used for single-line QuickPick detail and for
+// the Search-Selection prefill (review #3, #5).
+export function normalizeInline(s: string, max?: number): string;
+
 export interface RankedResult {
   name: string;
   service: string;
   itemType?: string;
   score: number;
   url?: string;      // canonicalUrl ?? url
-  snippet?: string;  // semanticSnippet
+  snippet?: string;  // semanticSnippet, normalized
 }
 
 // Defensively coerce one searchRanked row (typed by the client, parsed here for
@@ -104,157 +132,263 @@ export interface RankedResult {
 // rows without one.
 export function parseRankedItem(raw: unknown): RankedResult | undefined;
 
-// Quick Pick view-model. label = name; description = "service · <score>";
-// detail = snippet || url. Carries url through for the open action.
+// QuickPick view-model. Structurally a QuickPickItem (+ carried fields).
+//   label       = name
+//   description = "<service> · score <score.toFixed(2)>"   (review #6: labeled)
+//   detail      = normalized snippet, else url, else "No source URL available"
+//   alwaysShow  = true                                     (review #1/#2)
+//   url         = RankedResult.url (may be undefined)
+//   canOpen     = url is a non-empty string                (review #4)
 export interface SearchPick {
   label: string;
   description: string;
   detail: string;
+  alwaysShow: true;
   url?: string;
+  canOpen: boolean;
 }
 export function rankedResultToPick(r: RankedResult): SearchPick;
+
+// Map + drop-malformed, for the command layer and direct unit tests.
+export function buildPicks(rawRows: unknown[]): SearchPick[];
 ```
 
 Notes:
 - `url` prefers `canonicalUrl`, then `url`; may be absent.
-- `score` is formatted to a short fixed precision for display (e.g. 2 dp).
-- Respect `exactOptionalPropertyTypes`: only set `itemType` / `url` / `snippet`
-  when present.
+- Respect `exactOptionalPropertyTypes`: only set `itemType`/`url`/`snippet` when
+  present.
+- **Review #6 (score):** display the score labeled and 2-dp
+  (`score 0.85`). The score's *range* (normalized 0–1 vs raw BM25) is **not**
+  documented in the client types; the implementation plan includes a step to
+  inspect a live `searchRanked` response and, if it is an unbounded BM25 value,
+  adjust the label wording (e.g. `relevance 12.3`). The display is self-describing
+  either way; the exact wording is the only thing deferred.
 
-### Component 2 — `src/extension.ts` command layer
+### Component 2 — `src/extension.ts` live-search orchestration
 
-Extract a shared `runSearch(initialValue?: string)` and have both commands call
-it:
+A single `runSearch(initialValue?)` builds and drives a live QuickPick; both
+commands call it.
 
 ```ts
-const runSearch = async (initialValue?: string): Promise<void> => {
+const SEARCH_LIMIT = 50;
+const SEARCH_DEBOUNCE_MS = 200;
+const SELECTION_PREFILL_MAX = 150;
+
+const runSearch = (initialValue?: string): void => {
   const client = nimbus();
   if (client === undefined) {
     void deps.window.showErrorMessage("Nimbus: not connected to Gateway.");
     return;
   }
-  const inputOpts: { prompt: string; value?: string } = { prompt: "Search local index" };
-  if (initialValue !== undefined && initialValue.length > 0) inputOpts.value = initialValue;
-  const q = await deps.window.showInputBox(inputOpts);
-  if (q === undefined || q.trim().length === 0) return;
-  try {
-    const rows = await client.searchRanked({ name: q.trim(), limit: SEARCH_LIMIT });
-    const picks: SearchPick[] = [];
-    for (const raw of rows) {
-      const r = parseRankedItem(raw);
-      if (r !== undefined) picks.push(rankedResultToPick(r));
+  const qp = deps.window.createQuickPick<SearchPick>();
+  qp.placeholder = "Search the local Nimbus index";
+  qp.matchOnDetail = true;               // labels already alwaysShow; this only
+                                          // helps when the user narrows manually
+  let seq = 0;                            // stale-response guard (latest wins)
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const runQuery = async (value: string): Promise<void> => {
+    const q = value.trim();
+    if (q.length === 0) { qp.items = []; qp.busy = false; return; }
+    const mine = ++seq;
+    qp.busy = true;
+    try {
+      const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });
+      if (mine !== seq) return;          // a newer keystroke superseded this one
+      qp.items = buildPicks(rows);
+    } catch (e) {
+      if (mine !== seq) return;
+      log.error(`nimbus.search failed: ${errMsg(e)}`);
+      qp.items = [];
+      void deps.window.showErrorMessage(`Nimbus search failed: ${errMsg(e)}`);
+    } finally {
+      if (mine === seq) qp.busy = false;
     }
-    const chosen = await deps.window.showQuickPick(picks, {
-      placeHolder:
-        picks.length > 0 ? `${picks.length} results for "${q.trim()}"` : `No results for "${q.trim()}"`,
-      matchOnDescription: true,
-      matchOnDetail: true,
-    });
-    if (chosen?.url !== undefined && chosen.url.length > 0) {
-      await openSource({ url: chosen.url });
+  };
+
+  qp.onDidChangeValue((value) => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = setTimeout(() => void runQuery(value), SEARCH_DEBOUNCE_MS);
+  });
+
+  qp.onDidAccept(() => {
+    const pick = qp.selectedItems[0];
+    if (pick === undefined) return;
+    if (pick.canOpen && pick.url !== undefined) {
+      void openSource({ url: pick.url });
+    } else {
+      void deps.window.showInformationMessage(`No source to open for "${pick.label}".`);
     }
-  } catch (e) {
-    log.error(`nimbus.search failed: ${errMsg(e)}`);
-    void deps.window.showErrorMessage(`Nimbus search failed: ${errMsg(e)}`);
+    qp.hide();
+  });
+
+  qp.onDidHide(() => {
+    if (timer !== undefined) clearTimeout(timer);
+    qp.dispose();
+  });
+
+  if (initialValue !== undefined) {
+    const seed = normalizeInline(initialValue, SELECTION_PREFILL_MAX);
+    qp.value = seed;
+    void runQuery(seed);                 // seed searches immediately (no debounce)
   }
+  qp.show();
 };
 
-register("nimbus.search", async () => {
-  await runSearch();
+register("nimbus.search", () => {
+  runSearch();
 });
 
-register("nimbus.searchSelection", async () => {
+register("nimbus.searchSelection", () => {
   const editor = deps.window.activeTextEditor;
   if (editor === undefined || editor.selection.isEmpty) {
     void deps.window.showErrorMessage("Nimbus: select text first.");
     return;
   }
-  await runSearch(selectedText(editor));   // prefill the input box
+  runSearch(editor.document.getText(editor.selection));   // prefill (review #3)
 });
 ```
 
-- `SEARCH_LIMIT = 50` (a named const, cf. `INDEX_LIMIT`).
-- `selectedText(editor)` — `editor.document.getText(editor.selection)` via the
-  existing `TextEditorLike` shim (`document.getText(range?)` + `selection`);
-  trim before use.
+- Empty value never calls the Gateway (avoids a large top-ranked fetch on open).
+- The seed (selection) is normalized+truncated (review #3) and searched once
+  immediately so results are visible before the user types.
+- Errors surface once per failed keystroke and never leave a stale spinner.
 
-### Component 3 — widen the `openSource` seam
+### Component 3 — the `createQuickPick` shim seam + widened `openSource`
 
-`createSourceOpener` today is `(item: IndexItem) => Promise<void>` and reads only
-`item.url`. Widen the seam's parameter to a structural `{ url?: string }`:
+`src/vscode-shim.ts`: add a minimal `QuickPickLike<T>` interface and a
+`createQuickPick<T>()` method on `WindowApi`, exposing only what the
+orchestration uses:
 
 ```ts
-export function createSourceOpener(): (item: { url?: string }) => Promise<void>
-// ActivateDeps.openSource?: (item: { url?: string }) => Promise<void>
+export interface QuickPickLike<T> {
+  value: string;
+  placeholder: string | undefined;
+  items: readonly T[];
+  busy: boolean;
+  matchOnDescription: boolean;
+  matchOnDetail: boolean;
+  readonly selectedItems: readonly T[];
+  onDidChangeValue(cb: (value: string) => void): DisposableLike;
+  onDidAccept(cb: () => void): DisposableLike;
+  onDidHide(cb: () => void): DisposableLike;
+  show(): void;
+  hide(): void;
+  dispose(): void;
+}
+// WindowApi gains: createQuickPick<T extends { label: string }>(): QuickPickLike<T>;
 ```
 
-`IndexItem` (which has `url?: string`) still satisfies it, so the Index view is
-unchanged; search results pass `{ url }`. One open path, two callers. No behavior
-change to the open logic (external URL vs file Uri, Windows-drive handling).
+The real `vscode.window.createQuickPick()` satisfies this structurally (the
+extension already wires other `WindowApi` members to `vscode.window` at the
+composition root). `test/unit/vscode-stub.ts` adds a controllable fake
+(`value`/`items`/`busy` mutable; `onDidChangeValue`/`onDidAccept`/`onDidHide`
+capture callbacks the test can fire).
+
+**Widen `openSource`** (unchanged logic): `createSourceOpener` and
+`ActivateDeps.openSource` change their parameter from `IndexItem` to a structural
+`{ url?: string }`. `IndexItem` (which has `url?: string`) still satisfies it, so
+the Index view is untouched; search passes `{ url }`. One open path, two callers.
 
 ## Data flow
 
 ```text
 nimbus.search           → runSearch()
-nimbus.searchSelection  → runSearch(selectedText)   // empty selection → error toast
+nimbus.searchSelection  → runSearch(selectionText)   // empty selection → error toast
 
 runSearch(initial?):
   nimbus() undefined → "not connected" toast, return
-  showInputBox({ prompt, value: initial? })
-  blank → return
-  searchRanked({ name, limit: SEARCH_LIMIT })
-    → parseRankedItem[]  (drop malformed)
-    → rankedResultToPick[]
-  showQuickPick(picks, { placeHolder: N results / No results, matchOnDescription, matchOnDetail })
-  chosen?.url → openSource({ url })
-  throw → log.error + error toast
+  qp = createQuickPick()
+  onDidChangeValue → debounce(200ms) → runQuery(value)
+      runQuery: trim; empty → clear; else searchRanked({ name, limit:50 })
+               → buildPicks(rows) [alwaysShow:true] → qp.items   (stale seq dropped)
+  onDidAccept → selected.canOpen ? openSource({url}) : info toast → hide
+  onDidHide   → clear timer, dispose
+  initial? → qp.value = normalizeInline(initial,150); runQuery(seed); 
+  qp.show()
 ```
 
 ## Error handling / edge cases
 
-- **Disconnected:** existing guard → `showErrorMessage("Nimbus: not connected to Gateway.")`.
-- **RPC throw:** `log.error` + `showErrorMessage(...)` (existing pattern, via `errMsg`).
-- **Blank query / empty selection:** early return / "select text first" toast (as today).
-- **No results:** Quick Pick opens with a `No results for "q"` placeholder over an
-  empty list (VS Code shows its own "No results" affordance).
-- **Result without a URL:** the pick still lists; selecting it is a no-op
-  (`openSource` returns early on empty `url`).
-- **Malformed row:** dropped by `parseRankedItem`, never thrown — matches the
-  ledger views.
+- **Disconnected (at open):** existing guard → `showErrorMessage("Nimbus: not connected to Gateway.")`; the QuickPick never opens.
+- **`searchRanked` throws (per keystroke):** `log.error` + `showErrorMessage` via
+  `errMsg`, items cleared, spinner cleared. A later keystroke can recover.
+- **Empty selection:** `"Nimbus: select text first."` (as today).
+- **Empty query:** no Gateway call; empty list.
+- **Stale responses:** a monotonic `seq` guard drops out-of-order results so a
+  slow early query cannot overwrite a newer one (latest-wins).
+- **No results:** empty item list (VS Code shows its own "No results" affordance).
+- **Result without a URL (review #4):** `detail` reads "No source URL available"
+  and `canOpen` is false; accepting it shows an explicit info toast instead of a
+  silent no-op.
+- **Multi-line snippet / huge selection (review #3/#5):** `normalizeInline`
+  collapses whitespace/newlines and truncates, so neither the `detail` nor the
+  Search-Selection prefill breaks the single-line surfaces.
+- **Malformed row:** dropped by `parseRankedItem`, never thrown.
 
 ## Testing
 
 Vitest, `vscode` aliased to the stub. `MockClient` provides `rankedItems`.
 
 - `test/unit/search.test.ts` (pure module):
+  - `normalizeInline`: collapses `\r\n`/`\n`/tabs/runs to single spaces; trims;
+    truncates to `max` with ellipsis; no-op when short; `max` omitted → no trunc.
   - `parseRankedItem`: full row; `canonicalUrl` preferred over `url`; falls back
     to `url`; missing `name` → `undefined`; non-object/`null` → `undefined`;
-    optional fields (`itemType`, `snippet`) coerced/omitted correctly.
-  - `rankedResultToPick`: label/description/detail composition; score formatting;
-    `url` carried through; missing snippet → detail falls back to url (or empty).
-- `test/unit/extension.test.ts` (command layer):
-  - Search sends the typed query: `searchRanked` receives `{ name: "<q>", limit: 50 }`.
-  - Results map to Quick Pick items; selecting one calls `openSource` with the
-    resolved url.
-  - Search Selection prefills the input box `value` with the selection and runs.
-  - Empty selection → "select text first"; disconnected → not-connected toast;
-    `searchRanked` rejects → error toast (throwing-client fixture).
+    optional `itemType`/`snippet` coerced/omitted.
+  - `rankedResultToPick`: label/description/detail composition; `alwaysShow` true;
+    score labeled + 2-dp; snippet normalized into `detail`; no-url →
+    `canOpen:false` and the "No source URL available" detail.
+  - `buildPicks`: maps rows, drops malformed, preserves order.
+- `test/unit/extension.test.ts` (orchestration; drive the stub QuickPick):
+  - Typing fires `searchRanked({ name, limit: 50 })` after the debounce; items set
+    with `alwaysShow`.
+  - **Stale guard:** an earlier slow query resolving after a later one does not
+    overwrite the newer items.
+  - Accept on an openable pick calls `openSource` with the url; accept on a
+    no-url pick shows the info toast and does **not** call `openSource`.
+  - Search Selection prefills `qp.value` with the normalized selection and runs
+    an immediate query.
+  - Empty selection → "select text first"; disconnected → not-connected toast and
+    no QuickPick; `searchRanked` rejects → error toast + cleared busy.
 - Coverage at ledger parity; overall gate stays green.
 
 ## Files
 
 - Create: `src/search.ts`, `test/unit/search.test.ts`
-- Modify: `src/extension.ts` (`runSearch`, both command handlers, widen
-  `openSource`/`ActivateDeps.openSource`, `SEARCH_LIMIT`), `test/unit/extension.test.ts`
-- Docs (feature commit): `CHANGELOG.md` (Unreleased), and note the Search upgrade
-  in `README.md` if the wording warrants.
+- Modify:
+  - `src/extension.ts` (`runSearch` live orchestration, both command handlers,
+    widen `openSource`/`ActivateDeps.openSource`, the three `SEARCH_*` consts)
+  - `src/vscode-shim.ts` (`QuickPickLike`, `WindowApi.createQuickPick`)
+  - `test/unit/vscode-stub.ts` (controllable `createQuickPick` fake)
+  - `test/unit/extension.test.ts` (orchestration tests)
+- Docs (feature commit): `CHANGELOG.md` (Unreleased); note the Search upgrade in
+  `README.md` if wording warrants.
 
 ## Self-review
 
-- **Placeholder scan:** none. `selectedText(editor)` uses the confirmed
-  `TextEditorLike` shim accessors (`document.getText(range?)` + `selection`).
-- **Consistency:** `RankedResult` / `SearchPick` used identically across module,
-  command, and tests. `openSource` widening is compatible with `IndexItem`.
-- **Scope:** single implementation plan; filters/toggles explicitly deferred.
-- **Ambiguity:** result action is Open-only (approved); Search Selection prefills
-  (approved); no client bump.
+- **Placeholder scan:** none. The one deferred item is the score-label *wording*
+  (review #6), gated on inspecting a live response — an explicit plan step, not a
+  spec gap. `alwaysShow`, `createQuickPick`, and `QuickPickItem` behavior are
+  verified against `@types/vscode`.
+- **Consistency:** `RankedResult`/`SearchPick`/`QuickPickLike` used identically
+  across module, command, shim, and tests. `openSource` widening is compatible
+  with `IndexItem`. `alwaysShow: true` is specified everywhere results are built.
+- **Scope:** single implementation plan; filters/toggles/multi-action deferred.
+- **Ambiguity:** result action is Open-on-accept with an explicit no-source toast
+  (review #4); Search Selection prefills normalized selection (review #3); live
+  search with per-keystroke re-query and latest-wins guard (review #1/#2); no
+  client bump.
+
+## Review-feedback disposition
+
+- **#1 (live createQuickPick)** — adopted. Replaces the sequential input→popup
+  flow with a single live surface.
+- **#2 (QuickPick local-filter pitfall)** — resolved by #1 plus `alwaysShow: true`
+  so the Gateway ranking is authoritative.
+- **#3 (large/multi-line selection)** — fixed via `normalizeInline(sel, 150)`.
+- **#4 (no-op on URL-less results)** — fixed: marked in `detail`, `canOpen:false`,
+  explicit info toast on accept.
+- **#5 (multi-line snippet in detail)** — fixed via `normalizeInline(snippet)`.
+- **#6 (score format/range)** — display labeled + 2-dp now; exact wording for an
+  unbounded-range score deferred to a live-response check in the plan.
