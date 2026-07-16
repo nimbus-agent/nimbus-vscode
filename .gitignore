@@ -6,3 +6,6 @@ coverage/
 *.vsix
 *.tsbuildinfo
 .DS_Store
+
+# Personal (per-developer) Claude Code settings — shared config lives in .claude/settings.json
+.claude/settings.local.json

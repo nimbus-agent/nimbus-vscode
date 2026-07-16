@@ -3,6 +3,7 @@
 Local-first AI agent for the editor. Ask and search against your private [Nimbus](https://github.com/nimbus-agent/Nimbus) index — all running on your machine.
 
 - **Ask** — chat with the Nimbus agent in a side panel; responses stream token-by-token.
+- **Quick Ask** — ask about a selection (or the whole file) and get a one-shot answer in a read-only tab, without opening the chat panel.
 - **Search** — live ranked (semantic + keyword) search over your local Nimbus index; results update as you type, and selecting one opens its source (or notifies you when it has none). **Search Selection** seeds it from the editor.
 - **Selection-aware** — right-click a selection to *Ask About Selection* or *Search Selection*.
 - **Nimbus sidebar** — activity-bar views for Sessions (with chat resume), the local Index, and Agents.
@@ -30,7 +31,9 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/install> for setup.
 | `nimbus.autoStartGateway` | `false` | Spawn `nimbus start` if the socket is unreachable. |
 | `nimbus.statusBarPollMs` | `30000` | Status-bar connector-health poll interval (ms). |
 | `nimbus.transcriptHistoryLimit` | `50` | Turns rehydrated into the chat panel on reload. |
+| `nimbus.search.limit` | `50` | Max results per search (1–500). |
 | `nimbus.askAgent` | _(Gateway default)_ | Default agent name passed to Ask. |
+| `nimbus.agents` | `[]` | Agents shown in the Agents sidebar view. |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |
 | `nimbus.logLevel` | `info` | Output-channel verbosity. |
 
@@ -43,6 +46,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). This repository was extracted from the
 ## See also
 
 - [Documentation](./docs/) — architecture, development, settings, and release docs
+- [Roadmap](./docs/ROADMAP.md) — where the extension is going, phased by SDK-readiness
 - [Nimbus User Guide](https://nimbus-agent.dev/user-guide/vscode-extension/)
 - [Nimbus](https://github.com/nimbus-agent/Nimbus) — the Gateway this extension talks to
 

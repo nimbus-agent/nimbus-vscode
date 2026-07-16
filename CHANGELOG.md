@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Quick Ask** (`Nimbus: Quick Ask…`) — a one-shot editor quick-ask: ask about
+  the selection (or the whole file when nothing is selected) and get the reply in
+  a read-only markdown tab, without opening the chat panel. Backed by
+  `agentInvoke`; the file path is reduced to its basename so the absolute local
+  path is not sent to the agent or the egress ledger.
+- **Search** — the result limit is now configurable via `nimbus.search.limit`
+  (default 50, clamped 1–500), and results the Gateway reports as having
+  duplicates show a `(+N duplicates)` badge.
 - **Nimbus activity-bar sidebar** with live, connection-aware tree views:
   - **Audit** — recent audit-log entries; click one to open its read-only detail.
   - **Sessions** — session history browser with chat resume.

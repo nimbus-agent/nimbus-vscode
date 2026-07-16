@@ -35,11 +35,26 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
   reloads. Raise it to see more history after a panel reload; lower it if
   rehydration feels heavy on long sessions.
 
+### `nimbus.search.limit`
+
+- **Type:** number · **Default:** `50` · **Range:** `1`–`500`
+- Maximum results requested from the local index per search (`searchRanked`).
+  Raise it to see more matches at once; lower it for a tighter list. The Gateway
+  clamps out-of-range values to 1–500, and the extension defensively clamps a
+  hand-edited value too.
+
 ### `nimbus.askAgent`
 
 - **Type:** string · **Default:** `""` (Gateway default)
 - Optional default agent name passed to `askStream`. Blank uses the Gateway's
   default agent. Set it to pin Ask to a specific agent.
+
+### `nimbus.agents`
+
+- **Type:** array · **Default:** `[]`
+- Agents listed in the **Agents** sidebar view. Each item is an object with a
+  required `id` and optional `label`/`description`; clicking one opens a chat
+  scoped to that agent. Leave empty to show no custom agents.
 
 ### `nimbus.hitlAlwaysModal`
 

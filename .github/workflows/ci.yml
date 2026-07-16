@@ -50,6 +50,9 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      - name: Check settings docs
+        run: bun run check-settings-docs
+
       - name: Test
         run: bun run test
         env:
