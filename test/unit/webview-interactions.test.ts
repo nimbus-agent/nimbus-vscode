@@ -131,6 +131,23 @@ describe("webview applyMessage", () => {
   test("themeChange is a no-op", () => {
     expect(() => dispatch({ type: "themeChange" })).not.toThrow();
   });
+
+  test("cancelled finalizes the streaming turn, marks it Stopped, and re-enables send", () => {
+    dispatch({ type: "userMessage", text: "q" });
+    dispatch({ type: "token", text: "partial" });
+    dispatch({ type: "cancelled" });
+    expect($("#transcript").innerHTML).toContain("partial");
+    expect($("#transcript").innerHTML).toContain("Stopped");
+    expect($("#transcript").querySelector('[data-streaming="1"]')).toBeNull();
+    expect(btn("#input-send").disabled).toBe(false);
+    expect(btn("#input-stop").disabled).toBe(true);
+  });
+
+  test("cancelled while not streaming is a no-op", () => {
+    // beforeEach dispatched reset → not streaming.
+    expect(() => dispatch({ type: "cancelled" })).not.toThrow();
+    expect(btn("#input-send").disabled).toBe(false);
+  });
 });
 
 describe("webview interactions", () => {
@@ -183,6 +200,13 @@ describe("webview interactions", () => {
     click(approve);
     expect(posted.at(-1)).toEqual({ type: "hitlResponse", requestId: "r9", decision: "approve" });
     expect($("#hitl-mount").innerHTML).toContain("Decision recorded: approved");
+  });
+
+  test("clicking Stop shows Stopping… and disables the Stop button", () => {
+    dispatch({ type: "userMessage", text: "q" });
+    click($("#input-stop"));
+    expect($("#status").textContent).toBe("Stopping…");
+    expect(btn("#input-stop").disabled).toBe(true);
   });
 
   test("empty-state action buttons post their commands", () => {

@@ -124,6 +124,19 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
       finalizeStreamingTurn(r);
       setStreaming(r, false);
       return;
+    case "cancelled": {
+      if (!state.streaming) return;
+      const streamingTurn = r.transcript.querySelector("article.turn-streaming");
+      finalizeStreamingTurn(r);
+      if (streamingTurn !== null) {
+        const marker = document.createElement("div");
+        marker.className = "turn-stopped-marker";
+        marker.textContent = "⏹ Stopped";
+        streamingTurn.appendChild(marker);
+      }
+      setStreaming(r, false);
+      return;
+    }
     case "error":
       finalizeStreamingTurn(r);
       {
@@ -211,6 +224,8 @@ function bootstrap(): void {
 
   r.stop.addEventListener("click", () => {
     if (!state.streaming) return;
+    r.stop.disabled = true;
+    r.status.textContent = "Stopping…";
     vscode.postMessage({ type: "stopStream" });
   });
 

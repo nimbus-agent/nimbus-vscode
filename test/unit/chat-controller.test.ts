@@ -315,6 +315,26 @@ describe("ChatController", () => {
     await expect(ctrl.stop()).resolves.toBeUndefined();
   });
 
+  test("stop() posts a cancelled message to the webview when a stream is active", async () => {
+    const { handle } = pendingStream();
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => handle }), { panel }),
+    );
+    const p = ctrl.start("hi");
+    await Promise.resolve();
+    await ctrl.stop();
+    await p;
+    expect(postedTypes(posted)).toContain("cancelled");
+  });
+
+  test("stop() posts no cancelled message when nothing is streaming", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(baseDeps(new MockClient(), { panel }));
+    await ctrl.stop();
+    expect(postedTypes(posted)).not.toContain("cancelled");
+  });
+
   test("newConversation cancels an in-flight stream before resetting", async () => {
     const { handle, cancel } = pendingStream();
     const { panel, posted } = capturingPanel();

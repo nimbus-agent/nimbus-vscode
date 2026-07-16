@@ -144,6 +144,10 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       if (active === undefined) return;
       const handle = active;
       active = undefined;
+      // Post before awaiting cancel(): handle.cancel() awaits an IPC round-trip
+      // (engine.cancelStream) that can hang on a severed connection, and the
+      // webview's return-to-idle must not depend on the Gateway acking it.
+      post({ type: "cancelled" });
       await handle.cancel();
     },
     async newConversation(): Promise<void> {
