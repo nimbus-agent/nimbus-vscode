@@ -61,6 +61,11 @@
         "category": "Nimbus"
       },
       {
+        "command": "nimbus.quickAsk",
+        "title": "Quick Ask…",
+        "category": "Nimbus"
+      },
+      {
         "command": "nimbus.newConversation",
         "title": "New Conversation",
         "category": "Nimbus"
@@ -213,6 +218,10 @@
         {
           "command": "nimbus.openEgressEntry",
           "when": "false"
+        },
+        {
+          "command": "nimbus.quickAsk",
+          "when": "editorTextFocus"
         }
       ],
       "view/title": [
@@ -264,6 +273,11 @@
           "command": "nimbus.searchSelection",
           "when": "editorHasSelection",
           "group": "nimbus@2"
+        },
+        {
+          "command": "nimbus.quickAsk",
+          "when": "editorTextFocus",
+          "group": "nimbus@3"
         }
       ]
     },

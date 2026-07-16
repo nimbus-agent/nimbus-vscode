@@ -13,6 +13,14 @@ import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
 import { createLogger, errMsg, type Logger } from "./logging.js";
+import {
+  buildQuickAskPrompt,
+  clampContext,
+  extractReply,
+  QUICK_ASK_MAX_CONTEXT_CHARS,
+  redactPath,
+  validateQuestion,
+} from "./quick-ask.js";
 import { buildPicks, normalizeInline, type SearchPick, statusPick } from "./search.js";
 import { createSettings } from "./settings.js";
 import { type Agent, parseAgents } from "./sidebar/agents.js";
@@ -35,6 +43,7 @@ import type {
   WindowApi,
   WorkspaceApi,
 } from "./vscode-shim.js";
+import { PROGRESS_LOCATION_NOTIFICATION } from "./vscode-shim.js";
 
 // Mirrors the Gateway's session.list query against the local session_memory
 // table (reachable through the public read-only querySql).
@@ -524,6 +533,61 @@ export function activateWithDeps(
       return;
     }
     runSearch(editor.document.getText(editor.selection));
+  });
+
+  register("nimbus.quickAsk", async () => {
+    const editor = deps.window.activeTextEditor;
+    if (editor === undefined) {
+      void deps.window.showErrorMessage("Nimbus: open a file first.");
+      return;
+    }
+    // A whitespace-only selection is treated as no selection → whole-file context.
+    const selectionText = editor.selection.isEmpty ? "" : editor.document.getText(editor.selection);
+    const hasSelection = selectionText.trim().length > 0;
+    const rawContext = hasSelection ? selectionText : editor.document.getText();
+    const scope = hasSelection ? "selected code" : "active file";
+    const { code, truncated } = clampContext(rawContext, QUICK_ASK_MAX_CONTEXT_CHARS);
+    if (truncated) {
+      void deps.window.showWarningMessage(
+        `Nimbus: context truncated to ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`,
+      );
+    }
+    const client = nimbus();
+    if (client === undefined) {
+      void deps.window.showErrorMessage("Nimbus: not connected to Gateway.");
+      return;
+    }
+    const question = await deps.window.showInputBox({
+      prompt: `Ask a question about the ${scope}`,
+      placeHolder: "e.g. What does this do? How can I simplify it?",
+      validateInput: validateQuestion,
+    });
+    if (question === undefined || validateQuestion(question) !== undefined) return;
+    const prompt = buildQuickAskPrompt({
+      question,
+      code,
+      filePath: redactPath(editor.document.fileName),
+      languageId: editor.document.languageId,
+      truncated,
+    });
+    const agent = settings.askAgent();
+    const options: { stream: boolean; agent?: string } = { stream: false };
+    if (agent.length > 0) options.agent = agent;
+    try {
+      const result = await deps.window.withProgress(
+        { location: PROGRESS_LOCATION_NOTIFICATION, title: "Nimbus: asking…" },
+        () => client.agentInvoke(prompt, options),
+      );
+      const reply = extractReply(result);
+      if (reply === undefined) {
+        void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
+        return;
+      }
+      await openReadonlyJson("Nimbus reply.md", reply);
+    } catch (e) {
+      log.error(`nimbus.quickAsk failed: ${errMsg(e)}`);
+      void deps.window.showErrorMessage(`Nimbus quick ask failed: ${errMsg(e)}`);
+    }
   });
 
   register("nimbus.newConversation", async () => {

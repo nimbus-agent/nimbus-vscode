@@ -1,5 +1,9 @@
 type Thenable<T> = PromiseLike<T>;
 
+// Mirrors vscode.ProgressLocation.Notification (=15); the concrete vscode enum
+// is not importable from the pure shim, so the value is named here.
+export const PROGRESS_LOCATION_NOTIFICATION = 15;
+
 export interface DisposableLike {
   dispose(): void;
 }
@@ -76,7 +80,7 @@ export interface TreeDataProviderLike<T> {
 }
 
 export interface TextEditorLike {
-  document: { getText(range?: unknown): string };
+  document: { getText(range?: unknown): string; fileName: string; languageId: string };
   selection: { isEmpty: boolean };
 }
 
@@ -90,7 +94,12 @@ export interface WindowApi {
   ): Thenable<string | undefined>;
   showErrorMessage(msg: string, ...items: string[]): Thenable<string | undefined>;
   showWarningMessage(msg: string, ...items: string[]): Thenable<string | undefined>;
-  showInputBox(opts?: { prompt?: string; value?: string }): Thenable<string | undefined>;
+  showInputBox(opts?: {
+    prompt?: string;
+    value?: string;
+    placeHolder?: string;
+    validateInput?: (value: string) => string | undefined;
+  }): Thenable<string | undefined>;
   showQuickPick<T extends QuickPickItemLike>(
     items: readonly T[],
     opts?: { placeHolder?: string; matchOnDescription?: boolean; matchOnDetail?: boolean },
@@ -98,6 +107,10 @@ export interface WindowApi {
   createQuickPick<T extends QuickPickItemLike>(): QuickPickLike<T>;
   registerTreeDataProvider<T>(viewId: string, provider: TreeDataProviderLike<T>): DisposableLike;
   activeTextEditor: TextEditorLike | undefined;
+  withProgress<R>(
+    options: { location: number; title?: string; cancellable?: boolean },
+    task: () => Thenable<R>,
+  ): Thenable<R>;
 }
 
 export interface WorkspaceConfigSection {

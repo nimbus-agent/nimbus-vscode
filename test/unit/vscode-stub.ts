@@ -9,6 +9,7 @@ export const window = {
   showWarningMessage: async () => undefined,
   showInputBox: async () => undefined,
   showQuickPick: async () => undefined,
+  withProgress: async (_opts: unknown, task: () => Promise<unknown>) => task(),
   createQuickPick: () => {
     const sub = () => ({ dispose: () => undefined });
     return {
