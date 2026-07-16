@@ -5,7 +5,7 @@
     "": {
       "name": "nimbus-vscode",
       "dependencies": {
-        "@nimbus-dev/client": "^0.4.0",
+        "@nimbus-dev/client": "^0.5.0",
         "dompurify": "^3.4.8",
         "marked": "^18.0.5",
       },
@@ -170,9 +170,9 @@
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@0.2.12", "", { "dependencies": { "@emnapi/core": "^1.4.3", "@emnapi/runtime": "^1.4.3", "@tybys/wasm-util": "^0.10.0" } }, "sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ=="],
 
-    "@nimbus-dev/client": ["@nimbus-dev/client@0.4.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.2.1" } }, "sha512-nuMrGHXL8bgxuQST+ptvFuIPv2VPa4ltko47lJRThUKck2Xhi+BM6OVGw6hhREsmBAltcrNkcQ/4E8YwpV/OyQ=="],
+    "@nimbus-dev/client": ["@nimbus-dev/client@0.5.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.3.0" } }, "sha512-DqIhRNGfwwNNUS9eqc2w3ggGhMB36xMYz4kh6TKut0rDDcOut/XNvIJIm7uqRbTfzMAuZQ9QAdTVGSMcy7uw1A=="],
 
-    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.2.1", "", {}, "sha512-1nI2bdYty7qB+v1erC3jlDUaqbFusfkBuDnEhAiEBIGharvBZx557oDdXuft9/5bGOeuw/5mFeEiWLFh6iwuZA=="],
+    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.3.0", "", {}, "sha512-mCVlMLbYUowRLsw1dAcDp61AyoLSW6hrfbdrJim7ho3kg78rJlS0DYrKpqQxbng6E83NscJkUHlIFanxp0hp5g=="],
 
     "@node-rs/crc32": ["@node-rs/crc32@1.10.6", "", { "optionalDependencies": { "@node-rs/crc32-android-arm-eabi": "1.10.6", "@node-rs/crc32-android-arm64": "1.10.6", "@node-rs/crc32-darwin-arm64": "1.10.6", "@node-rs/crc32-darwin-x64": "1.10.6", "@node-rs/crc32-freebsd-x64": "1.10.6", "@node-rs/crc32-linux-arm-gnueabihf": "1.10.6", "@node-rs/crc32-linux-arm64-gnu": "1.10.6", "@node-rs/crc32-linux-arm64-musl": "1.10.6", "@node-rs/crc32-linux-x64-gnu": "1.10.6", "@node-rs/crc32-linux-x64-musl": "1.10.6", "@node-rs/crc32-wasm32-wasi": "1.10.6", "@node-rs/crc32-win32-arm64-msvc": "1.10.6", "@node-rs/crc32-win32-ia32-msvc": "1.10.6", "@node-rs/crc32-win32-x64-msvc": "1.10.6" } }, "sha512-+llXfqt+UzgoDzT9of5vPQPGqTAVCohU74I9zIBkNo5TH6s2P31DFJOGsJQKN207f0GHnYv5pV3wh3BCY/un/A=="],
 

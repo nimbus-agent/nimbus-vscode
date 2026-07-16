@@ -21,6 +21,7 @@ import {
   redactPath,
   validateQuestion,
 } from "./quick-ask.js";
+import { type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
 import { buildPicks, normalizeInline, type SearchPick, statusPick } from "./search.js";
 import { createSettings } from "./settings.js";
 import { type Agent, parseAgents } from "./sidebar/agents.js";
@@ -40,6 +41,7 @@ import type {
   CommandsApi,
   DisposableLike,
   ExtensionContextLike,
+  QuickPickItemLike,
   WindowApi,
   WorkspaceApi,
 } from "./vscode-shim.js";
@@ -58,6 +60,12 @@ const INDEX_LIMIT = 100;
 // Type-to-search debounce.
 const SEARCH_DEBOUNCE_MS = 200;
 const SELECTION_PREFILL_MAX = 150;
+
+// A quick-ask picker row: a preset action, or (no `preset`) the custom-question
+// row. The handler keys off the presence of `preset`, not the label text, so a
+// user-defined preset named "Custom question…" is never mistaken for the custom
+// row.
+type QuickAskPick = QuickPickItemLike & { preset?: QuickAskPreset };
 
 export interface ActivateDeps {
   window: WindowApi;
@@ -547,22 +555,39 @@ export function activateWithDeps(
     const rawContext = hasSelection ? selectionText : editor.document.getText();
     const scope = hasSelection ? "selected code" : "active file";
     const { code, truncated } = clampContext(rawContext, QUICK_ASK_MAX_CONTEXT_CHARS);
-    if (truncated) {
-      void deps.window.showWarningMessage(
-        `Nimbus: context truncated to ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`,
-      );
-    }
     const client = nimbus();
     if (client === undefined) {
       void deps.window.showErrorMessage("Nimbus: not connected to Gateway.");
       return;
     }
+    const presets = resolvePresets(settings.quickAskPresets());
+    const items: QuickAskPick[] = [
+      ...presets.map(
+        (preset): QuickAskPick => ({
+          label: preset.label,
+          ...(preset.description !== undefined ? { detail: preset.description } : {}),
+          preset,
+        }),
+      ),
+      { label: "Custom question…" },
+    ];
+    const pick = await deps.window.showQuickPick(items, {
+      placeHolder: `Pick a quick-ask action for the ${scope}`,
+      matchOnDetail: true,
+    });
+    if (pick === undefined) return;
     const question = await deps.window.showInputBox({
       prompt: `Ask a question about the ${scope}`,
       placeHolder: "e.g. What does this do? How can I simplify it?",
+      value: pick.preset?.prompt ?? "",
       validateInput: validateQuestion,
     });
     if (question === undefined || validateQuestion(question) !== undefined) return;
+    if (truncated) {
+      void deps.window.showWarningMessage(
+        `Nimbus: context truncated to ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`,
+      );
+    }
     const prompt = buildQuickAskPrompt({
       question,
       code,

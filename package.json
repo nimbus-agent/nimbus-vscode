@@ -333,6 +333,20 @@
             }
           }
         },
+        "nimbus.quickAsk.presets": {
+          "type": "array",
+          "default": [],
+          "description": "Preset actions offered in a picker before the Quick Ask input box. Each item: { \"label\": string, \"prompt\": string, \"description\"?: string }. Empty uses the built-in defaults (Explain, Fix, Review, Docstring); a non-empty list replaces them.",
+          "items": {
+            "type": "object",
+            "required": ["label", "prompt"],
+            "properties": {
+              "label": { "type": "string" },
+              "prompt": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",
           "default": false,
@@ -365,7 +379,7 @@
     "clean": "node scripts/clean.mjs"
   },
   "dependencies": {
-    "@nimbus-dev/client": "^0.4.0",
+    "@nimbus-dev/client": "^0.5.0",
     "dompurify": "^3.4.8",
     "marked": "^18.0.5"
   },

@@ -11,6 +11,7 @@ export interface Settings {
   searchLimit(): number;
   askAgent(): string;
   agents(): unknown;
+  quickAskPresets(): unknown;
   hitlAlwaysModal(): boolean;
   logLevel(): LogLevel;
 }
@@ -25,6 +26,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     searchLimit: () => clampSearchLimit(cfg().get<number>("search.limit", 50)),
     askAgent: () => cfg().get<string>("askAgent", ""),
     agents: () => cfg().get<unknown>("agents", []),
+    quickAskPresets: () => cfg().get<unknown>("quickAsk.presets", []),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
     logLevel: () => {
       const lvl = cfg().get<string>("logLevel", "info");
