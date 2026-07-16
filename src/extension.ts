@@ -9,6 +9,7 @@ import { createSessionStore } from "./chat/session-store.js";
 import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js";
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
+import { buildTroubleshooter } from "./connection/troubleshooter.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
@@ -714,6 +715,22 @@ export function activateWithDeps(
 
   register("nimbus.reconnect", async () => {
     await connection.reconnectNow();
+  });
+
+  register("nimbus.troubleshootConnection", async () => {
+    const report = buildTroubleshooter(connection.current(), {
+      autoStartGateway: settings.autoStartGateway(),
+      platform: process.platform,
+    });
+    const labels = report.actions.map((a) => a.label);
+    const choice = await deps.window.showInformationMessage(
+      report.message,
+      { modal: true },
+      ...labels,
+    );
+    const action = report.actions.find((a) => a.label === choice);
+    if (action === undefined) return;
+    await deps.commands.executeCommand(action.command, ...(action.args ?? []));
   });
 
   register("nimbus.openLogs", () => {

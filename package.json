@@ -158,6 +158,11 @@
         "command": "nimbus.proveEgressWindow",
         "title": "Prove Egress Window",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.troubleshootConnection",
+        "title": "Troubleshoot Connection",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
