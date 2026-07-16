@@ -165,7 +165,7 @@ function makeFixture(opts: {
   openClient?: () => Promise<ClientLike>;
   discoverSocket?: () => Promise<{ socketPath: string; source: string }>;
   autoStarter?: AutoStarter;
-  activeEditor?: { text: string; empty?: boolean };
+  activeEditor?: { text: string; empty?: boolean; selectionText?: string; fileName?: string; languageId?: string };
   panelVisible?: boolean;
   panelActive?: boolean;
   realChatPanel?: boolean;
@@ -271,8 +271,16 @@ function makeFixture(opts: {
         ? undefined
         : {
             selection: { isEmpty: opts.activeEditor.empty ?? false },
-            document: { getText: () => opts.activeEditor?.text ?? "" },
+            document: {
+              getText: (range?: unknown) =>
+                range === undefined
+                  ? (opts.activeEditor?.text ?? "")
+                  : (opts.activeEditor?.selectionText ?? opts.activeEditor?.text ?? ""),
+              fileName: opts.activeEditor?.fileName ?? "untitled",
+              languageId: opts.activeEditor?.languageId ?? "plaintext",
+            },
           },
+    withProgress: (async (_opts: unknown, task: () => Promise<unknown>) => task()) as WindowApi["withProgress"],
   };
 
   const workspace: WorkspaceApi = {
@@ -895,6 +903,92 @@ describe("activateWithDeps", () => {
     expect((qp.items[0] as { label: string; alwaysShow?: boolean }).label).toBe("Report.pdf");
     expect((qp.items[0] as { alwaysShow?: boolean }).alwaysShow).toBe(true);
     expect(qp.shown).toBe(true);
+  });
+
+  test("quick ask sends the selection and shows the reply", async () => {
+    const calls: Array<{ input: string; options?: unknown }> = [];
+    const f = makeFixture({
+      activeEditor: { text: "whole", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      inputBoxAnswers: ["what is this?"],
+      openClient: makeFakeClient({
+        agentInvoke: async (input: string, options?: unknown) => {
+          calls.push({ input, options });
+          return { reply: "It declares x." };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.input).toContain("what is this?");
+    expect(calls[0]?.input).toContain("const x = 1");
+    expect(f.openedDocs.at(-1)).toEqual({ title: "Nimbus reply.md", content: "It declares x." });
+  });
+
+  test("quick ask with no selection sends the whole file", async () => {
+    const calls: Array<{ input: string }> = [];
+    const f = makeFixture({
+      activeEditor: { text: "line1\nline2", empty: true, fileName: "/p/b.ts", languageId: "typescript" },
+      inputBoxAnswers: ["summarize"],
+      openClient: makeFakeClient({
+        agentInvoke: async (input: string) => {
+          calls.push({ input });
+          return { reply: "ok" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(calls[0]?.input).toContain("line1\nline2");
+  });
+
+  test("quick ask falls back to the whole file when the selection is whitespace-only", async () => {
+    const calls: Array<{ input: string }> = [];
+    const f = makeFixture({
+      // selection is non-empty (empty: false) but whitespace-only → fall back to whole file
+      activeEditor: { text: "whole file body", selectionText: "   \n  ", fileName: "/p/e.ts", languageId: "typescript" },
+      inputBoxAnswers: ["explain"],
+      openClient: makeFakeClient({
+        agentInvoke: async (input: string) => {
+          calls.push({ input });
+          return { reply: "ok" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(calls[0]?.input).toContain("whole file body");
+  });
+
+  test("quick ask shows an error and opens no doc when disconnected", async () => {
+    const f = makeFixture({
+      activeEditor: { text: "x", fileName: "/p/c.ts", languageId: "typescript" },
+      inputBoxAnswers: ["q"],
+      openClient: disconnectedClient(),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await flush();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(f.errorMessages.some((m) => m.includes("not connected"))).toBe(true);
+    expect(f.openedDocs).toHaveLength(0);
+  });
+
+  test("quick ask reports when the agent returns no reply", async () => {
+    const f = makeFixture({
+      activeEditor: { text: "x", selectionText: "x", fileName: "/p/d.ts", languageId: "typescript" },
+      inputBoxAnswers: ["q"],
+      openClient: makeFakeClient({
+        agentInvoke: async () => ({ reply: "   " }),
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(f.infoMessages.some((m) => m.includes("no reply"))).toBe(true);
+    expect(f.openedDocs).toHaveLength(0);
   });
 
   test("uses the configured search.limit setting", async () => {
