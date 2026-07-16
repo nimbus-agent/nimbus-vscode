@@ -52,6 +52,11 @@ describe("clampSearchLimit", () => {
     expect(clampSearchLimit(49.9)).toBe(49);
     expect(clampSearchLimit(1.5)).toBe(1);
   });
+  test("floors before clamping at the boundaries", () => {
+    expect(clampSearchLimit(0.9)).toBe(1);
+    expect(clampSearchLimit(500.1)).toBe(500);
+    expect(clampSearchLimit(-0.5)).toBe(1);
+  });
   test("falls back to 50 for non-finite / non-number input", () => {
     expect(clampSearchLimit(Number.NaN)).toBe(50);
     expect(clampSearchLimit(Number.POSITIVE_INFINITY)).toBe(50);
@@ -230,6 +235,12 @@ Add inside the existing `describe("parseRankedItem", …)` block in `test/unit/s
   test("counts only valid string entries in a mixed array", () => {
     expect(parseRankedItem(row({ duplicates: ["a", "", 5, null, "b"] }))?.duplicateCount).toBe(2);
   });
+  test("excludes the item's own url from the duplicate count", () => {
+    // row() resolves url to canonicalUrl ("https://canonical/x"); only the
+    // other entry should be counted even if the Gateway includes self.
+    const r = parseRankedItem(row({ duplicates: ["https://canonical/x", "https://other/y"] }));
+    expect(r?.duplicateCount).toBe(1);
+  });
   test("omits duplicateCount when missing, empty, non-array, or all-invalid", () => {
     expect("duplicateCount" in (parseRankedItem(row()) as object)).toBe(false);
     expect("duplicateCount" in (parseRankedItem(row({ duplicates: [] })) as object)).toBe(false);
@@ -256,12 +267,18 @@ In `parseRankedItem`, insert this block after the `snippet` handling and before 
 ```ts
   const duplicates = rec["duplicates"];
   if (Array.isArray(duplicates)) {
+    // Count only non-empty strings, and never the item's own url — a
+    // conservative guard so the badge reflects *other* copies even if the
+    // Gateway includes the primary in the array. (`url` is undefined-safe:
+    // when absent, no entry equals it, so nothing is over-filtered.)
     const count = duplicates.filter(
-      (d): d is string => typeof d === "string" && d.length > 0,
+      (d): d is string => typeof d === "string" && d.length > 0 && d !== url,
     ).length;
     if (count > 0) result.duplicateCount = count;
   }
 ```
+
+`url` here is the local `const url` computed earlier in `parseRankedItem` (the `canonicalUrl ?? url` resolution) — it is in scope at this point. Insert this block after that `url`/`snippet` handling and before `return result;`.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -321,7 +338,7 @@ git commit -m "feat(search): show a (+N duplicates) badge on ranked results"
 
 - [ ] **Build sanity:** `bun run build && bun run check-bundle` — confirms the bundle still has `vscode` as its only external (this change adds only an internal `settings.ts` → `search.ts` import, no new runtime dep).
 - [ ] **Drive the change (verify skill):** open the search Quick Pick against a running Gateway, type a query, and confirm (a) results honor a changed `nimbus.search.limit`, and (b) a result with duplicates shows the `(+N duplicates)` badge.
-- [ ] **OPEN ITEM — duplicate self-inclusion (from spec):** the client types `duplicates` only as `readonly string[]` with no contract doc, and Gateway source is off-limits. This plan counts all valid entries as *other* copies. Against the live Gateway, inspect one item known to have duplicates and confirm the badge count matches the number of **other** locations. If the Gateway includes the primary item in the array, adjust `parseRankedItem` to exclude it (filter the primary key/URL, or subtract 1) and update the `parseRankedItem` count tests accordingly.
+- [ ] **OPEN ITEM — duplicate self-inclusion (from spec):** the client types `duplicates` only as `readonly string[]` with no contract doc, and Gateway source is off-limits. Task 2 already applies a conservative guard (`d !== url`) that neutralizes self-inclusion **if entries are canonical URLs**. This still needs a live-Gateway confirmation, because the guard does *not* cover the case where entries are keyed by something else (e.g. `indexPrimaryKey`). Against the live Gateway, inspect one item known to have duplicates and confirm (a) what the entries actually are (URL vs key), and (b) the badge count matches the number of **other** locations. If entries are keyed and self is included, switch the guard to filter on that key (or subtract 1) and update the `parseRankedItem` count tests accordingly.
 
 ## Spec Coverage
 

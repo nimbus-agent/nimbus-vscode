@@ -59,14 +59,16 @@ shape and bounds, which already match the Gateway's documented `1..500` clamp.
     distinct from the service/type/score parts. Example:
     `gitlab · issue · score 0.85 · (+3 duplicates)`.
 
-  **Self-inclusion — open, to confirm at verify-time.** The client types
+  **Self-inclusion — guarded, confirm at verify-time.** The client types
   `duplicates` only as `readonly string[]` with no contract doc, and there is no
   fixture or Gateway source available from this repo (reaching into the Gateway
-  is a non-negotiable per `CLAUDE.md`). This design assumes the array lists
-  *other* copies, so `duplicateCount` is shown as-is. If a live Gateway shows
-  the primary item is included, the fix is a one-line adjustment (subtract or
-  filter the primary key/URL). This must be checked against a running Gateway
-  during the verify step before the change is considered done.
+  is a non-negotiable per `CLAUDE.md`). As a conservative guard, the count
+  excludes any entry equal to the item's own resolved `url` — so if the Gateway
+  includes the primary item's URL in the array, the badge still reflects *other*
+  copies. This guard only covers URL-keyed entries; if entries are keyed
+  differently (e.g. `indexPrimaryKey`) and include self, the count is still off
+  by one. That case must be checked against a running Gateway during the verify
+  step, where the fix is a one-line change to filter on the actual key.
 
 ## Testing (TDD)
 
