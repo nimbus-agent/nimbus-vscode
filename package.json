@@ -347,6 +347,11 @@
             }
           }
         },
+        "nimbus.egress.showStatusBarBadge": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the egress ledger badge (row count + a ledger-live check) in the status bar while connected."
+        },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",
           "default": false,

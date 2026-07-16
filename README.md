@@ -35,6 +35,7 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/install> for setup.
 | `nimbus.askAgent` | _(Gateway default)_ | Default agent name passed to Ask. |
 | `nimbus.agents` | `[]` | Agents shown in the Agents sidebar view. |
 | `nimbus.quickAsk.presets` | `[]` | Quick Ask preset actions (empty = Explain/Fix/Review/Docstring). |
+| `nimbus.egress.showStatusBarBadge` | `true` | Show the egress row-count badge (ledger-live ✓) in the status bar. |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |
 | `nimbus.logLevel` | `info` | Output-channel verbosity. |
 

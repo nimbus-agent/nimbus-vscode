@@ -27,6 +27,7 @@ describe("Settings", () => {
     expect(s.askAgent()).toBe("");
     expect(s.agents()).toEqual([]);
     expect(s.quickAskPresets()).toEqual([]);
+    expect(s.showEgressStatusBarBadge()).toBe(true);
     expect(s.hitlAlwaysModal()).toBe(false);
     expect(s.logLevel()).toBe("info");
   });
@@ -41,6 +42,7 @@ describe("Settings", () => {
         askAgent: "mainAgent",
         agents: [{ id: "a", label: "A" }],
         "quickAsk.presets": [{ label: "Test", prompt: "Write tests." }],
+        "egress.showStatusBarBadge": false,
         hitlAlwaysModal: true,
         logLevel: "debug",
       }),
@@ -52,6 +54,7 @@ describe("Settings", () => {
     expect(s.askAgent()).toBe("mainAgent");
     expect(s.agents()).toEqual([{ id: "a", label: "A" }]);
     expect(s.quickAskPresets()).toEqual([{ label: "Test", prompt: "Write tests." }]);
+    expect(s.showEgressStatusBarBadge()).toBe(false);
     expect(s.hitlAlwaysModal()).toBe(true);
     expect(s.logLevel()).toBe("debug");
   });

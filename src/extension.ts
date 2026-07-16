@@ -36,6 +36,10 @@ import { createQuickActions } from "./sidebar/quick-actions.js";
 import { parseSessionRow, type SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
+import {
+  createEgressStatusBarController,
+  type EgressBadgeInputs,
+} from "./status-bar/egress-status-bar-item.js";
 import { createStatusBarController } from "./status-bar/status-bar-item.js";
 import type {
   CommandsApi,
@@ -130,6 +134,45 @@ export function activateWithDeps(
   const statusBar = createStatusBarController(statusItem);
   ctx.subscriptions.push(statusBar);
 
+  const egressStatusItem = deps.window.createStatusBarItem(2, 99);
+  ctx.subscriptions.push(egressStatusItem);
+  const egressBadge = createEgressStatusBarController(egressStatusItem);
+  ctx.subscriptions.push(egressBadge);
+  let egressLastKnownCount: number | undefined;
+
+  const pollEgressBadge = async (): Promise<void> => {
+    const connected = connection.current().kind === "connected";
+    const showBadge = settings.showEgressStatusBarBadge();
+    const base: EgressBadgeInputs = {
+      head: undefined,
+      lastKnownCount: egressLastKnownCount,
+      error: undefined,
+      connected,
+      showBadge,
+    };
+    if (!connected || !showBadge) {
+      egressBadge.update(base);
+      return;
+    }
+    const client = nimbus();
+    if (client === undefined) {
+      egressBadge.update({ ...base, connected: false });
+      return;
+    }
+    try {
+      const head = await client.egressHead();
+      egressLastKnownCount = head.count;
+      egressBadge.update({ ...base, head, lastKnownCount: head.count });
+    } catch (e) {
+      log.warn(`egressHead poll failed: ${errMsg(e)}`);
+      egressBadge.update({ ...base, error: errMsg(e) });
+    }
+  };
+
+  let egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
+  ctx.subscriptions.push({ dispose: () => clearInterval(egressTimer) });
+  void pollEgressBadge();
+
   let pendingHitlCount = 0;
   const renderStatusBar = (s: ConnectionState): void => {
     statusBar.update({
@@ -140,6 +183,7 @@ export function activateWithDeps(
       pendingHitlCount,
       autoStartGateway: settings.autoStartGateway(),
     });
+    void pollEgressBadge();
   };
 
   const chatPanelFactory = deps.chatPanelFactory?.({ log }) ?? createRealChatPanelFactory(log);
@@ -302,6 +346,7 @@ export function activateWithDeps(
         });
       }
       log.info(`Nimbus connected to Gateway at ${s.socketPath}`);
+      void pollEgressBadge();
       return;
     }
     if (s.kind === "disconnected" && settings.autoStartGateway() && !autoStartInFlight) {
@@ -332,8 +377,15 @@ export function activateWithDeps(
   );
 
   const cfgSub = deps.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration("nimbus")) renderStatusBar(connection.current());
+    if (e.affectsConfiguration("nimbus")) {
+      renderStatusBar(connection.current());
+      void pollEgressBadge();
+    }
     if (e.affectsConfiguration("nimbus.agents")) agentsView.refresh();
+    if (e.affectsConfiguration("nimbus.statusBarPollMs")) {
+      clearInterval(egressTimer);
+      egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
+    }
   });
   ctx.subscriptions.push(cfgSub);
 
@@ -348,6 +400,10 @@ export function activateWithDeps(
     connection,
     getClient: () => nimbus(),
   });
+  const refreshEgress = (): void => {
+    egressView.refresh();
+    void pollEgressBadge();
+  };
   const loadSessions = async (): Promise<SessionSummary[]> => {
     const client = nimbus();
     if (client === undefined) return [];
@@ -673,7 +729,7 @@ export function activateWithDeps(
   });
 
   register("nimbus.refreshEgress", () => {
-    egressView.refresh();
+    refreshEgress();
   });
 
   register("nimbus.refreshSessions", () => {

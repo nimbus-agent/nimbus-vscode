@@ -77,6 +77,10 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
   ]
   ```
 
+### `nimbus.egress.showStatusBarBadge`
+
+`boolean` (default `true`). Shows a second status-bar item while connected: the egress ledger row count plus a `$(check)` that means *the ledger head was read successfully* — not a cryptographic verification. Click it to open the Egress view; run **Verify Egress Ledger** for the offline chain check. Set to `false` to hide the badge. Poll cadence follows [`nimbus.statusBarPollMs`](#nimbusstatusbarpollms).
+
 ### `nimbus.hitlAlwaysModal`
 
 - **Type:** boolean · **Default:** `false`
