@@ -265,9 +265,13 @@ After the existing status-bar controller block (`src/extension.ts:128-131`, endi
       egressBadge.update({ ...base, error: errMsg(e) });
     }
   };
+
+  let egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
+  ctx.subscriptions.push({ dispose: () => clearInterval(egressTimer) });
+  void pollEgressBadge();
 ```
 
-> `pollEgressBadge` uses only bindings declared above this point (`connection`, `settings`, `nimbus`, `log`, `errMsg`, `egressBadge`). It must live here (before `renderStatusBar`, which calls it). The `refreshEgress` co-refresh helper is added later — it needs `egressView`, which is declared further down.
+> `pollEgressBadge` uses only bindings declared above this point (`connection`, `settings`, `nimbus`, `log`, `errMsg`, `egressBadge`). It must live here — before `renderStatusBar` (which calls it) and before `cfgSub` (which reassigns `egressTimer`), so both bindings are declared before their first use. `egressTimer` is `let` so the config listener can restart it. The `refreshEgress` co-refresh helper is added later — it needs `egressView`, which is declared further down.
 
 Immediately **after** the `egressView` declaration (`src/extension.ts:347-350`, `const egressView = createEgressView({...});`), add the co-refresh helper:
 
@@ -298,19 +302,22 @@ Also refresh on any state change so the badge hides when disconnected — inside
     void pollEgressBadge();
 ```
 
-React to the setting toggle: in the `cfgSub` handler (`src/extension.ts:334`), inside the `if (e.affectsConfiguration("nimbus"))` block, add:
+React to config changes: in the `cfgSub` handler (`src/extension.ts:334`), inside the `if (e.affectsConfiguration("nimbus"))` block, add an immediate re-render (handles the badge on/off toggle):
 
 ```ts
       void pollEgressBadge();
 ```
 
-Start the poll timer near the end of `activate`, after the views are set up (e.g. just before `return`), add:
+And, so a changed poll cadence takes effect without a window reload (the setting's docs say the badge follows `statusBarPollMs`), add — still inside the `cfgSub` handler, as a sibling `if` — a timer restart:
 
 ```ts
-  const egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
-  ctx.subscriptions.push({ dispose: () => clearInterval(egressTimer) });
-  void pollEgressBadge();
+    if (e.affectsConfiguration("nimbus.statusBarPollMs")) {
+      clearInterval(egressTimer);
+      egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
+    }
 ```
+
+> The `egressTimer` and its initial `void pollEgressBadge()` are created in the early badge block above (alongside `pollEgressBadge`), so `egressTimer` is declared before this `cfgSub` handler references it — no separate "start the timer" step is needed.
 
 - [ ] **Step 8: Add the setting to the manifest and docs**
 
