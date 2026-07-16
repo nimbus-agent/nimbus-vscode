@@ -14,6 +14,7 @@ export type ExtensionToWebview =
       details?: unknown;
     }
   | { type: "done"; reply: string; sessionId: string }
+  | { type: "cancelled" }
   | { type: "error"; message: string }
   | {
       type: "emptyState";

@@ -6,6 +6,7 @@ import {
   normalizeInline,
   parseRankedItem,
   rankedResultToPick,
+  sameName,
   statusPick,
 } from "../../src/search.js";
 
@@ -146,6 +147,37 @@ describe("buildPicks", () => {
   test("maps rows, drops malformed, preserves order", () => {
     const picks = buildPicks([row({ name: "A" }), "garbage", row({ name: "B" })]);
     expect(picks.map((p) => p.label)).toEqual(["A", "B"]);
+  });
+});
+
+describe("buildPicks exclude predicate", () => {
+  test("drops excluded rows and preserves order", () => {
+    const rows = [row({ name: "keep A" }), row({ name: "drop me" }), row({ name: "keep B" })];
+    const picks = buildPicks(rows, (r) => r.name === "drop me");
+    expect(picks.map((p) => p.label)).toEqual(["keep A", "keep B"]);
+  });
+
+  test("no predicate keeps current behaviour", () => {
+    const rows = [row({ name: "a" }), row({ name: "b" })];
+    expect(buildPicks(rows)).toHaveLength(2);
+  });
+});
+
+describe("sameName", () => {
+  test("matches trimmed, case-insensitively", () => {
+    const pred = sameName("  Auth Service ");
+    const parsed = parseRankedItem(row({ name: "auth service" }));
+    expect(parsed).toBeDefined();
+    if (parsed === undefined) throw new Error("Expected row to parse");
+    expect(pred(parsed)).toBe(true);
+  });
+
+  test("does not match a different name", () => {
+    const pred = sameName("auth service");
+    const parsed = parseRankedItem(row({ name: "billing" }));
+    expect(parsed).toBeDefined();
+    if (parsed === undefined) throw new Error("Expected row to parse");
+    expect(pred(parsed)).toBe(false);
   });
 });
 

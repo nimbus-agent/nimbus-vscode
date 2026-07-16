@@ -9,6 +9,7 @@ import { createSessionStore } from "./chat/session-store.js";
 import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js";
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
+import { buildTroubleshooter } from "./connection/troubleshooter.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
@@ -22,7 +23,14 @@ import {
   validateQuestion,
 } from "./quick-ask.js";
 import { type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
-import { buildPicks, normalizeInline, type SearchPick, statusPick } from "./search.js";
+import {
+  buildPicks,
+  normalizeInline,
+  type RankedResult,
+  type SearchPick,
+  sameName,
+  statusPick,
+} from "./search.js";
 import { createSettings } from "./settings.js";
 import { type Agent, parseAgents } from "./sidebar/agents.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
@@ -36,6 +44,10 @@ import { createQuickActions } from "./sidebar/quick-actions.js";
 import { parseSessionRow, type SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
+import {
+  createEgressStatusBarController,
+  type EgressBadgeInputs,
+} from "./status-bar/egress-status-bar-item.js";
 import { createStatusBarController } from "./status-bar/status-bar-item.js";
 import type {
   CommandsApi,
@@ -130,6 +142,49 @@ export function activateWithDeps(
   const statusBar = createStatusBarController(statusItem);
   ctx.subscriptions.push(statusBar);
 
+  const egressStatusItem = deps.window.createStatusBarItem(2, 99);
+  ctx.subscriptions.push(egressStatusItem);
+  const egressBadge = createEgressStatusBarController(egressStatusItem);
+  ctx.subscriptions.push(egressBadge);
+  let egressLastKnownCount: number | undefined;
+  let egressPollSeq = 0;
+
+  const pollEgressBadge = async (): Promise<void> => {
+    const mine = ++egressPollSeq;
+    const connected = connection.current().kind === "connected";
+    const showBadge = settings.showEgressStatusBarBadge();
+    const base: EgressBadgeInputs = {
+      head: undefined,
+      lastKnownCount: egressLastKnownCount,
+      error: undefined,
+      connected,
+      showBadge,
+    };
+    if (!connected || !showBadge) {
+      egressBadge.update(base);
+      return;
+    }
+    const client = nimbus();
+    if (client === undefined) {
+      egressBadge.update({ ...base, connected: false });
+      return;
+    }
+    try {
+      const head = await client.egressHead();
+      if (mine !== egressPollSeq) return; // a newer poll superseded this one
+      egressLastKnownCount = head.count;
+      egressBadge.update({ ...base, head, lastKnownCount: head.count });
+    } catch (e) {
+      if (mine !== egressPollSeq) return;
+      log.warn(`egressHead poll failed: ${errMsg(e)}`);
+      egressBadge.update({ ...base, error: errMsg(e) });
+    }
+  };
+
+  let egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
+  ctx.subscriptions.push({ dispose: () => clearInterval(egressTimer) });
+  void pollEgressBadge();
+
   let pendingHitlCount = 0;
   const renderStatusBar = (s: ConnectionState): void => {
     statusBar.update({
@@ -140,6 +195,7 @@ export function activateWithDeps(
       pendingHitlCount,
       autoStartGateway: settings.autoStartGateway(),
     });
+    void pollEgressBadge();
   };
 
   const chatPanelFactory = deps.chatPanelFactory?.({ log }) ?? createRealChatPanelFactory(log);
@@ -332,8 +388,14 @@ export function activateWithDeps(
   );
 
   const cfgSub = deps.workspace.onDidChangeConfiguration((e) => {
-    if (e.affectsConfiguration("nimbus")) renderStatusBar(connection.current());
+    if (e.affectsConfiguration("nimbus")) {
+      renderStatusBar(connection.current());
+    }
     if (e.affectsConfiguration("nimbus.agents")) agentsView.refresh();
+    if (e.affectsConfiguration("nimbus.statusBarPollMs")) {
+      clearInterval(egressTimer);
+      egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
+    }
   });
   ctx.subscriptions.push(cfgSub);
 
@@ -348,6 +410,10 @@ export function activateWithDeps(
     connection,
     getClient: () => nimbus(),
   });
+  const refreshEgress = (): void => {
+    egressView.refresh();
+    void pollEgressBadge();
+  };
   const loadSessions = async (): Promise<SessionSummary[]> => {
     const client = nimbus();
     if (client === undefined) return [];
@@ -451,14 +517,17 @@ export function activateWithDeps(
     await ctl.start(`${prefix.trim()}\n\n${trimmed}`);
   });
 
-  const runSearch = (initialValue?: string): void => {
+  const runSearch = (
+    initialValue?: string,
+    opts?: { placeholder?: string; exclude?: (r: RankedResult) => boolean },
+  ): void => {
     const client = nimbus();
     if (client === undefined) {
       void deps.window.showErrorMessage("Nimbus: not connected to Gateway.");
       return;
     }
     const qp = deps.window.createQuickPick<SearchPick>();
-    qp.placeholder = "Search the local Nimbus index";
+    qp.placeholder = opts?.placeholder ?? "Search the local Nimbus index";
     // alwaysShow on every result makes these largely moot (VS Code can't filter
     // out our rows), but set both for parity with the intended UX.
     qp.matchOnDescription = true;
@@ -480,7 +549,7 @@ export function activateWithDeps(
       try {
         const rows = await client.searchRanked({ name: q, limit: settings.searchLimit() });
         if (disposed || mine !== seq) return; // pick closed, or a newer keystroke won
-        const picks = buildPicks(rows);
+        const picks = buildPicks(rows, opts?.exclude);
         qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
       } catch (e) {
         if (disposed || mine !== seq) return;
@@ -541,6 +610,35 @@ export function activateWithDeps(
       return;
     }
     runSearch(editor.document.getText(editor.selection));
+  });
+
+  register("nimbus.findRelated", () => {
+    const editor = deps.window.activeTextEditor;
+    const selection =
+      editor !== undefined && !editor.selection.isEmpty
+        ? editor.document.getText(editor.selection)
+        : "";
+    if (selection.trim().length === 0) {
+      void deps.window.showErrorMessage("Nimbus: select text to find related items.");
+      return;
+    }
+    runSearch(selection, { placeholder: "Related to selection…", exclude: sameName(selection) });
+  });
+
+  register("nimbus.findRelatedFromIndex", (...args) => {
+    // view/item/context command: args[0] is the tree NODE; the IndexItem rides
+    // on node.payload (see itemToRow), mirroring nimbus.askAboutIndexItem.
+    const node = args[0];
+    const payload =
+      typeof node === "object" && node !== null
+        ? (node as { payload?: unknown }).payload
+        : undefined;
+    const item = parseIndexRow(payload);
+    if (item === undefined) return;
+    const byName = sameName(item.name);
+    const exclude = (r: RankedResult): boolean =>
+      (item.url !== undefined && r.url === item.url) || byName(r);
+    runSearch(item.name, { placeholder: `Related to "${item.name}"…`, exclude });
   });
 
   register("nimbus.quickAsk", async () => {
@@ -660,6 +758,24 @@ export function activateWithDeps(
     await connection.reconnectNow();
   });
 
+  register("nimbus.troubleshootConnection", async () => {
+    const report = buildTroubleshooter(connection.current(), {
+      autoStartGateway: settings.autoStartGateway(),
+      platform: process.platform,
+    });
+    const labels = report.actions.map((a) => a.label);
+    const opts = { modal: true };
+    const choice =
+      report.level === "error"
+        ? await deps.window.showErrorMessage(report.message, opts, ...labels)
+        : report.level === "warn"
+          ? await deps.window.showWarningMessage(report.message, opts, ...labels)
+          : await deps.window.showInformationMessage(report.message, opts, ...labels);
+    const action = report.actions.find((a) => a.label === choice);
+    if (action === undefined) return;
+    await deps.commands.executeCommand(action.command, ...(action.args ?? []));
+  });
+
   register("nimbus.openLogs", () => {
     out.show(true);
   });
@@ -673,7 +789,7 @@ export function activateWithDeps(
   });
 
   register("nimbus.refreshEgress", () => {
-    egressView.refresh();
+    refreshEgress();
   });
 
   register("nimbus.refreshSessions", () => {

@@ -96,14 +96,28 @@ export function rankedResultToPick(r: RankedResult): SearchPick {
   return pick;
 }
 
-// Map rows to picks, dropping malformed rows, preserving order.
-export function buildPicks(rawRows: unknown[]): SearchPick[] {
+// Map rows to picks, dropping malformed rows and any the optional `exclude`
+// predicate rejects (used by Find related to drop the item itself). Order preserved.
+export function buildPicks(
+  rawRows: unknown[],
+  exclude?: (r: RankedResult) => boolean,
+): SearchPick[] {
   const picks: SearchPick[] = [];
   for (const raw of rawRows) {
     const r = parseRankedItem(raw);
-    if (r !== undefined) picks.push(rankedResultToPick(r));
+    if (r === undefined) continue;
+    if (exclude?.(r)) continue;
+    picks.push(rankedResultToPick(r));
   }
   return picks;
+}
+
+// A trimmed, case-insensitive name-equality predicate. Deliberately no
+// delimiter/quote stripping — that normalization is unpredictable and risks
+// excluding legitimately distinct items. Used by Find related.
+export function sameName(query: string): (r: RankedResult) => boolean {
+  const q = query.trim().toLowerCase();
+  return (r) => r.name.trim().toLowerCase() === q;
 }
 
 // A non-selectable status row shown instead of a blank list (e.g. "No results").

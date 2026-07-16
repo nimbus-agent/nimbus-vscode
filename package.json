@@ -158,6 +158,21 @@
         "command": "nimbus.proveEgressWindow",
         "title": "Prove Egress Window",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.troubleshootConnection",
+        "title": "Troubleshoot Connection",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.findRelated",
+        "title": "Find Related",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.findRelatedFromIndex",
+        "title": "Find Related",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
@@ -222,6 +237,10 @@
         {
           "command": "nimbus.quickAsk",
           "when": "editorTextFocus"
+        },
+        {
+          "command": "nimbus.findRelatedFromIndex",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -261,6 +280,11 @@
           "command": "nimbus.askAboutIndexItem",
           "when": "view == nimbus.indexView && viewItem == nimbusIndexItem",
           "group": "navigation"
+        },
+        {
+          "command": "nimbus.findRelatedFromIndex",
+          "when": "view == nimbus.indexView && viewItem == nimbusIndexItem",
+          "group": "navigation"
         }
       ],
       "editor/context": [
@@ -278,6 +302,11 @@
           "command": "nimbus.quickAsk",
           "when": "editorTextFocus",
           "group": "nimbus@3"
+        },
+        {
+          "command": "nimbus.findRelated",
+          "when": "editorHasSelection",
+          "group": "nimbus@4"
         }
       ]
     },
@@ -346,6 +375,11 @@
               "description": { "type": "string" }
             }
           }
+        },
+        "nimbus.egress.showStatusBarBadge": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the egress ledger badge (row count + a ledger-live check) in the status bar while connected."
         },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",

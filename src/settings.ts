@@ -12,6 +12,7 @@ export interface Settings {
   askAgent(): string;
   agents(): unknown;
   quickAskPresets(): unknown;
+  showEgressStatusBarBadge(): boolean;
   hitlAlwaysModal(): boolean;
   logLevel(): LogLevel;
 }
@@ -27,6 +28,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     askAgent: () => cfg().get<string>("askAgent", ""),
     agents: () => cfg().get<unknown>("agents", []),
     quickAskPresets: () => cfg().get<unknown>("quickAsk.presets", []),
+    showEgressStatusBarBadge: () => cfg().get<boolean>("egress.showStatusBarBadge", true),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
     logLevel: () => {
       const lvl = cfg().get<string>("logLevel", "info");
