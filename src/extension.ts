@@ -23,7 +23,14 @@ import {
   validateQuestion,
 } from "./quick-ask.js";
 import { type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
-import { buildPicks, normalizeInline, type SearchPick, statusPick } from "./search.js";
+import {
+  buildPicks,
+  normalizeInline,
+  type RankedResult,
+  type SearchPick,
+  sameName,
+  statusPick,
+} from "./search.js";
 import { createSettings } from "./settings.js";
 import { type Agent, parseAgents } from "./sidebar/agents.js";
 import { createAgentsView } from "./sidebar/agents-view.js";
@@ -508,14 +515,17 @@ export function activateWithDeps(
     await ctl.start(`${prefix.trim()}\n\n${trimmed}`);
   });
 
-  const runSearch = (initialValue?: string): void => {
+  const runSearch = (
+    initialValue?: string,
+    opts?: { placeholder?: string; exclude?: (r: RankedResult) => boolean },
+  ): void => {
     const client = nimbus();
     if (client === undefined) {
       void deps.window.showErrorMessage("Nimbus: not connected to Gateway.");
       return;
     }
     const qp = deps.window.createQuickPick<SearchPick>();
-    qp.placeholder = "Search the local Nimbus index";
+    qp.placeholder = opts?.placeholder ?? "Search the local Nimbus index";
     // alwaysShow on every result makes these largely moot (VS Code can't filter
     // out our rows), but set both for parity with the intended UX.
     qp.matchOnDescription = true;
@@ -537,7 +547,7 @@ export function activateWithDeps(
       try {
         const rows = await client.searchRanked({ name: q, limit: settings.searchLimit() });
         if (disposed || mine !== seq) return; // pick closed, or a newer keystroke won
-        const picks = buildPicks(rows);
+        const picks = buildPicks(rows, opts?.exclude);
         qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
       } catch (e) {
         if (disposed || mine !== seq) return;
@@ -598,6 +608,35 @@ export function activateWithDeps(
       return;
     }
     runSearch(editor.document.getText(editor.selection));
+  });
+
+  register("nimbus.findRelated", () => {
+    const editor = deps.window.activeTextEditor;
+    const selection =
+      editor !== undefined && !editor.selection.isEmpty
+        ? editor.document.getText(editor.selection)
+        : "";
+    if (selection.trim().length === 0) {
+      void deps.window.showErrorMessage("Nimbus: select text to find related items.");
+      return;
+    }
+    runSearch(selection, { placeholder: "Related to selection…", exclude: sameName(selection) });
+  });
+
+  register("nimbus.findRelatedFromIndex", (...args) => {
+    // view/item/context command: args[0] is the tree NODE; the IndexItem rides
+    // on node.payload (see itemToRow), mirroring nimbus.askAboutIndexItem.
+    const node = args[0];
+    const payload =
+      typeof node === "object" && node !== null
+        ? (node as { payload?: unknown }).payload
+        : undefined;
+    const item = parseIndexRow(payload);
+    if (item === undefined) return;
+    const byName = sameName(item.name);
+    const exclude = (r: RankedResult): boolean =>
+      (item.url !== undefined && r.url === item.url) || byName(r);
+    runSearch(item.name, { placeholder: `Related to "${item.name}"…`, exclude });
   });
 
   register("nimbus.quickAsk", async () => {
