@@ -33,7 +33,7 @@ rough T-shirt size (S / M / L).
 | --- | --- |
 | **Ask** — streaming chat panel (+ Ask About Selection) | `askStream` |
 | **Search** — live ranked search over the local index (+ configurable limit, duplicates badge, Search Selection) | `searchRanked` |
-| **Quick Ask** — one-shot editor quick-ask, reply in a read-only tab | `agentInvoke` |
+| **Quick Ask** — one-shot editor quick-ask (preset actions + custom), reply in a read-only tab | `agentInvoke` |
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window | `egressList`, `egressVerify`, `egressProveWindow` |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
@@ -48,7 +48,6 @@ change.
 
 | Feature | Value | Client RPC | Effort |
 | --- | --- | --- | --- |
-| Quick-ask **preset actions** (Explain / Fix / Review / Docstring) | Skip retyping the prompt; one click from the editor | `agentInvoke` | S |
 | **Egress status-bar badge** (row count + verified ✓) | At-a-glance trust signal, always visible | `egressHead` *(unsurfaced)* | S |
 | **"Stop"** affordance for a streaming Ask | Cancel a long generation cleanly | `cancelStream` *(unsurfaced)* | S |
 | First-run **Walkthrough** (install → connect Gateway → try Ask/Search/Quick-ask) | Turns a fresh install into a working setup | *VS Code Walkthroughs API — no RPC* | M |

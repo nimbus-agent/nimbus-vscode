@@ -7,6 +7,11 @@
   a read-only markdown tab, without opening the chat panel. Backed by
   `agentInvoke`; the file path is reduced to its basename so the absolute local
   path is not sent to the agent or the egress ledger.
+- **Quick Ask presets** — the `Nimbus: Quick Ask…` command now opens a picker of
+  preset actions (**Explain**, **Fix**, **Review**, **Docstring**) plus a
+  **Custom question…** row. Picking a preset pre-fills the input box with its
+  prompt, editable before sending. Presets are configurable via
+  `nimbus.quickAsk.presets` (a non-empty list replaces the defaults).
 - **Search** — the result limit is now configurable via `nimbus.search.limit`
   (default 50, clamped 1–500), and results the Gateway reports as having
   duplicates show a `(+N duplicates)` badge.
