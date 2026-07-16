@@ -235,7 +235,7 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes (from Task 1): `resolvePresets`, `type QuickAskPreset` from `./quick-ask-presets.js`; `settings.quickAskPresets()`.
 - Consumes (existing): `QuickPickItemLike` type from `./vscode-shim.js`; `deps.window.showQuickPick`, `deps.window.showInputBox` (supports a `value` field for pre-fill); `buildQuickAskPrompt`, `validateQuestion` from `./quick-ask.js`.
-- Produces: no new exported symbols — behavior change only. Handler order becomes: editor check → context (+truncation warning) → connection check → **QuickPick** → seeded input box → `agentInvoke` → reply tab.
+- Produces: no new exported symbols — behavior change only. Handler order becomes: editor check → context clamp → connection check → **QuickPick** → seeded input box → **truncation warning (if any)** → `agentInvoke` → reply tab. (The truncation warning moves later so a user who cancels the picker/input box is not warned about a query they never send.)
 
 - [ ] **Step 1: Widen the fixture type and update existing quick-ask tests to fail**
 
@@ -398,6 +398,37 @@ Replace that `const question = await deps.window.showInputBox({...});` call with
 
 Leave the rest of the handler (the `if (question === undefined …) return;` guard, `buildQuickAskPrompt`, `agentInvoke`, reply rendering) exactly as-is.
 
+Then **move the truncation warning to fire only when the query is actually sent.** Delete the early warning block that sits right after the `clampContext` call:
+
+```ts
+    const { code, truncated } = clampContext(rawContext, QUICK_ASK_MAX_CONTEXT_CHARS);
+    if (truncated) {
+      void deps.window.showWarningMessage(
+        `Nimbus: context truncated to ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`,
+      );
+    }
+```
+
+so it becomes just:
+
+```ts
+    const { code, truncated } = clampContext(rawContext, QUICK_ASK_MAX_CONTEXT_CHARS);
+```
+
+and re-add the warning immediately after the question guard, just before `buildQuickAskPrompt`:
+
+```ts
+    if (question === undefined || validateQuestion(question) !== undefined) return;
+    if (truncated) {
+      void deps.window.showWarningMessage(
+        `Nimbus: context truncated to ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`,
+      );
+    }
+    const prompt = buildQuickAskPrompt({
+```
+
+`code` and `truncated` are still computed early (both are needed by `buildQuickAskPrompt`); only the *warning* is deferred. No existing test asserts the warning (verified), so this is behavior-only.
+
 - [ ] **Step 5: Run the quick-ask tests to verify they pass**
 
 Run: `bunx vitest run test/unit/extension.test.ts -t "quick ask"`
@@ -531,3 +562,6 @@ Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 - **Sentinel, not label text:** the handler decides "custom vs preset" by whether `pick.preset` is present, never by comparing the label to `"Custom question…"`. That is deliberate — a user could name a preset that string.
 - **`showInputBox` `value`:** the shim's `showInputBox` accepts `value` for pre-fill; the VS Code input box shows it editable with the cursor at the end. The `placeHolder` is only visible when the box is empty, so it is harmless for the Custom row and hidden for presets.
 - **`asNonEmptyString` does not trim** (consistent with `parseAgents`): an empty string `""` is dropped, but a whitespace-only `prompt` is technically kept — it is then rejected downstream by `validateQuestion` (which trims) when the user tries to send. This matches the existing codebase convention; do not add trimming here.
+- **`showQuickPick` is already generic** (`showQuickPick<T extends QuickPickItemLike>(items, opts): Thenable<T | undefined>` in `vscode-shim.ts`), so `pick` is inferred as `QuickAskPick | undefined` and `pick.preset` compiles under strict TS. **Do not add a cast** — it is unnecessary and would just add noise.
+- **The test fixture already consumes `quickPickAnswers`** — the stub does `showQuickPick: vi.fn(async () => quickPickAnswers.shift())` and `makeFixture` already declares the array. Task 2 Step 1 only *widens the element type* to carry an optional `preset`; no new mock wiring is needed, and an empty queue resolves to `undefined` (cancel), never hangs.
+- **Commit trailer:** the mandated `Co-Authored-By:` line reflects the executing environment's attribution convention. If a different model/agent runs this plan, it should substitute the trailer its own harness prescribes rather than copy this one verbatim.
