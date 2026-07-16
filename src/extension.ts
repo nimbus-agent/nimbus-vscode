@@ -147,8 +147,10 @@ export function activateWithDeps(
   const egressBadge = createEgressStatusBarController(egressStatusItem);
   ctx.subscriptions.push(egressBadge);
   let egressLastKnownCount: number | undefined;
+  let egressPollSeq = 0;
 
   const pollEgressBadge = async (): Promise<void> => {
+    const mine = ++egressPollSeq;
     const connected = connection.current().kind === "connected";
     const showBadge = settings.showEgressStatusBarBadge();
     const base: EgressBadgeInputs = {
@@ -169,9 +171,11 @@ export function activateWithDeps(
     }
     try {
       const head = await client.egressHead();
+      if (mine !== egressPollSeq) return; // a newer poll superseded this one
       egressLastKnownCount = head.count;
       egressBadge.update({ ...base, head, lastKnownCount: head.count });
     } catch (e) {
+      if (mine !== egressPollSeq) return;
       log.warn(`egressHead poll failed: ${errMsg(e)}`);
       egressBadge.update({ ...base, error: errMsg(e) });
     }
@@ -354,7 +358,6 @@ export function activateWithDeps(
         });
       }
       log.info(`Nimbus connected to Gateway at ${s.socketPath}`);
-      void pollEgressBadge();
       return;
     }
     if (s.kind === "disconnected" && settings.autoStartGateway() && !autoStartInFlight) {
@@ -387,7 +390,6 @@ export function activateWithDeps(
   const cfgSub = deps.workspace.onDidChangeConfiguration((e) => {
     if (e.affectsConfiguration("nimbus")) {
       renderStatusBar(connection.current());
-      void pollEgressBadge();
     }
     if (e.affectsConfiguration("nimbus.agents")) agentsView.refresh();
     if (e.affectsConfiguration("nimbus.statusBarPollMs")) {
@@ -762,11 +764,13 @@ export function activateWithDeps(
       platform: process.platform,
     });
     const labels = report.actions.map((a) => a.label);
-    const choice = await deps.window.showInformationMessage(
-      report.message,
-      { modal: true },
-      ...labels,
-    );
+    const opts = { modal: true };
+    const choice =
+      report.level === "error"
+        ? await deps.window.showErrorMessage(report.message, opts, ...labels)
+        : report.level === "warn"
+          ? await deps.window.showWarningMessage(report.message, opts, ...labels)
+          : await deps.window.showInformationMessage(report.message, opts, ...labels);
     const action = report.actions.find((a) => a.label === choice);
     if (action === undefined) return;
     await deps.commands.executeCommand(action.command, ...(action.args ?? []));

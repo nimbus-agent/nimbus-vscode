@@ -166,12 +166,18 @@ describe("buildPicks exclude predicate", () => {
 describe("sameName", () => {
   test("matches trimmed, case-insensitively", () => {
     const pred = sameName("  Auth Service ");
-    expect(pred(parseRankedItem(row({ name: "auth service" })) ?? { name: "", service: "", score: 0 })).toBe(true);
+    const parsed = parseRankedItem(row({ name: "auth service" }));
+    expect(parsed).toBeDefined();
+    if (parsed === undefined) throw new Error("Expected row to parse");
+    expect(pred(parsed)).toBe(true);
   });
 
   test("does not match a different name", () => {
     const pred = sameName("auth service");
-    expect(pred(parseRankedItem(row({ name: "billing" })) ?? { name: "", service: "", score: 0 })).toBe(false);
+    const parsed = parseRankedItem(row({ name: "billing" }));
+    expect(parsed).toBeDefined();
+    if (parsed === undefined) throw new Error("Expected row to parse");
+    expect(pred(parsed)).toBe(false);
   });
 });
 

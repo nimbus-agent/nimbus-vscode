@@ -32,6 +32,36 @@ function pendingStream(streamId = "s1"): {
   return { handle: handle as unknown as AskStreamHandle, cancel };
 }
 
+// A stream handle whose cancel() itself stays unresolved (awaiting the same
+// gate as the iterator) until the test calls releaseCancel(). Unlike
+// pendingStream() — whose cancel() resolves as soon as its synchronous release()
+// call runs, i.e. almost immediately — this lets a test observe state WHILE
+// cancel() is still genuinely in flight, over multiple microtask turns.
+function pendingCancelStream(streamId = "s1"): {
+  handle: AskStreamHandle;
+  releaseCancel: () => void;
+} {
+  let releaseCancel = (): void => undefined;
+  const gate = new Promise<void>((r) => {
+    releaseCancel = r;
+  });
+  const handle = {
+    streamId,
+    cancel: vi.fn(async () => {
+      await gate;
+    }),
+    [Symbol.asyncIterator](): AsyncIterator<never> {
+      return {
+        async next(): Promise<IteratorResult<never>> {
+          await gate;
+          return { value: undefined as never, done: true };
+        },
+      };
+    },
+  };
+  return { handle: handle as unknown as AskStreamHandle, releaseCancel };
+}
+
 // A stream handle that yields a fixed list of events, then completes.
 function streamOf(events: StreamEvent[], streamId = "s1"): AskStreamHandle {
   return {
@@ -163,6 +193,56 @@ describe("ChatController", () => {
     const written = set.mock.calls.map((c) => c[0]);
     expect(written).toContain("new");
     expect(written).not.toContain("old");
+  });
+
+  test("a superseded stream's late event does not clobber the newly active stream", async () => {
+    // Stream A blocks until manually released, independent of cancel(), so the
+    // test controls exactly when A's late event is delivered relative to B
+    // starting — reproducing the race where A's teardown runs after B is active.
+    let releaseA = (): void => undefined;
+    const gateA = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const handleA = {
+      streamId: "sA",
+      cancel: vi.fn(async () => undefined),
+      [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
+        let sent = false;
+        return {
+          async next(): Promise<IteratorResult<StreamEvent>> {
+            if (sent) return { value: undefined as never, done: true };
+            await gateA;
+            sent = true;
+            return { value: { type: "token", text: "late-from-A" }, done: false };
+          },
+        };
+      },
+    } as unknown as AskStreamHandle;
+    const { handle: handleB, cancel: cancelB } = pendingStream("sB");
+
+    let call = 0;
+    const askStream = vi.fn(() => (call++ === 0 ? handleA : handleB));
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(baseDeps(fakeChatClient({ askStream }), { panel }));
+
+    const pA = ctrl.start("hi");
+    await Promise.resolve();
+    await ctrl.stop(); // supersedes A: active becomes undefined, A.cancel() is called
+    const pB = ctrl.start("bye"); // active becomes handleB
+    await Promise.resolve();
+    expect(ctrl.isStreaming()).toBe(true);
+
+    // Now let A's late event arrive, after B is already the active stream.
+    releaseA();
+    await pA;
+
+    expect(ctrl.isStreaming()).toBe(true); // still B — A's teardown must not clear it
+    expect(postedTypes(posted)).not.toContain("token"); // A's late event was never posted
+    expect(postedTypes(posted)).toEqual(["userMessage", "cancelled", "userMessage"]);
+
+    await ctrl.stop();
+    await pB;
+    expect(cancelB).toHaveBeenCalledTimes(1);
   });
 
   test("resume posts an empty state when the transcript load fails", async () => {
@@ -307,6 +387,27 @@ describe("ChatController", () => {
     await ctrl.stop();
     await p;
     expect(cancel).toHaveBeenCalledTimes(1);
+    expect(ctrl.isStreaming()).toBe(false);
+  });
+
+  test("stop() posts the cancelled message before cancel() resolves", async () => {
+    // cancel() stays pending until we release it, so if the implementation
+    // ever posted "cancelled" AFTER `await handle.cancel()`, this test would
+    // observe no "cancelled" message yet at the assertion point below.
+    const { handle, releaseCancel } = pendingCancelStream();
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(baseDeps(fakeChatClient({ askStream: () => handle }), { panel }));
+    const pStart = ctrl.start("hi");
+    await Promise.resolve();
+    expect(ctrl.isStreaming()).toBe(true);
+
+    const pStop = ctrl.stop();
+    await Promise.resolve(); // flush the microtask that posts "cancelled"
+    expect(postedTypes(posted)).toContain("cancelled"); // posted while cancel() is still pending
+
+    releaseCancel();
+    await pStop;
+    await pStart;
     expect(ctrl.isStreaming()).toBe(false);
   });
 

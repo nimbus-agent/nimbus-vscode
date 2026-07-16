@@ -1807,6 +1807,28 @@ describe("activateWithDeps", () => {
     expect(f.deps.commands.executeCommand).toHaveBeenCalledWith("nimbus.openLogs");
   });
 
+  test("nimbus.troubleshootConnection shows an error modal when disconnected (autoStart off)", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.troubleshootConnection")();
+    expect(f.deps.window.showErrorMessage).toHaveBeenCalled();
+    expect(f.deps.window.showWarningMessage).not.toHaveBeenCalled();
+    expect(f.deps.window.showInformationMessage).not.toHaveBeenCalled();
+    expect(f.errorMessages.some((m) => m.includes("can't reach the Gateway"))).toBe(true);
+  });
+
+  test("nimbus.troubleshootConnection shows a warning modal when disconnected (autoStart on)", async () => {
+    const f = makeFixture({ openClient: disconnectedClient(), cfg: { autoStartGateway: true } });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.troubleshootConnection")();
+    expect(f.deps.window.showWarningMessage).toHaveBeenCalled();
+    expect(f.deps.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(f.deps.window.showInformationMessage).not.toHaveBeenCalled();
+    expect(f.warnMessages.some((m) => m.includes("Waiting for the Gateway to start"))).toBe(true);
+  });
+
   test("nimbus.findRelated warns and shows no picker when there is no selection", async () => {
     const f = makeFixture({ activeEditor: { text: "", empty: true } });
     activateWithDeps(f.ctx, f.deps);
@@ -1850,6 +1872,37 @@ describe("activateWithDeps", () => {
     cmd(f, "nimbus.refreshEgress")();
     await flush();
     expect(egressHead).toHaveBeenCalled();
+  });
+
+  test("a superseded egress poll's late result does not clobber a newer poll's render", async () => {
+    // First poll stays pending until we resolve it manually; the second poll
+    // (triggered before the first settles) resolves immediately. If the race
+    // guard were missing, the first poll's stale count would win because it
+    // resolves chronologically last.
+    const first = deferred<{ head: string; count: number }>();
+    let call = 0;
+    const egressHead = vi.fn(async () => {
+      call += 1;
+      if (call === 1) return first.promise;
+      return { head: "freshhead00", count: 99 };
+    });
+    const f = makeFixture({ openClient: makeFakeClient({ egressHead } as never) });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    egressHead.mockClear();
+    call = 0;
+
+    cmd(f, "nimbus.refreshEgress")(); // poll #1: stays pending
+    await Promise.resolve();
+    cmd(f, "nimbus.refreshEgress")(); // poll #2: resolves immediately, supersedes #1
+    await flush();
+
+    first.resolve({ head: "stalehead00", count: 1 }); // #1's late result arrives last
+    await flush();
+
+    expect(egressHead).toHaveBeenCalledTimes(2);
+    expect(f.statusItem.text).toContain("99");
+    expect(f.statusItem.text).not.toContain("$(shield) 1 ");
   });
 
   test("the egress poll error path hides the badge without throwing", async () => {

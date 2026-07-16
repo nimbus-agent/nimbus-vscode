@@ -111,7 +111,7 @@ The checkmark attests **"head read OK / ledger live," not a cryptographic verifi
   - `type TroubleshootAction = { label: string; command: string; args?: unknown[] }`
   - `type TroubleshootReport = { level: "info" | "warn" | "error"; message: string; actions: TroubleshootAction[] }`
   - `buildTroubleshooter(state: ConnectionState, opts: { autoStartGateway: boolean; platform: NodeJS.Platform }): TroubleshootReport` — one branch per `state.kind`. No `vscode` import; `platform` is **injected** (extension.ts passes `process.platform`), keeping the module pure and unit-testable across platforms. *(Resolves feedback 3a.)*
-- **New command** `nimbus.troubleshootConnection` in `extension.ts` (palette title **"Nimbus: Troubleshoot Connection"**). It reads `connection.current()`, builds the report, shows a **modal** via the window shim (`showInformationMessage`/`showWarningMessage`/`showErrorMessage` with `{ modal: true }` and the report's action labels as buttons), and dispatches the chosen action's `command` (with `args`) through `deps.commands.executeCommand`.
+- **New command** `nimbus.troubleshootConnection` in `extension.ts` (palette title **"Nimbus: Troubleshoot Connection"**). It reads `connection.current()`, builds the report, and shows a **modal** via the window shim, with the report's `level` selecting the severity: `showInformationMessage` for `info`, `showWarningMessage` for `warn`, `showErrorMessage` for `error` — each called with `{ modal: true }` and the report's action labels as buttons — then dispatches the chosen action's `command` (with `args`) through `deps.commands.executeCommand`.
 
 ### State → report mapping
 

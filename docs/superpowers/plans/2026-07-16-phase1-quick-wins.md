@@ -733,18 +733,20 @@ Register the command alongside the other `register(...)` calls (e.g. near `nimbu
       platform: process.platform,
     });
     const labels = report.actions.map((a) => a.label);
-    const choice = await deps.window.showInformationMessage(
-      report.message,
-      { modal: true },
-      ...labels,
-    );
+    const opts = { modal: true };
+    const choice =
+      report.level === "error"
+        ? await deps.window.showErrorMessage(report.message, opts, ...labels)
+        : report.level === "warn"
+          ? await deps.window.showWarningMessage(report.message, opts, ...labels)
+          : await deps.window.showInformationMessage(report.message, opts, ...labels);
     const action = report.actions.find((a) => a.label === choice);
     if (action === undefined) return;
     await deps.commands.executeCommand(action.command, ...(action.args ?? []));
   });
 ```
 
-> The shim's `showWarningMessage`/`showErrorMessage` do not accept a `{ modal }` option; `showInformationMessage(msg, { modal }, ...items)` does. Use the info modal uniformly — `report.level` still drives the message wording and is asserted in tests.
+> The shim's `showWarningMessage`/`showErrorMessage` were extended to accept an optional `{ modal }` second parameter (backward-compatible — all existing callers pass only a message). The wiring above maps `report.level` to the matching `show{Information,Warning,Error}Message`, so the modal severity now follows the report instead of always showing info.
 
 - [ ] **Step 6: Add the command to `package.json`**
 

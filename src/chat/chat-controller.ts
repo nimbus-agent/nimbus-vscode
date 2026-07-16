@@ -80,6 +80,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
   };
 
   const handleEvent = async (ev: StreamEvent, handle: AskStreamHandle): Promise<boolean> => {
+    if (active !== handle) return true;
     if (ev.type === "token") {
       post({ type: "token", text: ev.text });
       return false;
@@ -137,7 +138,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
         if (handle.streamId.length > 0) {
           deps.unregisterStreamWithHitl(handle.streamId);
         }
-        active = undefined;
+        if (active === handle) active = undefined;
       }
     },
     async stop(): Promise<void> {

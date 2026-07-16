@@ -92,8 +92,16 @@ export interface WindowApi {
     opts: { modal?: boolean },
     ...items: string[]
   ): Thenable<string | undefined>;
-  showErrorMessage(msg: string, ...items: string[]): Thenable<string | undefined>;
-  showWarningMessage(msg: string, ...items: string[]): Thenable<string | undefined>;
+  showErrorMessage(
+    msg: string,
+    opts?: { modal?: boolean },
+    ...items: string[]
+  ): Thenable<string | undefined>;
+  showWarningMessage(
+    msg: string,
+    opts?: { modal?: boolean },
+    ...items: string[]
+  ): Thenable<string | undefined>;
   showInputBox(opts?: {
     prompt?: string;
     value?: string;
