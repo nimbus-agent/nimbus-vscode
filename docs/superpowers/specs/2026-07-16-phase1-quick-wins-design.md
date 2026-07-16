@@ -45,20 +45,18 @@ Two discoveries changed the naive roadmap reading:
 ### Components
 
 - **New module** `src/status-bar/egress-status-bar-item.ts`, mirroring `status-bar-item.ts`:
-  - `type EgressBadgeInputs = { head: { head: string; count: number } | undefined; connected: boolean; showBadge: boolean; }`
-  - `formatEgressBadge(inp: EgressBadgeInputs): EgressBadgeRender | undefined` — pure. Returns `undefined` when the item should be hidden (disconnected, setting off, or before the first successful read).
+  - `type EgressBadgeInputs = { head: { head: string; count: number } | undefined; lastKnownCount: number | undefined; error: string | undefined; connected: boolean; showBadge: boolean; }` — `head` is set on a fresh successful read; on a read error `head` is `undefined` and `error` + `lastKnownCount` (tracked by the controller across polls) drive the stale render.
+  - `formatEgressBadge(inp: EgressBadgeInputs): EgressBadgeRender | undefined` — pure. Returns `undefined` when the item should be hidden (disconnected, setting off, or error before any successful read).
   - `createEgressStatusBarController(item: StatusBarItemHandle): { update(inp): void; dispose(): void }`.
 - **A second status-bar item**, right-aligned (`createStatusBarItem(2, 99)`) — priority 99 places it just to the right of the connection item (priority 100). Created and disposed in `extension.ts` alongside the existing one.
 
 ### Behaviour
 
 - **Visibility:** shown only while `connection.kind === "connected"` **and** `showBadge` is true. Hidden otherwise (calls `item.hide()`), because there is no reachable ledger to describe when disconnected.
-- **Poll cadence:** `egressHead()` on the existing, currently-unused **`statusBarPollMs`** setting (default 30000) — this badge is its first consumer, so no new cadence setting. Also refresh:
-  - on transition into `connected`,
-  - after `egressView.refresh()` (they read the same ledger; keep them consistent),
-  - immediately when the poll interval is (re)started.
+- **Poll cadence:** `egressHead()` on the existing, currently-unused **`statusBarPollMs`** setting (default 30000) — this badge is its first consumer, so no new cadence setting. Also refresh on transition into `connected`, and immediately when the poll interval is (re)started.
+- **Consistency with the egress view (composition-root coupling):** the badge and `egressView` read the same ledger but stay decoupled *as modules* — the coupling lives in the composition root. `extension.ts` gains a single `refreshEgress()` helper that calls both `egressView.refresh()` and the badge controller's `poll()`; existing call sites that refresh the view (e.g. after Verify-ledger, `extension.ts:676`) call `refreshEgress()` instead. **No shared event emitter is introduced** — a polled badge with bounded ≤`statusBarPollMs` staleness plus this explicit co-refresh is sufficient, and it keeps `egress-status-bar-item.ts` free of any dependency on the tree view. *(Resolves feedback 1a: coupling is real but belongs in the composition root, not a new emitter seam.)*
 - **Render (success):** `text = "$(shield) {count} $(check)"`; `tooltip = "Egress ledger: {count} rows · head {head.slice(0,6)}… · click to open · run \"Verify ledger\" for a cryptographic check"`; `command = "nimbus.egressView.focus"` (VS Code's auto-generated tree-reveal command — no new command needed).
-- **Render (read error):** `text = "$(shield) egress $(question)"`, muted tooltip naming the error; no checkmark. The poll swallows the error (logged at `warn`) and keeps the last-known-good count until the next success.
+- **Render (read error):** if a prior successful read exists, keep its count and flag staleness — `text = "$(shield) {lastKnownCount} $(warning)"`, tooltip `Egress ledger: couldn't refresh — showing last known {lastKnownCount} rows ({error})`. If no successful read has happened yet, stay hidden (same as before the first read). The count is **never** replaced by a literal word: the badge always shows a number or nothing. The poll swallows the error (logged at `warn`) and retries next tick. *(Resolves feedback 1b: the earlier `$(shield) egress $(question)` text was ambiguous — dropped in favour of last-known-count + `$(warning)`.)*
 
 ### Honesty guard (explicit design decision)
 
@@ -70,7 +68,7 @@ The checkmark attests **"head read OK / ledger live," not a cryptographic verifi
 
 ### Tests
 
-- `formatEgressBadge`: hidden when disconnected / setting off / head undefined; success render (count, short head, check, command); error render (question icon, no check).
+- `formatEgressBadge`: hidden when disconnected / setting off / no successful read yet; success render (count, short head, check, command); stale render after a read error (last-known count + `$(warning)`, no check, tooltip names the error).
 - Poll/controller behaviour is exercised through the format function; the interval wiring is thin `extension.ts` glue (smoke-covered like other timers).
 
 ---
@@ -85,7 +83,8 @@ The checkmark attests **"head read OK / ledger live," not a cryptographic verifi
 
 ### Extension / controller
 
-- `chat-controller.ts` `stop()`: capture whether there was an active handle; after `await handle.cancel()`, `post({ type: "cancelled" })` **only if there was an active stream**. This is race-safe: if `done`/`error` arrived almost simultaneously, the UI is already reset and a stray `cancelled` is ignored by the webview (see below). `newConversation()` and `resume()` keep their existing `reset`/`hydrate` posts (they replace the transcript, so no marker is wanted there).
+- `chat-controller.ts` `stop()`: if there is an active handle, clear it, **post `{ type: "cancelled" }` immediately, then** call `handle.cancel()`. Posting *before* awaiting the cancel is the fix for the hang risk (feedback 2a): `handle.cancel()` awaits an IPC round-trip (`engine.cancelStream`) that can hang if the connection is severed, and the webview's return-to-idle must not depend on the Gateway acking it. `postMessage` to the webview is a local call, so the UI always resets — no webview watchdog timer is needed. If there was no active stream, post nothing. Race-safe: a near-simultaneous `done`/`error` already reset the UI, and a stray `cancelled` is ignored by the webview (see below). `newConversation()` and `resume()` keep their existing `reset`/`hydrate` posts (they replace the transcript, so no marker is wanted there).
+- **Resource cleanup (feedback 2b):** the existing `start()` `finally` block already unregisters the HITL stream and clears `active`; the client's own notification subscriptions are torn down inside its `finish()`, guarded by a `done` flag (it has no `off()` yet — a known, guarded no-op in `ask-stream.js`). No additional teardown is required in our code.
 
 ### Webview (`webview/main.ts`)
 
@@ -111,7 +110,7 @@ The checkmark attests **"head read OK / ledger live," not a cryptographic verifi
 - **New pure module** `src/connection/troubleshooter.ts`:
   - `type TroubleshootAction = { label: string; command: string; args?: unknown[] }`
   - `type TroubleshootReport = { level: "info" | "warn" | "error"; message: string; actions: TroubleshootAction[] }`
-  - `buildTroubleshooter(state: ConnectionState, opts: { autoStartGateway: boolean }): TroubleshootReport` — one branch per `state.kind`. No `vscode` import; fully unit-testable.
+  - `buildTroubleshooter(state: ConnectionState, opts: { autoStartGateway: boolean; platform: NodeJS.Platform }): TroubleshootReport` — one branch per `state.kind`. No `vscode` import; `platform` is **injected** (extension.ts passes `process.platform`), keeping the module pure and unit-testable across platforms. *(Resolves feedback 3a.)*
 - **New command** `nimbus.troubleshootConnection` in `extension.ts` (palette title **"Nimbus: Troubleshoot Connection"**). It reads `connection.current()`, builds the report, shows a **modal** via the window shim (`showInformationMessage`/`showWarningMessage`/`showErrorMessage` with `{ modal: true }` and the report's action labels as buttons), and dispatches the chosen action's `command` (with `args`) through `deps.commands.executeCommand`.
 
 ### State → report mapping
@@ -121,7 +120,7 @@ The checkmark attests **"head read OK / ledger live," not a cryptographic verifi
 | `connected` | info | "Connected to the Gateway at `{socketPath}`." | Open Logs |
 | `disconnected` (autoStart off) | error | "Nimbus can't reach the Gateway (not running) at `{socketPath}`." | Start Gateway; Open Logs |
 | `disconnected` (autoStart on) | warn | "Waiting for the Gateway to start at `{socketPath}`." | Reconnect Now; Open Logs |
-| `permission-denied` | error | "Permission denied accessing the socket `{socketPath}` — check file ownership/mode or the socketPath setting." | Edit socketPath Setting; Open Logs |
+| `permission-denied` | error | **Platform-tailored:** Unix → "Permission denied accessing the socket `{socketPath}` — check the socket file's ownership/mode (`chmod`/`chown`) or the socketPath setting."; Windows (`win32`) → "Permission denied accessing `{socketPath}` — check that the Gateway is running under your user account (named-pipe access), or adjust the socketPath setting." | Edit socketPath Setting; Open Logs |
 | `connecting` / `starting-gateway` | info | "Still connecting to `{socketPath}`…" | Reconnect Now; Open Logs |
 | `idle` | warn | "Nimbus hasn't connected yet." | Reconnect Now; Open Logs |
 
@@ -131,9 +130,13 @@ Action → command: Start Gateway → `nimbus.startGateway`; Reconnect Now → `
 
 Deliberately **do not** repoint the shipped status-bar error commands (`nimbus.startGateway`, `nimbus.openLogs`) at the troubleshooter — that would entangle this feature with the status-bar commit. The troubleshooter is reachable via the command palette (and remains available for a later, separate wiring decision).
 
+### Deferred (feedback 3b)
+
+A connected-state **self-test** (latency ping / test-RPC button) was suggested. **Deferred** — it is a separate feature with its own design surface (which RPC, timeout handling, how latency is displayed), beyond this S-sized quick win; `ping-socket.ts` exists but wiring a user-facing latency check is not a "why am I disconnected" concern. Connected state stays minimal (info + Open Logs). Tracked as a possible Phase 2/3 enhancement.
+
 ### Tests
 
-- `troubleshooter.test.ts`: each `ConnectionState.kind` (and both `disconnected` autoStart branches) produces the expected level, a message containing the socket path, and the expected action commands. No vscode needed.
+- `troubleshooter.test.ts`: each `ConnectionState.kind` (and both `disconnected` autoStart branches) produces the expected level, a message containing the socket path, and the expected action commands. `permission-denied` is asserted for both `platform: "win32"` and a Unix platform. No vscode needed.
 
 ---
 
@@ -156,14 +159,15 @@ Add an `exclude` predicate to the pick-building path so self/duplicate rows can 
 
 ### Commands
 
-- **`nimbus.findRelatedFromIndex`** — contributed to `view/item/context` for `viewItem == nimbusIndexItem` (the index tree). Mirrors `askAboutIndexItem`: reads `node.payload` → `parseIndexRow` → `IndexItem`, then `runSearch(item.name, { placeholder: "Related to \"{name}\"…", exclude: r => matchesSelf(r, item) })`. `matchesSelf` excludes a row whose `name === item.name` or whose `url === item.url` (the item itself).
-- **`nimbus.findRelated`** — palette + `editor/context` (when there is a selection). Takes the selection text, runs `runSearch(selection, { placeholder: "Related to selection…", exclude: r => r.name === trimmedSelection })` — framed as "related neighbors," excluding an exact-name echo of the query. Distinct from the literal `Search Selection`, which stays as-is.
+- **`nimbus.findRelatedFromIndex`** — contributed to `view/item/context` for `viewItem == nimbusIndexItem` (the index tree). Mirrors `askAboutIndexItem`: reads `node.payload` → `parseIndexRow` → `IndexItem`, then `runSearch(item.name, { placeholder: "Related to \"{name}\"…", exclude: r => matchesSelf(r, item) })`.
+- **`nimbus.findRelated`** — palette + `editor/context`. **Empty/whitespace selection (feedback 4a):** show a warning `Nimbus: select text to find related items.` and return, matching the shipped `searchSelection`/`askAboutSelection` convention. (Word-under-cursor fallback was considered and **deferred** — it adds `getWordRangeAtPosition` handling and diverges from the existing selection-required idiom; can revisit later.) Otherwise runs `runSearch(selection, { placeholder: "Related to selection…", exclude: sameName(selection) })` — framed as "related neighbors," excluding an exact-name echo of the query. Distinct from the literal `Search Selection`, which stays as-is.
+- **Exclusion matching (feedback 4b):** `matchesSelf(r, item)` excludes a row that is the item itself — `url === item.url` when both carry a url (the dependable identity signal), **or** a trimmed, case-insensitive name match (`r.name.trim().toLowerCase() === item.name.trim().toLowerCase()`). `sameName(query)` applies the same trimmed/case-folded name compare. Deliberately **no** stripping of quotes/semicolons/other code delimiters — that normalization is unpredictable and risks excluding legitimately distinct items; url identity is the reliable signal for the index pivot, and a trimmed case-fold is the safe default for the selection path.
 
 ### Tests
 
 - `search.test.ts` (or existing search tests): `buildPicks(rows, exclude)` drops excluded rows and preserves order; no predicate == current behaviour.
-- `matchesSelf` / exclusion logic unit-tested against name/url matches.
-- Command wiring (node.payload → IndexItem) mirrors the covered `askAboutIndexItem` pattern.
+- `matchesSelf` / `sameName` exclusion logic: url-identity match, and trimmed/case-insensitive name match (asserts `"Auth Service"` excludes `"auth service "`); a differently-named row is kept.
+- Command wiring (node.payload → IndexItem) mirrors the covered `askAboutIndexItem` pattern. Empty/whitespace selection → warning, no picker opened.
 
 ---
 
@@ -173,6 +177,7 @@ Add an `exclude` predicate to the pick-building path so self/duplicate rows can 
 - No changes to shipped status-bar commands, `Search Selection`, or the Stop cancellation mechanism itself (only its webview feedback).
 - No new settings beyond `nimbus.egress.showStatusBarBadge`.
 - Walkthrough (the fifth Phase 1 item, effort M) is not part of this batch.
+- **Deferred from feedback:** connected-state latency self-test (3b) and word-under-cursor fallback for Find related (4a) — both are separate features with their own surface; revisit post-batch.
 
 ## Verification
 
