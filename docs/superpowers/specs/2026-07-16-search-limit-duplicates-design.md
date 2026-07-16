@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-16
 **Status:** Approved (pending implementation)
-**Feedback source:** [2026-07-15-ranked-search-design-feedback.md](file:///C:/gitrep/nimbus-vscode/docs/superpowers/specs/2026-07-15-ranked-search-design-feedback.md) — items #9 and #10
+**Feedback source:** [2026-07-15-ranked-search-design-feedback.md](./2026-07-15-ranked-search-design-feedback.md) — items #9 and #10
 
 ---
 
