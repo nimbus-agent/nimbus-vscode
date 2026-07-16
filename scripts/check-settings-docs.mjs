@@ -10,7 +10,15 @@
 import { readFileSync } from "node:fs";
 
 const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-const properties = pkg?.contributes?.configuration?.properties ?? {};
+const properties = pkg?.contributes?.configuration?.properties;
+// Fail closed: a missing/renamed configuration path must be an error, not a
+// silent pass with zero settings to check.
+if (!properties || typeof properties !== "object" || Array.isArray(properties)) {
+  console.error(
+    "check-settings-docs: FAILED — package.json has no contributes.configuration.properties",
+  );
+  process.exit(1);
+}
 const settings = Object.keys(properties).filter((k) => k.startsWith("nimbus."));
 
 const settingsDoc = readFileSync("docs/settings.md", "utf8");
@@ -18,10 +26,17 @@ const readme = readFileSync("README.md", "utf8");
 
 const failures = [];
 for (const key of settings) {
-  // Both docs reference a setting as a backtick-wrapped `nimbus.x`.
-  const token = `\`${key}\``;
-  if (!settingsDoc.includes(token)) failures.push(`docs/settings.md is missing: ${key}`);
-  if (!readme.includes(token)) failures.push(`README.md settings table is missing: ${key}`);
+  // Require the setting in its documented *location*, not merely anywhere in the
+  // file: a `### `nimbus.x`` section heading in settings.md, and a table row
+  // (`| `nimbus.x` | … |`) in the README. `includes()` would false-pass on a
+  // stray prose or example mention.
+  const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (!new RegExp("^###\\s+.*`" + escaped + "`", "m").test(settingsDoc)) {
+    failures.push(`docs/settings.md is missing a section for: ${key}`);
+  }
+  if (!new RegExp("^\\|.*`" + escaped + "`.*\\|", "m").test(readme)) {
+    failures.push(`README.md settings table is missing a row for: ${key}`);
+  }
 }
 
 if (failures.length > 0) {

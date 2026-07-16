@@ -11,9 +11,12 @@ phase is gated on **new Gateway/client development**.
 ## Guiding principle
 
 The extension is a **thin IPC client** (see [architecture.md](./architecture.md)
-and [CLAUDE.md](../CLAUDE.md)). Every roadmap item must ride a **typed
-`@nimbus-dev/client` RPC** — no reaching past the client into the Gateway. That
-is why the phase boundary that matters most is "does the RPC exist yet?":
+and [CLAUDE.md](../CLAUDE.md)). Any item that touches **Gateway data or agent
+capability** must ride a **typed `@nimbus-dev/client` RPC** — no reaching past
+the client into the Gateway. (Purely local or VS Code–API features — onboarding
+walkthroughs, a connection troubleshooter — need no RPC and are noted as such.)
+That is why, for the Gateway-backed items, the phase boundary that matters most
+is "does the RPC exist yet?":
 
 - **Phases 1–3** need nothing new from the SDK. They deepen surfaces and exploit
   RPCs that a published client already exposes (through `0.4.0`).
