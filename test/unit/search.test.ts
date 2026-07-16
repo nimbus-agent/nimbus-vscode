@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildPicks,
+  clampSearchLimit,
   normalizeInline,
   parseRankedItem,
   rankedResultToPick,
@@ -128,5 +129,34 @@ describe("statusPick", () => {
       canOpen: false,
       isStatus: true,
     });
+  });
+});
+
+describe("clampSearchLimit", () => {
+  test("passes valid in-range integers through", () => {
+    expect(clampSearchLimit(50)).toBe(50);
+    expect(clampSearchLimit(1)).toBe(1);
+    expect(clampSearchLimit(500)).toBe(500);
+  });
+  test("clamps out-of-range values to 1..500", () => {
+    expect(clampSearchLimit(0)).toBe(1);
+    expect(clampSearchLimit(-10)).toBe(1);
+    expect(clampSearchLimit(10000)).toBe(500);
+  });
+  test("floors fractional values", () => {
+    expect(clampSearchLimit(49.9)).toBe(49);
+    expect(clampSearchLimit(1.5)).toBe(1);
+  });
+  test("floors before clamping at the boundaries", () => {
+    expect(clampSearchLimit(0.9)).toBe(1);
+    expect(clampSearchLimit(500.1)).toBe(500);
+    expect(clampSearchLimit(-0.5)).toBe(1);
+  });
+  test("falls back to 50 for non-finite / non-number input", () => {
+    expect(clampSearchLimit(Number.NaN)).toBe(50);
+    expect(clampSearchLimit(Number.POSITIVE_INFINITY)).toBe(50);
+    expect(clampSearchLimit("200")).toBe(50);
+    expect(clampSearchLimit(undefined)).toBe(50);
+    expect(clampSearchLimit(null)).toBe(50);
   });
 });

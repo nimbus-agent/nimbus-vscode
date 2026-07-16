@@ -1,5 +1,13 @@
 import { asFiniteNumber, asNonEmptyString, asRecord } from "./sidebar/parse-helpers.js";
 
+// Clamp a configured search limit to the Gateway's accepted 1..500 range,
+// flooring fractional values and falling back to 50 for non-numeric/NaN input.
+// settings.json is hand-editable and bypasses the settings UI's min/max.
+export function clampSearchLimit(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 50;
+  return Math.min(500, Math.max(1, Math.floor(raw)));
+}
+
 // Collapse all whitespace (incl. newlines/tabs) to single spaces and trim;
 // optionally truncate to `max` chars with a trailing ellipsis. Keeps multi-line
 // snippets and large selections on the single-line QuickPick surfaces.

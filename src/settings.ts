@@ -1,3 +1,4 @@
+import { clampSearchLimit } from "./search.js";
 import type { WorkspaceApi } from "./vscode-shim.js";
 
 export type LogLevel = "error" | "warn" | "info" | "debug";
@@ -7,6 +8,7 @@ export interface Settings {
   autoStartGateway(): boolean;
   statusBarPollMs(): number;
   transcriptHistoryLimit(): number;
+  searchLimit(): number;
   askAgent(): string;
   agents(): unknown;
   hitlAlwaysModal(): boolean;
@@ -20,6 +22,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     autoStartGateway: () => cfg().get<boolean>("autoStartGateway", false),
     statusBarPollMs: () => cfg().get<number>("statusBarPollMs", 30000),
     transcriptHistoryLimit: () => cfg().get<number>("transcriptHistoryLimit", 50),
+    searchLimit: () => clampSearchLimit(cfg().get<number>("search.limit", 50)),
     askAgent: () => cfg().get<string>("askAgent", ""),
     agents: () => cfg().get<unknown>("agents", []),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
