@@ -1798,6 +1798,70 @@ describe("activateWithDeps", () => {
     // The stub's showSaveDialog returns a fsPath, so a success toast is shown.
     expect(f.infoMessages.some((m) => /proof saved/i.test(m))).toBe(true);
   });
+
+  test("nimbus.troubleshootConnection runs the chosen action's command", async () => {
+    const f = makeFixture({ infoMessageClicks: ["Open Logs"] });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.troubleshootConnection")();
+    expect(f.deps.commands.executeCommand).toHaveBeenCalledWith("nimbus.openLogs");
+  });
+
+  test("nimbus.findRelated warns and shows no picker when there is no selection", async () => {
+    const f = makeFixture({ activeEditor: { text: "", empty: true } });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.findRelated")();
+    expect(f.errorMessages).toContain("Nimbus: select text to find related items.");
+    expect(f.quickPicks).toHaveLength(0);
+  });
+
+  test("nimbus.findRelated runs a search seeded from the selection", async () => {
+    const f = makeFixture({
+      activeEditor: { text: "auth service", selectionText: "auth service", empty: false },
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.findRelated")();
+    expect(f.quickPicks).toHaveLength(1);
+    expect(f.quickPicks[0]?.placeholder).toBe("Related to selection…");
+  });
+
+  test("nimbus.findRelatedFromIndex runs a search seeded from the node payload", async () => {
+    const f = makeFixture({
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.findRelatedFromIndex")({
+      payload: { id: "1", name: "billing", service: "gdrive" },
+    });
+    expect(f.quickPicks).toHaveLength(1);
+    expect(f.quickPicks[0]?.placeholder).toBe('Related to "billing"…');
+  });
+
+  test("nimbus.refreshEgress re-polls the egress badge alongside the view refresh", async () => {
+    const egressHead = vi.fn(async () => ({ head: "abc123def", count: 7 }));
+    const f = makeFixture({ openClient: makeFakeClient({ egressHead } as never) });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    egressHead.mockClear();
+    cmd(f, "nimbus.refreshEgress")();
+    await flush();
+    expect(egressHead).toHaveBeenCalled();
+  });
+
+  test("the egress poll error path hides the badge without throwing", async () => {
+    const egressHead = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const f = makeFixture({ openClient: makeFakeClient({ egressHead } as never) });
+    expect(() => activateWithDeps(f.ctx, f.deps)).not.toThrow();
+    await waitForConnect();
+    await flush();
+    expect(egressHead).toHaveBeenCalled();
+  });
 });
 
 describe("createSourceOpener", () => {
