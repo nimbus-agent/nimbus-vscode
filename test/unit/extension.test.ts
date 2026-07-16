@@ -1117,6 +1117,32 @@ describe("activateWithDeps", () => {
     expect(f.openedDocs).toHaveLength(0);
   });
 
+  test("quick ask builds picker items from configured presets plus the custom row", async () => {
+    const configuredPreset = { label: "Explain", prompt: "Explain this.", description: "step-by-step" };
+    const f = makeFixture({
+      cfg: { "quickAsk.presets": [configuredPreset] },
+      activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: ["q"],
+      openClient: makeFakeClient({
+        agentInvoke: async () => ({ reply: "ok" }),
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    const showQuickPick = f.deps.window.showQuickPick as unknown as ReturnType<typeof vi.fn>;
+    const items = showQuickPick.mock.calls[0]?.[0] as Array<{
+      label: string;
+      detail?: string;
+      preset?: unknown;
+    }>;
+    expect(items).toHaveLength(2);
+    expect(items[0]).toEqual({ label: "Explain", detail: "step-by-step", preset: configuredPreset });
+    expect(items.at(-1)).toEqual({ label: "Custom question…" });
+    expect(items.at(-1)?.preset).toBeUndefined();
+  });
+
   test("uses the configured search.limit setting", async () => {
     const calls: Array<{ name?: string; limit?: number }> = [];
     const f = makeFixture({

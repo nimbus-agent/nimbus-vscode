@@ -11,7 +11,7 @@ export interface QuickAskPreset {
 // Built-in presets shown when nimbus.quickAsk.presets is empty. The labels are
 // self-explanatory, so the defaults carry no `description`; the field exists for
 // user-defined presets that want a one-line explainer in the picker.
-export const DEFAULT_QUICK_ASK_PRESETS: QuickAskPreset[] = [
+export const DEFAULT_QUICK_ASK_PRESETS: readonly QuickAskPreset[] = Object.freeze([
   { label: "Explain", prompt: "Explain what this code does, step by step." },
   {
     label: "Fix",
@@ -23,14 +23,14 @@ export const DEFAULT_QUICK_ASK_PRESETS: QuickAskPreset[] = [
     prompt: "Review this code for correctness, clarity, and potential improvements.",
   },
   { label: "Docstring", prompt: "Write a docstring / doc comment for this code." },
-];
+]);
 
 // Coerce the untrusted nimbus.quickAsk.presets setting into presets. Non-array
 // input, or a list with no valid entries, yields the built-in defaults (Replace
 // semantics with a safe fallback so the picker is never left with only the
 // custom row). An entry must be an object with a non-empty `label` and `prompt`;
 // a non-empty string `description` is carried through, otherwise omitted.
-export function resolvePresets(raw: unknown): QuickAskPreset[] {
+export function resolvePresets(raw: unknown): readonly QuickAskPreset[] {
   if (!Array.isArray(raw)) return DEFAULT_QUICK_ASK_PRESETS;
   const presets: QuickAskPreset[] = [];
   for (const entry of raw) {
