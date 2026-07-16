@@ -75,8 +75,11 @@ custom question.
 export interface QuickAskPreset {
   label: string;
   prompt: string;
+  description?: string; // shown as QuickPick detail; optional
 }
 
+// Built-in defaults carry no `description` — the labels are self-explanatory.
+// The field exists for user-defined presets that want a one-line explainer.
 export const DEFAULT_QUICK_ASK_PRESETS: QuickAskPreset[] = [
   { label: "Explain", prompt: "Explain what this code does, step by step." },
   {
@@ -95,7 +98,8 @@ export const DEFAULT_QUICK_ASK_PRESETS: QuickAskPreset[] = [
 // Coerce the untrusted nimbus.quickAsk.presets setting into presets.
 // Non-array input, or a list with no valid entries, yields the built-in
 // defaults (Replace semantics with a safe fallback). Entries that are not
-// objects or lack a non-empty `label` or `prompt` are dropped.
+// objects or lack a non-empty `label` or `prompt` are dropped; a non-empty
+// `description`, when present, is carried through (else omitted).
 export function resolvePresets(raw: unknown): QuickAskPreset[];
 ```
 
@@ -121,11 +125,19 @@ misconfigured setting should never leave the menu with only `Custom question…`
     "required": ["label", "prompt"],
     "properties": {
       "label": { "type": "string" },
-      "prompt": { "type": "string" }
+      "prompt": { "type": "string" },
+      "description": { "type": "string" }
     }
   }
 }
 ```
+
+Because the setting uses **Replace** semantics, `docs/settings.md` includes the
+four default presets as a ready-to-paste JSON block so a user who wants to add
+one preset can start from the defaults rather than reconstructing them. (The
+`package.json` `description` string names the defaults but does not inline all
+four full prompts — that would bloat the Settings UI; the copy-paste block lives
+in `docs/settings.md`.)
 
 ### Command / menu wiring
 
@@ -137,8 +149,8 @@ internal to the handler.
 
 Build items from `resolvePresets(settings.quickAskPresets())`:
 
-- One item per preset: `{ label: preset.label }` (optionally a codicon later —
-  not required for v1).
+- One item per preset: `{ label: preset.label }`, plus `detail: preset.description`
+  when present (codicon optional, not required for v1).
 - A trailing `{ label: "Custom question…" }` item.
 
 Picking maps back to the seed value: a preset → `preset.prompt`; the custom row
@@ -163,6 +175,8 @@ alongside existing quick-ask tests):
 - Mixed valid + invalid entries → valid entries only, in order.
 - All-invalid entries (missing/blank `label` or `prompt`, non-object) →
   defaults.
+- Optional `description`: carried through when a non-empty string; omitted when
+  absent, blank, or non-string.
 
 The QuickPick/input-box glue is thin over `vscode-shim`; cover the seam only to
 the extent the existing quick-ask handler is covered (no over-testing the
@@ -170,11 +184,45 @@ vscode surface).
 
 ## Docs (CI-enforced)
 
-- `docs/settings.md`: document `nimbus.quickAsk.presets`. **`scripts/check-settings-docs.mjs`
-  fails CI if a contributed setting is undocumented — mandatory.**
+- `docs/settings.md`: document `nimbus.quickAsk.presets`, including the four
+  default presets as a copy-paste JSON block (Replace semantics — see above).
+  **`scripts/check-settings-docs.mjs` fails CI if a contributed setting is
+  undocumented — mandatory.**
 - `CHANGELOG.md`: add an entry.
 - `docs/ROADMAP.md`: move the "Quick-ask preset actions" row from Phase 1 to
   **Already shipped**.
+
+## Deferred (from design review, 2026-07-16)
+
+Considered in [the review](./2026-07-16-quick-ask-presets-design-review.md) and
+intentionally **not** in this v1. Each is safely additive later (optional
+fields / new commands), so deferring costs no future breaking change.
+
+- **Live-typed custom item in the QuickPick** (type a question, Enter to submit
+  without the "Custom question…" round-trip). This is the *right* fix for the
+  one-extra-interaction cost that "QuickPick-first" imposes on pure free-form
+  use — but it needs the lower-level `window.createQuickPick()` (with an
+  `onDidChangeValue` handler) rather than `showQuickPick`, i.e. a new
+  `vscode-shim` seam and an event-driven handler + stub. That turns an S into an
+  M. **Strongest follow-up candidate** if the extra step proves annoying.
+- **Dual command entry points** (`nimbus.quickAsk` free-form + a separate
+  presets command). Rejected: it fragments the surface and hides presets behind
+  a second command, contradicting the approved "one command, one menu row" goal.
+- **Remember last selection.** Needs persisted `globalState`; saves at most one
+  keystroke. Not worth the state for v1.
+- **`agent` / `model` routing fields on a preset.** Parsing fields that do
+  nothing in v1 is misleading dead config (a user sets `agent` and reasonably
+  expects it to route). Add them only when per-preset agent selection is
+  actually wired — additive at that point.
+- **Prompt variable substitution** (`${fileName}`, `${selectedText}`, …).
+  Separate feature with its own design: it partly duplicates the existing
+  context injection (`buildQuickAskPrompt` already appends the fenced code +
+  file header), and `${fileName}`-style templating risks re-introducing the
+  absolute-path leak that `redactPath` deliberately prevents. Out of scope.
+- **Telemetry / analytics of chosen preset.** No telemetry infrastructure
+  exists, and adding it cuts against the local-first / privacy positioning
+  (CLAUDE.md: no cloud calls, the privacy moat). A debug-level output-channel
+  log line is acceptable if useful; network analytics is not.
 
 ## Files touched
 
