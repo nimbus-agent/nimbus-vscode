@@ -23,11 +23,22 @@ export function buildQuickAskPrompt(input: {
   truncated?: boolean;
 }): string {
   const question = input.question.trim();
-  const code = input.code.trim();
-  if (code.length === 0) return question;
+  // Preserve the code verbatim (leading indentation matters for Python and
+  // nested snippets); trim only to decide whether any code is present.
+  const code = input.code;
+  if (code.trim().length === 0) return question;
   const suffix = input.truncated === true ? " (truncated)" : "";
   const header = `File: ${input.filePath} (${input.languageId})${suffix}`;
   return `${question}\n\n${header}\n\`\`\`${input.languageId}\n${code}\n\`\`\``;
+}
+
+// Reduce a file path to its basename so a quick-ask prompt does not leak the
+// absolute local path — which includes the OS username and directory layout —
+// into the agent context or the egress ledger. Handles POSIX and Windows
+// separators; falls back to the input if there is no separator.
+export function redactPath(filePath: string): string {
+  const segments = filePath.split(/[\\/]/);
+  return segments[segments.length - 1] ?? filePath;
 }
 
 // Extract the reply from an agentInvoke result ({ reply?: string } & Record<...>).

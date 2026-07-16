@@ -18,6 +18,7 @@ import {
   clampContext,
   extractReply,
   QUICK_ASK_MAX_CONTEXT_CHARS,
+  redactPath,
   validateQuestion,
 } from "./quick-ask.js";
 import { buildPicks, normalizeInline, type SearchPick, statusPick } from "./search.js";
@@ -565,7 +566,7 @@ export function activateWithDeps(
     const prompt = buildQuickAskPrompt({
       question,
       code,
-      filePath: editor.document.fileName,
+      filePath: redactPath(editor.document.fileName),
       languageId: editor.document.languageId,
       truncated,
     });

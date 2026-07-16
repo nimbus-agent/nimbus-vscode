@@ -5,6 +5,7 @@ import {
   buildQuickAskPrompt,
   clampContext,
   extractReply,
+  redactPath,
   validateQuestion,
 } from "../../src/quick-ask.js";
 
@@ -47,6 +48,11 @@ describe("buildQuickAskPrompt", () => {
   test("omits the fenced block for blank code, sending the question alone", () => {
     expect(buildQuickAskPrompt({ question: "  just this  ", code: "   ", filePath: "src/a.ts", languageId: "typescript" })).toBe("just this");
   });
+  test("preserves leading indentation of the code verbatim", () => {
+    const code = "    if x:\n        return 1";
+    const p = buildQuickAskPrompt({ question: "q", code, filePath: "a.py", languageId: "python" });
+    expect(p).toContain(`\`\`\`python\n${code}\n\`\`\``);
+  });
 });
 
 describe("extractReply", () => {
@@ -67,5 +73,15 @@ describe("validateQuestion", () => {
     expect(validateQuestion("")).toBe("Please enter a question");
     expect(validateQuestion("   ")).toBe("Please enter a question");
     expect(validateQuestion("why is this slow?")).toBeUndefined();
+  });
+});
+
+describe("redactPath", () => {
+  test("reduces an absolute path to its basename (Windows and POSIX)", () => {
+    expect(redactPath("C:\\Users\\alice\\proj\\src\\a.ts")).toBe("a.ts");
+    expect(redactPath("/home/alice/proj/src/a.ts")).toBe("a.ts");
+  });
+  test("returns a bare filename unchanged", () => {
+    expect(redactPath("a.ts")).toBe("a.ts");
   });
 });
