@@ -1,0 +1,15 @@
+{
+  "$comment": "Shared project settings for Claude Code. Pre-approves this repo's own dev commands so contributors aren't prompted for the standard build/test loop. Personal overrides go in the git-ignored settings.local.json.",
+  "permissions": {
+    "allow": [
+      "Bash(bun run test)",
+      "Bash(bun run typecheck)",
+      "Bash(bun run lint)",
+      "Bash(bun run build)",
+      "Bash(bun run check-bundle)",
+      "Bash(bun run check-settings-docs)",
+      "Bash(bunx vitest run)",
+      "Bash(bunx vitest run *)"
+    ]
+  }
+}
