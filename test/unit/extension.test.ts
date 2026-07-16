@@ -897,6 +897,48 @@ describe("activateWithDeps", () => {
     expect(qp.shown).toBe(true);
   });
 
+  test("uses the configured search.limit setting", async () => {
+    const calls: Array<{ name?: string; limit?: number }> = [];
+    const f = makeFixture({
+      cfg: { "search.limit": 200 },
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({
+        searchRanked: async (p: { name?: string; limit?: number }) => {
+          calls.push(p);
+          return [];
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("report");
+    await flush();
+    expect(calls).toEqual([{ name: "report", limit: 200 }]);
+  });
+
+  test("clamps a malformed search.limit back to the default", async () => {
+    const calls: Array<{ limit?: number }> = [];
+    const f = makeFixture({
+      cfg: { "search.limit": "lots" },
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({
+        searchRanked: async (p: { limit?: number }) => {
+          calls.push(p);
+          return [];
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    qp.setValueAndFire("report");
+    await flush();
+    expect(calls[0]?.limit).toBe(50);
+  });
+
   test("an empty value never calls the Gateway", async () => {
     let searchCalls = 0;
     const f = makeFixture({

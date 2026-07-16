@@ -46,9 +46,7 @@ const SESSIONS_SQL =
 // already ordered; we cap to keep the tree responsive (cf. the search handler).
 const INDEX_LIMIT = 100;
 
-// Search result cap (a sensible picker size; the Gateway clamps to 1..500) and
-// the type-to-search debounce.
-const SEARCH_LIMIT = 50;
+// Type-to-search debounce.
 const SEARCH_DEBOUNCE_MS = 200;
 const SELECTION_PREFILL_MAX = 150;
 
@@ -463,7 +461,7 @@ export function activateWithDeps(
       }
       qp.busy = true;
       try {
-        const rows = await client.searchRanked({ name: q, limit: SEARCH_LIMIT });
+        const rows = await client.searchRanked({ name: q, limit: settings.searchLimit() });
         if (disposed || mine !== seq) return; // pick closed, or a newer keystroke won
         const picks = buildPicks(rows);
         qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
