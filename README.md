@@ -34,6 +34,7 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/install> for setup.
 | `nimbus.search.limit` | `50` | Max results per search (1–500). |
 | `nimbus.askAgent` | _(Gateway default)_ | Default agent name passed to Ask. |
 | `nimbus.agents` | `[]` | Agents shown in the Agents sidebar view. |
+| `nimbus.quickAsk.presets` | `[]` | Quick Ask preset actions (empty = Explain/Fix/Review/Docstring). |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |
 | `nimbus.logLevel` | `info` | Output-channel verbosity. |
 

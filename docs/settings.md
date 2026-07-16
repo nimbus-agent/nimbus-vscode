@@ -56,6 +56,27 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
   required `id` and optional `label`/`description`; clicking one opens a chat
   scoped to that agent. Leave empty to show no custom agents.
 
+### `nimbus.quickAsk.presets`
+
+- **Type:** array · **Default:** `[]`
+- Preset actions offered in a picker before the **Quick Ask** input box. Each
+  item is an object with a required `label` and `prompt` and an optional
+  `description` (shown as picker detail). Picking one pre-fills the input box
+  with its `prompt`, editable before you send; a **Custom question…** row keeps
+  the free-form flow. Empty shows the built-in defaults (**Explain**, **Fix**,
+  **Review**, **Docstring**); a non-empty list **replaces** them.
+- Replace semantics — to add one preset while keeping the defaults, start from
+  this block:
+
+  ```jsonc
+  "nimbus.quickAsk.presets": [
+    { "label": "Explain", "prompt": "Explain what this code does, step by step." },
+    { "label": "Fix", "prompt": "Identify and fix any bugs or issues in this code. Show the corrected code and explain the changes." },
+    { "label": "Review", "prompt": "Review this code for correctness, clarity, and potential improvements." },
+    { "label": "Docstring", "prompt": "Write a docstring / doc comment for this code." }
+  ]
+  ```
+
 ### `nimbus.hitlAlwaysModal`
 
 - **Type:** boolean · **Default:** `false`

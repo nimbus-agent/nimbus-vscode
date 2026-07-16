@@ -171,7 +171,7 @@ function makeFixture(opts: {
   realChatPanel?: boolean;
   realAuditDetail?: boolean;
   realProofSave?: boolean;
-  quickPickAnswers?: Array<{ label: string } | undefined>;
+  quickPickAnswers?: Array<{ label: string; preset?: { label: string; prompt: string } } | undefined>;
   infoMessageClicks?: Array<string | undefined>;
   saveJsonResult?: { fsPath: string } | undefined;
   openSource?: (item: { url?: string }) => Promise<void>;
@@ -909,6 +909,7 @@ describe("activateWithDeps", () => {
     const calls: Array<{ input: string; options?: unknown }> = [];
     const f = makeFixture({
       activeEditor: { text: "whole", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
       inputBoxAnswers: ["what is this?"],
       openClient: makeFakeClient({
         agentInvoke: async (input: string, options?: unknown) => {
@@ -930,6 +931,7 @@ describe("activateWithDeps", () => {
     const calls: Array<{ input: string }> = [];
     const f = makeFixture({
       activeEditor: { text: "line1\nline2", empty: true, fileName: "/p/b.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
       inputBoxAnswers: ["summarize"],
       openClient: makeFakeClient({
         agentInvoke: async (input: string) => {
@@ -949,6 +951,7 @@ describe("activateWithDeps", () => {
     const f = makeFixture({
       // selection is non-empty (empty: false) but whitespace-only → fall back to whole file
       activeEditor: { text: "whole file body", selectionText: "   \n  ", fileName: "/p/e.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
       inputBoxAnswers: ["explain"],
       openClient: makeFakeClient({
         agentInvoke: async (input: string) => {
@@ -979,6 +982,7 @@ describe("activateWithDeps", () => {
   test("quick ask reports when the agent returns no reply", async () => {
     const f = makeFixture({
       activeEditor: { text: "x", selectionText: "x", fileName: "/p/d.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
       inputBoxAnswers: ["q"],
       openClient: makeFakeClient({
         agentInvoke: async () => ({ reply: "   " }),
@@ -996,6 +1000,7 @@ describe("activateWithDeps", () => {
     const f = makeFixture({
       cfg: { askAgent: "myagent" },
       activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
       inputBoxAnswers: ["q"],
       openClient: makeFakeClient({
         agentInvoke: async (_input: string, options?: unknown) => {
@@ -1014,6 +1019,7 @@ describe("activateWithDeps", () => {
     const calls: Array<{ options?: unknown }> = [];
     const f = makeFixture({
       activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
       inputBoxAnswers: ["q"],
       openClient: makeFakeClient({
         agentInvoke: async (_input: string, options?: unknown) => {
@@ -1031,6 +1037,7 @@ describe("activateWithDeps", () => {
   test("quick ask surfaces an error and opens no doc when agentInvoke rejects", async () => {
     const f = makeFixture({
       activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
       inputBoxAnswers: ["q"],
       openClient: makeFakeClient({
         agentInvoke: async () => {
@@ -1043,6 +1050,52 @@ describe("activateWithDeps", () => {
     await cmd(f, "nimbus.quickAsk")();
     expect(f.errorMessages.some((m) => m.includes("quick ask failed"))).toBe(true);
     expect(f.openedDocs).toHaveLength(0);
+  });
+
+  test("quick ask seeds the input box with the chosen preset prompt", async () => {
+    const inputs: string[] = [];
+    const f = makeFixture({
+      activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      quickPickAnswers: [
+        { label: "Explain", preset: { label: "Explain", prompt: "Explain what this code does, step by step." } },
+      ],
+      inputBoxAnswers: ["Explain what this code does, step by step."],
+      openClient: makeFakeClient({
+        agentInvoke: async (input: string) => {
+          inputs.push(input);
+          return { reply: "done" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    const inputBox = f.deps.window.showInputBox as unknown as ReturnType<typeof vi.fn>;
+    const opts = inputBox.mock.calls[0]?.[0] as { value?: string } | undefined;
+    expect(opts?.value).toBe("Explain what this code does, step by step.");
+    expect(inputs[0]).toContain("Explain what this code does, step by step.");
+  });
+
+  test("quick ask does nothing when the picker is cancelled", async () => {
+    const inputs: string[] = [];
+    const f = makeFixture({
+      activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      quickPickAnswers: [undefined],
+      inputBoxAnswers: ["should not be used"],
+      openClient: makeFakeClient({
+        agentInvoke: async (input: string) => {
+          inputs.push(input);
+          return { reply: "x" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(inputs).toHaveLength(0);
+    expect(f.openedDocs).toHaveLength(0);
+    const inputBox = f.deps.window.showInputBox as unknown as ReturnType<typeof vi.fn>;
+    expect(inputBox).not.toHaveBeenCalled();
   });
 
   test("quick ask errors when there is no active editor", async () => {
