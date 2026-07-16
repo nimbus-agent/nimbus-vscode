@@ -24,6 +24,7 @@ export interface RankedResult {
   score: number;
   url?: string;
   snippet?: string;
+  duplicateCount?: number;
 }
 
 // Coerce one searchRanked row (typed by the client, parsed defensively like the
@@ -48,6 +49,17 @@ export function parseRankedItem(raw: unknown): RankedResult | undefined {
     const normalized = normalizeInline(snippet);
     if (normalized.length > 0) result.snippet = normalized;
   }
+  const duplicates = rec["duplicates"];
+  if (Array.isArray(duplicates)) {
+    // Count only non-empty strings, and never the item's own url — a
+    // conservative guard so the badge reflects *other* copies even if the
+    // Gateway includes the primary in the array. (`url` is undefined-safe:
+    // when absent, no entry equals it, so nothing is over-filtered.)
+    const count = duplicates.filter(
+      (d): d is string => typeof d === "string" && d.length > 0 && d !== url,
+    ).length;
+    if (count > 0) result.duplicateCount = count;
+  }
   return result;
 }
 
@@ -68,6 +80,10 @@ export function rankedResultToPick(r: RankedResult): SearchPick {
     (x): x is string => typeof x === "string" && x.length > 0,
   );
   parts.push(`score ${r.score.toFixed(2)}`);
+  if (r.duplicateCount !== undefined && r.duplicateCount > 0) {
+    const n = r.duplicateCount;
+    parts.push(`(+${n} duplicate${n === 1 ? "" : "s"})`);
+  }
   const canOpen = r.url !== undefined && r.url.length > 0;
   const pick: SearchPick = {
     label: r.name,
