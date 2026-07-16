@@ -991,6 +991,79 @@ describe("activateWithDeps", () => {
     expect(f.openedDocs).toHaveLength(0);
   });
 
+  test("quick ask forwards the configured agent in a stateless one-shot options object", async () => {
+    const calls: Array<{ options?: unknown }> = [];
+    const f = makeFixture({
+      cfg: { askAgent: "myagent" },
+      activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      inputBoxAnswers: ["q"],
+      openClient: makeFakeClient({
+        agentInvoke: async (_input: string, options?: unknown) => {
+          calls.push({ options });
+          return { reply: "ok" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(calls[0]?.options).toEqual({ stream: false, agent: "myagent" });
+  });
+
+  test("quick ask omits the agent when askAgent is unset and stays stateless", async () => {
+    const calls: Array<{ options?: unknown }> = [];
+    const f = makeFixture({
+      activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      inputBoxAnswers: ["q"],
+      openClient: makeFakeClient({
+        agentInvoke: async (_input: string, options?: unknown) => {
+          calls.push({ options });
+          return { reply: "ok" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(calls[0]?.options).toEqual({ stream: false });
+  });
+
+  test("quick ask surfaces an error and opens no doc when agentInvoke rejects", async () => {
+    const f = makeFixture({
+      activeEditor: { text: "x", selectionText: "const x = 1", fileName: "/p/a.ts", languageId: "typescript" },
+      inputBoxAnswers: ["q"],
+      openClient: makeFakeClient({
+        agentInvoke: async () => {
+          throw new Error("boom");
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(f.errorMessages.some((m) => m.includes("quick ask failed"))).toBe(true);
+    expect(f.openedDocs).toHaveLength(0);
+  });
+
+  test("quick ask errors when there is no active editor", async () => {
+    let invoked = 0;
+    const f = makeFixture({
+      inputBoxAnswers: ["q"],
+      openClient: makeFakeClient({
+        agentInvoke: async () => {
+          invoked += 1;
+          return { reply: "ok" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(f.errorMessages.some((m) => m.includes("open a file first"))).toBe(true);
+    expect(invoked).toBe(0);
+    expect(f.openedDocs).toHaveLength(0);
+  });
+
   test("uses the configured search.limit setting", async () => {
     const calls: Array<{ name?: string; limit?: number }> = [];
     const f = makeFixture({
