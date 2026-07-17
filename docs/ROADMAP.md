@@ -31,11 +31,13 @@ rough T-shirt size (S / M / L).
 
 | Surface | Enabling RPC |
 | --- | --- |
-| **Ask** — streaming chat panel (+ Ask About Selection) | `askStream` |
+| **Ask** — streaming chat panel (+ Ask About Selection) with a **Stop** affordance that cancels an in-flight generation | `askStream`, `cancelStream` |
 | **Search** — live ranked search over the local index (+ configurable limit, duplicates badge, Search Selection) | `searchRanked` |
+| **Find related** — pivot from a selection or Index item to ranked local neighbors (self-excluded) | `searchRanked` |
 | **Quick Ask** — one-shot editor quick-ask (preset actions + custom), reply in a read-only tab | `agentInvoke` |
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
-| **Egress ledger** — viewer + Verify-ledger + Prove-window | `egressList`, `egressVerify`, `egressProveWindow` |
+| **Egress ledger** — viewer + Verify-ledger + Prove-window, plus an always-visible status-bar badge (row count + ledger-live ✓) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
+| **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
 
 ---
@@ -48,11 +50,11 @@ change.
 
 | Feature | Value | Client RPC | Effort |
 | --- | --- | --- | --- |
-| **Egress status-bar badge** (row count + verified ✓) | At-a-glance trust signal, always visible | `egressHead` *(unsurfaced)* | S |
-| **"Stop"** affordance for a streaming Ask | Cancel a long generation cleanly | `cancelStream` *(unsurfaced)* | S |
 | First-run **Walkthrough** (install → connect Gateway → try Ask/Search/Quick-ask) | Turns a fresh install into a working setup | *VS Code Walkthroughs API — no RPC* | M |
-| **Connection troubleshooter** (why am I disconnected, how to fix) | Removes the #1 first-run friction | *no RPC* | S |
-| **Find related** from a selection or index item | Pivot from code to the local knowledge around it | `searchRanked` | S |
+
+> The other four Phase 1 items — **egress status-bar badge**, **Stop** affordance,
+> **connection troubleshooter**, and **Find related** — shipped in `0.3.0`; see
+> **Already shipped** above.
 
 ## Phase 2 — Differentiators & reach
 

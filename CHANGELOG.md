@@ -1,7 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-07-17
 
+- **Egress status-bar badge** — an always-visible status-bar item shows the
+  egress-ledger row count plus a ledger-live ✓ (the head was read successfully —
+  not a cryptographic verify; run `Nimbus: Verify Egress Ledger` for that).
+  Clicking it opens the Egress view. Polls `egressHead` on the
+  `nimbus.statusBarPollMs` cadence; toggle with `nimbus.egress.showStatusBarBadge`.
+- **Stop a streaming Ask** — the chat panel's Stop button now finalizes the
+  partial reply, marks the turn `⏹ Stopped`, and returns the controls to idle;
+  the in-flight generation is cancelled on the Gateway via `cancelStream`.
+- **Connection troubleshooter** (`Nimbus: Troubleshoot Connection`) — a
+  state-aware modal that explains why you're disconnected and offers one-click
+  fixes (start the Gateway, reconnect, open logs, or edit the socket path), with
+  platform-specific guidance for socket-permission errors. No RPC.
+- **Find related** — pivot from a selection (`Nimbus: Find Related`) or an Index
+  sidebar item to the ranked local knowledge around it via `searchRanked`,
+  excluding the item itself.
 - **Quick Ask** (`Nimbus: Quick Ask…`) — a one-shot editor quick-ask: ask about
   the selection (or the whole file when nothing is selected) and get the reply in
   a read-only markdown tab, without opening the chat panel. Backed by
