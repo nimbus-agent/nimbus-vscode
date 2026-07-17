@@ -173,6 +173,11 @@
         "command": "nimbus.findRelatedFromIndex",
         "title": "Find Related",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.openWalkthrough",
+        "title": "Open Walkthrough",
+        "category": "Nimbus"
       }
     ],
     "viewsContainers": {
