@@ -8,7 +8,7 @@ Local-first AI agent for the editor. Ask and search against your private [Nimbus
 - **Find related** — from a selection or an Index sidebar item, pivot to the local knowledge around it (ranked search that excludes the item itself).
 - **Selection-aware** — right-click a selection to *Ask About Selection*, *Search Selection*, or *Find Related*.
 - **Nimbus sidebar** — activity-bar views for Sessions (with chat resume), the local Index, and Agents.
-- **Audit & Egress ledgers** — inspect what the agent did and everything it sent off-device; verify the egress hash-chain and export a signed proof for any time window, all locally. An always-visible **status-bar badge** shows the egress row count with a ledger-live ✓ (click to open the ledger).
+- **Audit & Egress ledgers** — inspect what the agent did and everything it sent off-device; verify the egress hash-chain and export a signed proof for any time window, all locally. A **status-bar badge** (shown while connected, on by default) displays the egress row count with a ledger-live ✓ — click to open the ledger, or toggle it with `nimbus.egress.showStatusBarBadge`.
 - **Connection troubleshooter** — *Nimbus: Troubleshoot Connection* explains why you're disconnected and offers one-click fixes (start the Gateway, reconnect, open logs, or edit the socket path).
 
 ## Install

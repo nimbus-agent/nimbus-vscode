@@ -2,8 +2,8 @@
 
 ## 0.3.0 — 2026-07-17
 
-- **Egress status-bar badge** — an always-visible status-bar item shows the
-  egress-ledger row count plus a ledger-live ✓ (the head was read successfully —
+- **Egress status-bar badge** — a status-bar item (shown while connected, on by
+  default) shows the egress-ledger row count plus a ledger-live ✓ (the head was read successfully —
   not a cryptographic verify; run `Nimbus: Verify Egress Ledger` for that).
   Clicking it opens the Egress view. Polls `egressHead` on the
   `nimbus.statusBarPollMs` cadence; toggle with `nimbus.egress.showStatusBarBadge`.

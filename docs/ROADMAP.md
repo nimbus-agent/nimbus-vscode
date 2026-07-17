@@ -36,7 +36,7 @@ rough T-shirt size (S / M / L).
 | **Find related** — pivot from a selection or Index item to ranked local neighbors (self-excluded) | `searchRanked` |
 | **Quick Ask** — one-shot editor quick-ask (preset actions + custom), reply in a read-only tab | `agentInvoke` |
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
-| **Egress ledger** — viewer + Verify-ledger + Prove-window, plus an always-visible status-bar badge (row count + ledger-live ✓) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
+| **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
 
