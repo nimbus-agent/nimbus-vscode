@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import { errMsg, type Logger } from "../logging.js";
 import type { ChatPanel, ChatPanelFactory, WebviewPanelLike } from "./chat-panel.js";
+import { createReadyBuffer } from "./ready-buffer.js";
 
 // The production ChatPanel/ChatPanelFactory backed by a real VS Code webview
 // panel. This is thin vscode-API glue — the extension injects a fake factory in
@@ -47,6 +48,13 @@ function wrapWebviewPanel(
   log: Logger,
   onDisposed: () => void,
 ): ChatPanel {
+  // Queue extension->webview posts until the webview's script has loaded and
+  // posted "ready"; VS Code drops messages sent before then, which would lose
+  // the user's first Ask. Registered before the extension wires its own
+  // onMessage handler, so the flush runs ahead of any ready-triggered rehydrate.
+  const buffer = createReadyBuffer((m: unknown) => panel.webview.postMessage(m));
+  panel.webview.onDidReceiveMessage((msg: unknown) => buffer.observe(msg));
+
   const disposeListeners: Array<() => void> = [];
   panel.onDidDispose(() => {
     onDisposed();
@@ -67,7 +75,7 @@ function wrapWebviewPanel(
     set html(v: string) {
       panel.webview.html = v;
     },
-    postMessage: (m: unknown) => panel.webview.postMessage(m),
+    postMessage: (m: unknown) => buffer.post(m),
     onDidReceiveMessage: (h: (msg: unknown) => void) => panel.webview.onDidReceiveMessage(h),
   };
   const panelLike: WebviewPanelLike = {
@@ -89,7 +97,7 @@ function wrapWebviewPanel(
     panel: () => panelLike,
     onDispose: (h) => disposeListeners.push(h),
     onMessage: (h) => panel.webview.onDidReceiveMessage(h),
-    postMessage: (m) => panel.webview.postMessage(m),
+    postMessage: (m) => buffer.post(m),
     isVisible: () => panel.visible,
     isActive: () => panel.active,
   };

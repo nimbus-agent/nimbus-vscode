@@ -484,6 +484,28 @@ describe("ChatController", () => {
     expect(hydrate?.turns).toEqual(turns);
   });
 
+  test("rehydrateIfNeeded does not post while a stream is active", async () => {
+    // On a fresh panel the webview posts "ready" mid-stream, which drives
+    // onReady -> rehydrateIfNeeded. That must NOT run: its emptyState/hydrate
+    // would clobber the live conversation the buffered stream just delivered.
+    const { handle } = pendingStream();
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => handle }), { panel }),
+    );
+    const p = ctrl.start("hi");
+    await Promise.resolve();
+    expect(ctrl.isStreaming()).toBe(true);
+
+    await ctrl.rehydrateIfNeeded(50);
+
+    expect(postedTypes(posted)).not.toContain("emptyState");
+    expect(postedTypes(posted)).not.toContain("hydrate");
+
+    await ctrl.stop();
+    await p;
+  });
+
   test("rehydrateIfNeeded falls back to emptyState when the transcript fetch fails", async () => {
     const { panel, posted } = capturingPanel();
     const warn = vi.fn();

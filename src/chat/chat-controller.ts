@@ -161,6 +161,11 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       post({ type: "reset" });
     },
     async rehydrateIfNeeded(limit): Promise<void> {
+      // A live stream owns the transcript. The webview's "ready" (which drives
+      // this on a freshly-created panel) can land mid-stream; rehydrating then
+      // would post emptyState/hydrate and clobber the buffered conversation the
+      // stream just delivered. Leave the active stream's turns intact.
+      if (active !== undefined) return;
       const sid = deps.sessionStore.get();
       if (sid === undefined) {
         post({ type: "emptyState", sub: "no-transcript" });
