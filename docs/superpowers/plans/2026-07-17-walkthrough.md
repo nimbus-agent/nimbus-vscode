@@ -90,6 +90,8 @@ In `test/unit/extension.test.ts`, add tests that mirror the existing activation/
 
 > If the fixture accessor names differ (`fx.commandHandlers` vs `fx.captured.commandHandlers`, the activate call, or the `flush` helper), match the exact shape used by the neighbouring connection/command tests in this same file — do not invent new harness plumbing.
 
+> **Activation-time initialization (review A):** the third test doubles as the "initialized at activation" check — `setContext("nimbus.connected", false)` is asserted for a fixture that *never* reaches `connected`, which can only happen because `connection.onState` fires the listener immediately on subscribe (idle/connecting → `false`) rather than only on a later transition. So a dedicated "initialized before any event" test is redundant; the disconnected case already pins it.
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `bun run test -- extension`
@@ -291,12 +293,14 @@ Add a new top-level key inside `contributes` (a sibling of `configuration`):
             "title": "Explore Nimbus",
             "description": "Sidebar, egress badge, and troubleshooting.\n[Open the sidebar](command:workbench.view.extension.nimbus)",
             "media": { "markdown": "resources/walkthrough/explore.md" },
-            "completionEvents": ["onCommand:workbench.view.extension.nimbus"]
+            "completionEvents": ["onCommand:workbench.view.extension.nimbus", "onView:nimbus.auditView"]
           }
         ]
       }
     ]
 ```
+
+> **Why the Explore step has two completion events (review B):** `onCommand:workbench.view.extension.nimbus` fires when the user clicks the markdown link button, but a **direct click on the Nimbus activity-bar icon may not route through the command registry** in all VS Code versions. `onView:nimbus.auditView` fires when the sidebar's first view renders — which happens however the container is opened — so the step checks off robustly by either path. `completionEvents` is an OR: any listed event completes the step.
 
 - [ ] **Step 3: Validate the manifest JSON**
 
@@ -357,7 +361,8 @@ Expected: all green.
 F5 into an Extension Development Host with a Gateway available, then:
 - Run **Nimbus: Open Walkthrough** → the "Get Started with Nimbus" walkthrough opens with all 6 steps.
 - Each step's markdown renders in the media pane; the command-link buttons fire (Reconnect / Ask / Search / Quick Ask / Open sidebar).
-- The **Connect** step auto-checks once the Gateway is connected (`onContext:nimbus.connected`), and the Ask/Search/Quick-Ask/Explore steps check off when their command runs.
+- The **Connect** step auto-checks once the Gateway is connected (`onContext:nimbus.connected`), and the Ask/Search/Quick-Ask steps check off when their command runs.
+- The **Explore** step: confirm it completes **both** ways — clicking the "Open the sidebar" link button, **and** clicking the Nimbus activity-bar icon directly (the `onView:nimbus.auditView` event should cover the direct click). If a version is found where neither the direct click's `onCommand` nor `onView` fires, note it — but `onView` is expected to be the robust path.
 - Confirm the walkthrough also appears on the **Welcome / Get Started** page.
 
 - [ ] **Step 3: Hand off to finishing-a-development-branch**
