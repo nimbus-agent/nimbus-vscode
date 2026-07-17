@@ -4,4 +4,4 @@ Nimbus is a **local-first** AI agent for your editor. It talks to a Nimbus Gatew
 
 This short walkthrough gets you connected and shows you Ask, Search, and Quick Ask.
 
-New here? See the [install guide](https://nimbus-agent.dev/install).
+New here? See the [install guide](https://nimbus-agent.dev/user-guide/install/).

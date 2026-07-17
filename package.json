@@ -324,7 +324,7 @@
           {
             "id": "welcome",
             "title": "Welcome to Nimbus",
-            "description": "Local-first, egress-audited AI in your editor.\n[Install guide](https://nimbus-agent.dev/install)",
+            "description": "Local-first, egress-audited AI in your editor.\n[Install guide](https://nimbus-agent.dev/user-guide/install/)",
             "media": {
               "markdown": "resources/walkthrough/welcome.md"
             }

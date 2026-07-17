@@ -25,7 +25,7 @@ First time? Run **`Nimbus: Open Walkthrough`** (or open it from the **Get Starte
 
 ## Requires
 
-A running Nimbus Gateway. See <https://nimbus-agent.dev/install> for setup.
+A running Nimbus Gateway. See <https://nimbus-agent.dev/user-guide/install/> for setup.
 
 ## Settings
 

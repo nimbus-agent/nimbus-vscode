@@ -51,4 +51,4 @@ bun run package       # .vsix via vsce (--no-dependencies; esbuild already inlin
 
 ## Requires (runtime)
 
-A running Nimbus Gateway. See <https://nimbus-agent.dev/install>.
+A running Nimbus Gateway. See <https://nimbus-agent.dev/user-guide/install/>.
