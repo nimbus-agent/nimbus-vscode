@@ -315,6 +315,79 @@
         }
       ]
     },
+    "walkthroughs": [
+      {
+        "id": "nimbusGettingStarted",
+        "title": "Get Started with Nimbus",
+        "description": "Connect the Gateway and try Ask, Search, and Quick Ask.",
+        "steps": [
+          {
+            "id": "welcome",
+            "title": "Welcome to Nimbus",
+            "description": "Local-first, egress-audited AI in your editor.\n[Install guide](https://nimbus-agent.dev/install)",
+            "media": {
+              "markdown": "resources/walkthrough/welcome.md"
+            }
+          },
+          {
+            "id": "connect",
+            "title": "Connect the Gateway",
+            "description": "Nimbus talks to a local Gateway.\n[Reconnect](command:nimbus.reconnect)",
+            "media": {
+              "markdown": "resources/walkthrough/connect.md"
+            },
+            "completionEvents": [
+              "onContext:nimbus.connected"
+            ]
+          },
+          {
+            "id": "ask",
+            "title": "Try Ask",
+            "description": "Chat with the Nimbus agent.\n[Ask Nimbus](command:nimbus.ask)",
+            "media": {
+              "markdown": "resources/walkthrough/ask.md"
+            },
+            "completionEvents": [
+              "onCommand:nimbus.ask"
+            ]
+          },
+          {
+            "id": "search",
+            "title": "Try Search",
+            "description": "Ranked search over your local index.\n[Search](command:nimbus.search)",
+            "media": {
+              "markdown": "resources/walkthrough/search.md"
+            },
+            "completionEvents": [
+              "onCommand:nimbus.search"
+            ]
+          },
+          {
+            "id": "quickAsk",
+            "title": "Try Quick Ask",
+            "description": "One-shot answer about your selection.\n[Quick Ask](command:nimbus.quickAsk)",
+            "media": {
+              "markdown": "resources/walkthrough/quick-ask.md"
+            },
+            "completionEvents": [
+              "onCommand:nimbus.quickAsk"
+            ]
+          },
+          {
+            "id": "explore",
+            "title": "Explore Nimbus",
+            "description": "Sidebar, egress badge, and troubleshooting.\n[Open the sidebar](command:workbench.view.extension.nimbus)",
+            "media": {
+              "markdown": "resources/walkthrough/explore.md"
+            },
+            "completionEvents": [
+              "onCommand:workbench.view.extension.nimbus",
+              "onView:nimbus.auditView"
+            ]
+          }
+        ]
+      }
+    ],
     "configuration": {
       "title": "Nimbus",
       "properties": {
