@@ -121,11 +121,12 @@ Expected: `json ok`.
 
 - [ ] **Step 5: Validate the workflow YAML**
 
-Run (pyyaml if available):
+Run whichever is available (bun is the repo's toolchain, so the `bunx` form needs no Python):
 ```bash
-python -c "import yaml; yaml.safe_load(open('.github/workflows/release-please.yml')); print('yaml ok')"
+bunx yaml-lint .github/workflows/release-please.yml                                                     # Node fallback (no Python)
+python -c "import yaml; yaml.safe_load(open('.github/workflows/release-please.yml')); print('yaml ok')" # if pyyaml is present
 ```
-Expected: `yaml ok`. If `pyyaml` isn't installed, instead confirm structure by eye against Task 1 Step 3 and rely on GitHub's workflow validation on push (a malformed workflow surfaces as a failed/skipped run in the Actions tab).
+Expected: valid YAML confirmed. Last resort: push the branch and let GitHub's workflow validator catch a malformed file (a bad workflow surfaces as a failed/skipped run in the Actions tab).
 
 - [ ] **Step 6: Commit**
 
@@ -177,11 +178,12 @@ with (drop `name` and `generate_release_notes` so Release Please owns the releas
 
 - [ ] **Step 2: Validate the workflow YAML**
 
-Run:
+Run whichever is available:
 ```bash
-python -c "import yaml; yaml.safe_load(open('.github/workflows/publish.yml')); print('yaml ok')"
+bunx yaml-lint .github/workflows/publish.yml                                                     # Node fallback (no Python)
+python -c "import yaml; yaml.safe_load(open('.github/workflows/publish.yml')); print('yaml ok')" # if pyyaml is present
 ```
-Expected: `yaml ok` (or eyeball against Step 1 if `pyyaml` is unavailable).
+Expected: valid YAML confirmed.
 
 - [ ] **Step 3: Confirm no other publish behavior changed**
 
@@ -333,8 +335,10 @@ scripted here. Do them in order. **Do not merge the release-automation PR (Tasks
   confirm a **release PR** appears (titled e.g. `chore(main): release 0.5.0`).
   Merging it should create `v0.5.0` + a Release and trigger `publish.yml`. Confirm
   exactly **one** GitHub Release for `v0.5.0`, carrying both the changelog notes and
-  the `.vsix`. Then run `bun install --frozen-lockfile` locally to confirm the
-  version bump left `bun.lock` clean.
+  the `.vsix`. `bun.lock` needs no attention — verified empirically that bumping
+  `package.json`'s `version` leaves `bun.lock` unchanged and still passes
+  `bun install --frozen-lockfile` (the lockfile tracks dependencies, not this
+  package's own version).
 
 ---
 
