@@ -1,9 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- `feat: native @nimbus VS Code Chat participant (/explain, /fix, /test; #file + selection context; streaming; local-index citations)`
-
 ## 0.4.0 — 2026-07-18
 
 - **Get Started walkthrough** — a first-run walkthrough (`Nimbus: Open Walkthrough`,
