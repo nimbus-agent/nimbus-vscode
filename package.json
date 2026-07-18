@@ -2,7 +2,7 @@
   "name": "nimbus-vscode",
   "displayName": "Nimbus Agent",
   "description": "Local-first AI agent for the editor. Ask and search against your private Nimbus index.",
-  "version": "0.2.0",
+  "version": "0.5.0",
   "publisher": "nimbus-agent",
   "license": "MIT",
   "private": false,
@@ -188,9 +188,18 @@
         "description": "Ask the local Nimbus agent — grounded in your local index",
         "isSticky": true,
         "commands": [
-          { "name": "explain", "description": "Explain the selected code" },
-          { "name": "fix", "description": "Suggest a fix for the selected code" },
-          { "name": "test", "description": "Generate tests for the selected code" }
+          {
+            "name": "explain",
+            "description": "Explain the selected code"
+          },
+          {
+            "name": "fix",
+            "description": "Suggest a fix for the selected code"
+          },
+          {
+            "name": "test",
+            "description": "Generate tests for the selected code"
+          }
         ]
       }
     ],
@@ -446,11 +455,19 @@
           "description": "Agents shown in the Agents sidebar view. Each item: { \"id\": string, \"label\": string, \"description\"?: string }. Clicking one opens a chat scoped to that agent.",
           "items": {
             "type": "object",
-            "required": ["id"],
+            "required": [
+              "id"
+            ],
             "properties": {
-              "id": { "type": "string" },
-              "label": { "type": "string" },
-              "description": { "type": "string" }
+              "id": {
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
             }
           }
         },
@@ -460,11 +477,20 @@
           "description": "Preset actions offered in a picker before the Quick Ask input box. Each item: { \"label\": string, \"prompt\": string, \"description\"?: string }. Empty uses the built-in defaults (Explain, Fix, Review, Docstring); a non-empty list replaces them.",
           "items": {
             "type": "object",
-            "required": ["label", "prompt"],
+            "required": [
+              "label",
+              "prompt"
+            ],
             "properties": {
-              "label": { "type": "string" },
-              "prompt": { "type": "string" },
-              "description": { "type": "string" }
+              "label": {
+                "type": "string"
+              },
+              "prompt": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              }
             }
           }
         },

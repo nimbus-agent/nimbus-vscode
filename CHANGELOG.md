@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.4.0...v0.5.0) (2026-07-18)
+
+
+### Features
+
+* **chat:** native [@nimbus](https://github.com/nimbus) VS Code Chat participant ([#28](https://github.com/nimbus-agent/nimbus-vscode/issues/28)) ([a9669e6](https://github.com/nimbus-agent/nimbus-vscode/commit/a9669e652ab74f71ffe9dc491fd3c2814fd2df1b))
+
 ## 0.4.0 — 2026-07-18
 
 - **Get Started walkthrough** — a first-run walkthrough (`Nimbus: Open Walkthrough`,
