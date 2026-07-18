@@ -1,7 +1,7 @@
 # Review and Feedback: First-run Walkthrough Implementation Plan
 
 **Date of Review:** 2026-07-17  
-**Plan Reviewed:** [2026-07-17-walkthrough.md](file:///C:/gitrep/nimbus-vscode/docs/superpowers/plans/2026-07-17-walkthrough.md)
+**Plan Reviewed:** [2026-07-17-walkthrough.md](2026-07-17-walkthrough.md)
 
 ---
 

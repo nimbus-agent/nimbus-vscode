@@ -72,9 +72,13 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
   const hydrate = async (sessionId: string, limit: number): Promise<void> => {
     try {
       const r = await deps.client.getSessionTranscript({ sessionId, limit });
+      // A stream may have started while the transcript was loading (the entry
+      // guard only covers the synchronous path). Don't clobber a live turn.
+      if (active !== undefined) return;
       post({ type: "hydrate", turns: r.turns });
     } catch (e) {
       deps.log.warn(`getSessionTranscript failed: ${errMsg(e)}`);
+      if (active !== undefined) return;
       post({ type: "emptyState", sub: "no-transcript" });
     }
   };

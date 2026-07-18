@@ -553,6 +553,45 @@ describe("ChatController", () => {
     await p;
   });
 
+  test("rehydrateIfNeeded aborts if a stream starts while the transcript is loading", async () => {
+    // TOCTOU: the synchronous guard passes (no active stream), then start() sets
+    // `active` during the getSessionTranscript await. The resolved hydrate must
+    // not post over the now-live stream.
+    let releaseTranscript = (): void => undefined;
+    const gate = new Promise<void>((r) => {
+      releaseTranscript = r;
+    });
+    const client: ChatClientLike = {
+      askStream: () => pendingStream("sX").handle,
+      cancelStream: async () => ({ ok: true }),
+      getSessionTranscript: async () => {
+        await gate;
+        return {
+          sessionId: "s",
+          turns: [{ role: "user" as const, text: "old", timestamp: 1 }],
+          hasMore: false,
+        };
+      },
+    };
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(client, {
+        panel,
+        sessionStore: { get: () => "s", set: async () => undefined, clear: async () => undefined },
+      }),
+    );
+    const pRehydrate = ctrl.rehydrateIfNeeded(50); // passes sync guard, awaits transcript
+    await Promise.resolve();
+    const pStart = ctrl.start("hi"); // sets active during the await
+    await Promise.resolve();
+    expect(ctrl.isStreaming()).toBe(true);
+    releaseTranscript();
+    await pRehydrate;
+    expect(postedTypes(posted)).not.toContain("hydrate");
+    await ctrl.stop();
+    await pStart;
+  });
+
   test("rehydrateIfNeeded falls back to emptyState when the transcript fetch fails", async () => {
     const { panel, posted } = capturingPanel();
     const warn = vi.fn();

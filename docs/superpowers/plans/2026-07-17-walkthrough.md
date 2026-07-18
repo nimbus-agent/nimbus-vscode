@@ -89,7 +89,7 @@ In `test/unit/extension.test.ts`, add tests that mirror the existing activation/
 ```
 
 > If the fixture accessor names differ (`fx.commandHandlers` vs `fx.captured.commandHandlers`, the activate call, or the `flush` helper), match the exact shape used by the neighbouring connection/command tests in this same file — do not invent new harness plumbing.
-
+>
 > **Activation-time initialization (review A):** the third test doubles as the "initialized at activation" check — `setContext("nimbus.connected", false)` is asserted for a fixture that *never* reaches `connected`, which can only happen because `connection.onState` fires the listener immediately on subscribe (idle/connecting → `false`) rather than only on a later transition. So a dedicated "initialized before any event" test is redundant; the disconnected case already pins it.
 
 - [ ] **Step 2: Run the tests to verify they fail**

@@ -1,7 +1,7 @@
 # Review and Feedback: First-run Walkthrough — Design
 
 **Date of Review:** 2026-07-17  
-**Spec Reviewed:** [2026-07-17-walkthrough-design.md](file:///C:/gitrep/nimbus-vscode/docs/superpowers/specs/2026-07-17-walkthrough-design.md)
+**Spec Reviewed:** [2026-07-17-walkthrough-design.md](2026-07-17-walkthrough-design.md)
 
 ---
 
