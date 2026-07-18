@@ -82,6 +82,11 @@ export const commands = {
   registerCommand: () => ({ dispose: () => undefined }),
   executeCommand: async () => undefined,
 };
+export const chat = {
+  createChatParticipant: (_id: string, _handler: unknown) => ({
+    dispose: () => undefined,
+  }),
+};
 export const env = {
   openExternal: async () => true,
   isTelemetryEnabled: false,

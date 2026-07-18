@@ -180,6 +180,20 @@
         "category": "Nimbus"
       }
     ],
+    "chatParticipants": [
+      {
+        "id": "nimbus-agent.nimbus",
+        "name": "nimbus",
+        "fullName": "Nimbus",
+        "description": "Ask the local Nimbus agent — grounded in your local index",
+        "isSticky": true,
+        "commands": [
+          { "name": "explain", "description": "Explain the selected code" },
+          { "name": "fix", "description": "Suggest a fix for the selected code" },
+          { "name": "test", "description": "Generate tests for the selected code" }
+        ]
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
