@@ -18,7 +18,8 @@ creates the tag + GitHub Release, which drives publishing.
   Open VSX). The existing `publish.yml` remains the publisher.
 - No commit-message linting / enforcement tooling in this change (the repo already
   follows Conventional Commits by convention; a `commitlint` gate is out of scope,
-  YAGNI).
+  YAGNI). A lighter-weight **PR-title** guard is a recorded optional follow-up —
+  see *Deferred / optional enhancements*.
 - Release Please does **not** own the 0.4.0 release (see Sequencing).
 
 ## Model
@@ -75,6 +76,15 @@ Single package at repo root (no monorepo `node-workspace` plugin):
 - `include-v-in-tag: true` + `include-component-in-tag: false` → tag is exactly
   `vX.Y.Z`, matching `publish.yml`'s `on: push: tags: v*`.
 
+**Lockfile (`bun.lock`):** Release Please's `node` type updates `package.json` (and
+standard npm/yarn/pnpm lockfiles), but this repo uses `bun.lock`, which Release
+Please does not touch. That is fine here: `bun.lock`'s root workspace entry records
+`name` + dependencies but **no `version` field** (verified), so bumping
+`package.json`'s `version` cannot desync it, and `publish.yml`'s
+`bun install --frozen-lockfile` is unaffected. Rollout sanity check: after the
+first Release Please bump, run `bun install --frozen-lockfile` locally to confirm a
+clean, no-change install.
+
 ### New: `.release-please-manifest.json`
 ```json
 { ".": "0.4.0" }
@@ -107,6 +117,13 @@ Create a **fine-grained** Personal Access Token and add it as repo secret
 - Without it, the workflow still opens the release PR (via `github.token`) but the
   tag won't trigger `publish.yml` — a clear, documented failure mode.
 
+**Verify no tag/ruleset restriction blocks the PAT actor.** Branch protection on
+`main` does not cover tags, but a **tag protection rule** or a **repository ruleset**
+that restricts tag creation (or requires signed tags) could make Release Please's
+tag push fail. Before relying on automation, confirm in *Settings → Rules/Tags*
+that the PAT's actor may create `v*` tags (the fine-grained PAT above has no signing
+key, so a "require signed tags" rule would block it).
+
 ## Sequencing / rollout
 
 0.4.0 is already prepped by hand (PR #26) with detailed notes, so ship it the
@@ -115,7 +132,12 @@ current way and start automation from 0.5.0:
 1. Merge PR #26; tag & push `v0.4.0` (manual, one last time) → publishes 0.4.0.
 2. Add the `RELEASE_PLEASE_PAT` secret.
 3. Merge this release-automation PR with `.release-please-manifest.json` at
-   `0.4.0` and `bootstrap-sha` pinned to the v0.4.0 release commit.
+   `0.4.0` and `bootstrap-sha` pinned to the v0.4.0 release commit. Get that SHA
+   with (after step 1, on an up-to-date `main`):
+   ```bash
+   git rev-parse v0.4.0^{commit}   # deref the tag to its commit (works for annotated + lightweight)
+   git branch --contains "$(git rev-parse v0.4.0^{commit})"   # confirm it lists main
+   ```
 4. The next `feat:`/`fix:` merged to `main` makes Release Please open the 0.5.0
    release PR. Merging it publishes 0.5.0 end-to-end — the first fully automated
    release.
@@ -141,5 +163,26 @@ current way and start automation from 0.5.0:
   older sections are left untouched. Cosmetic only.
 - **Squash-merge titles** → Release Please derives the changelog from the PR/commit
   title on `main`. The repo already squash-merges with Conventional-Commit titles,
-  so this is consistent; call it out in `docs/releasing.md`.
-```
+  so this is consistent; call it out in `docs/releasing.md`. A non-conforming title
+  (e.g. `update stuff`) silently produces no version bump / miscategorized notes —
+  see the optional PR-title guard below.
+- **Tag/ruleset restriction** → a tag protection rule, restrictive ruleset, or a
+  "require signed tags" rule can block the PAT actor's tag push, so the release PR
+  merges but nothing publishes. Mitigation: the rollout verification under *Manual
+  step*; symptom is identical to PAT-expiry (release created, no tag/publish).
+
+## Deferred / optional enhancements
+
+These are **not** part of this change (they go beyond "mirror the Nimbus repo,"
+which has neither), but are recorded as easy, well-scoped follow-ups.
+
+- **PR-title validation** (recommended) — a lightweight `pull_request` workflow
+  (e.g. `amannn/action-semantic-pull-request`, ~15 lines) that fails the check when
+  a PR title isn't a valid Conventional Commit. Because the repo squash-merges with
+  the PR title as the `main` commit, this directly protects Release Please's version
+  bump + changelog from a malformed title. Deferred because: the Nimbus repo we're
+  mirroring relies on convention without it, a required title check adds per-PR
+  process friction that's a team-policy call, and it's trivial to add later. Adopt
+  it the first time a bad title slips through — or now, if you'd rather enforce it
+  from the start.
+
