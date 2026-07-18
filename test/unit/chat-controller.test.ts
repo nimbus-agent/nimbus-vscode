@@ -640,6 +640,57 @@ describe("ChatController", () => {
     expect(postedStaleA).toBe(false);
   });
 
+  test("subTaskProgress events post subTask messages, with progress only when present", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () =>
+            streamOf([
+              { type: "subTaskProgress", subTaskId: "t1", status: "running", progress: 0.5 },
+              { type: "subTaskProgress", subTaskId: "t2", status: "queued" },
+              { type: "done", reply: "", sessionId: "" },
+            ]),
+        }),
+        { panel },
+      ),
+    );
+    await ctrl.start("hi");
+    const subTasks = posted.filter((m) => (m as { type: string }).type === "subTask") as Array<{
+      subTaskId: string;
+      status: string;
+      progress?: number;
+    }>;
+    expect(subTasks).toHaveLength(2);
+    expect(subTasks[0]).toEqual({ type: "subTask", subTaskId: "t1", status: "running", progress: 0.5 });
+    expect(subTasks[1]).toEqual({ type: "subTask", subTaskId: "t2", status: "queued" });
+    expect("progress" in (subTasks[1] as object)).toBe(false);
+  });
+
+  test("start() surfaces a synchronous askStream failure as an error message", async () => {
+    const { panel, posted } = capturingPanel();
+    const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () => {
+            throw new Error("ENOENT: nimbus binary not found");
+          },
+        }),
+        { panel, log },
+      ),
+    );
+    await ctrl.start("hi");
+    expect(postedTypes(posted)).toEqual(["userMessage", "error"]);
+    const err = posted.find((m) => (m as { type: string }).type === "error") as
+      | { message?: string }
+      | undefined;
+    expect(err?.message).toContain("couldn't start the request");
+    expect(err?.message).toContain("ENOENT: nimbus binary not found");
+    expect(log.error).toHaveBeenCalledWith(expect.stringContaining("askStream failed to start"));
+    expect(ctrl.isStreaming()).toBe(false);
+  });
+
   test("rehydrateIfNeeded falls back to emptyState when the transcript fetch fails", async () => {
     const { panel, posted } = capturingPanel();
     const warn = vi.fn();

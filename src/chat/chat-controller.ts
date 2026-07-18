@@ -126,6 +126,24 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
     return false;
   };
 
+  // Consume the stream: register it for HITL on the first event, dispatch each
+  // event via handleEvent, and report whether any content arrived (a stream that
+  // ends with none produced no answer). Extracted from start() to keep that
+  // function's cognitive complexity in bounds.
+  const consumeStream = async (handle: AskStreamHandle): Promise<boolean> => {
+    let sawContent = false;
+    let registered = false;
+    for await (const ev of handle) {
+      if (ev.type !== "done") sawContent = true;
+      if (!registered && handle.streamId.length > 0) {
+        deps.registerStreamWithHitl(handle.streamId);
+        registered = true;
+      }
+      if (await handleEvent(ev, handle)) break;
+    }
+    return sawContent;
+  };
+
   return {
     async start(input): Promise<void> {
       if (active !== undefined) {
@@ -144,17 +162,8 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       }
       active = handle;
       post({ type: "userMessage", text: input });
-      let sawContent = false;
       try {
-        let registered = false;
-        for await (const ev of handle) {
-          if (ev.type !== "done") sawContent = true;
-          if (!registered && handle.streamId.length > 0) {
-            deps.registerStreamWithHitl(handle.streamId);
-            registered = true;
-          }
-          if (await handleEvent(ev, handle)) break;
-        }
+        const sawContent = await consumeStream(handle);
         // A stream that ends without any token/error/HITL event produced no
         // answer — common when the Gateway has no working LLM provider. An
         // empty assistant bubble tells the user nothing, so say so explicitly.

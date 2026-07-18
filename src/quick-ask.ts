@@ -38,7 +38,7 @@ export function buildQuickAskPrompt(input: {
 // separators; falls back to the input if there is no separator.
 export function redactPath(filePath: string): string {
   const segments = filePath.split(/[\\/]/);
-  return segments[segments.length - 1] ?? filePath;
+  return segments.at(-1) ?? filePath;
 }
 
 // Extract the reply from an agentInvoke result ({ reply?: string } & Record<...>).

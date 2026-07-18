@@ -1,4 +1,4 @@
-import type { AskStreamHandle, AskStreamOptions } from "@nimbus-dev/client";
+import type { AskStreamHandle, AskStreamOptions, StreamEvent } from "@nimbus-dev/client";
 import { errMsg } from "../logging.js";
 import { redactPath } from "../quick-ask.js";
 import { buildCitations } from "./citations.js";
@@ -43,6 +43,88 @@ async function emitCitations(
   }
 }
 
+// Assemble the askStream options: the cancellation signal, plus the threaded
+// session id and agent override when present.
+function buildStreamOptions(
+  req: ParticipantRequest,
+  deps: ParticipantDeps,
+  signal: AbortSignal,
+): AskStreamOptions {
+  const opts: AskStreamOptions = { signal };
+  if (req.priorSessionId !== undefined && req.priorSessionId.length > 0) {
+    opts.sessionId = req.priorSessionId;
+  }
+  const agentName = deps.agent();
+  if (agentName.length > 0) opts.agent = agentName;
+  return opts;
+}
+
+// Running state threaded through the stream loop: whether any answer content and
+// any token arrived, and the session id captured from the `done` event.
+interface StreamState {
+  sessionId?: string;
+  sawContent: boolean;
+  sawToken: boolean;
+}
+
+// Apply one stream event to the sink, updating `state`. Returns true to stop
+// consuming (a `done` or `error` event). Mirrors chat-controller.ts's taxonomy.
+function handleStreamEvent(
+  ev: StreamEvent,
+  sink: ChatResponseSink,
+  deps: ParticipantDeps,
+  state: StreamState,
+): boolean {
+  if (ev.type !== "done") state.sawContent = true;
+  if (ev.type === "token") {
+    state.sawToken = true;
+    sink.markdown(ev.text);
+    return false;
+  }
+  if (ev.type === "subTaskProgress") {
+    sink.progress(ev.status);
+    return false;
+  }
+  if (ev.type === "hitlBatch") {
+    // Consent is collected out-of-band by the shared HITL modal router (via
+    // registerStreamWithHitl). Just tell the user what's happening.
+    sink.progress("Waiting for your approval…");
+    return false;
+  }
+  if (ev.type === "error") {
+    sink.markdown(`Nimbus ran into a problem: ${ev.message}`);
+    deps.log.error(`participant stream error: ${ev.code}: ${ev.message}`);
+    return true;
+  }
+  // done: render the reply if it wasn't streamed as tokens, and capture the id.
+  if (!state.sawToken && ev.reply.trim().length > 0) {
+    sink.markdown(ev.reply);
+    state.sawContent = true;
+  }
+  if (ev.sessionId.length > 0) state.sessionId = ev.sessionId;
+  return true;
+}
+
+// Consume the stream: register it for HITL on the first event, dispatch each
+// event via handleStreamEvent, and return the accumulated state. Extracted from
+// runParticipantTurn to keep that function's cognitive complexity in bounds.
+async function consumeStream(
+  handle: AskStreamHandle,
+  sink: ChatResponseSink,
+  deps: ParticipantDeps,
+): Promise<StreamState> {
+  const state: StreamState = { sawContent: false, sawToken: false };
+  let registered = false;
+  for await (const ev of handle) {
+    if (!registered && handle.streamId.length > 0) {
+      deps.registerStreamWithHitl(handle.streamId);
+      registered = true;
+    }
+    if (handleStreamEvent(ev, sink, deps, state)) break;
+  }
+  return state;
+}
+
 export async function runParticipantTurn(
   req: ParticipantRequest,
   deps: ParticipantDeps,
@@ -78,12 +160,7 @@ export async function runParticipantTurn(
   const excludeBasename = req.selection !== undefined ? redactPath(req.selection.path) : undefined;
   const citations = emitCitations(client, deps, sink, req.prompt, excludeBasename, ac.signal);
 
-  const opts: AskStreamOptions = {};
-  if (req.priorSessionId !== undefined && req.priorSessionId.length > 0)
-    opts.sessionId = req.priorSessionId;
-  const agentName = deps.agent();
-  if (agentName.length > 0) opts.agent = agentName;
-  opts.signal = ac.signal;
+  const opts = buildStreamOptions(req, deps, ac.signal);
 
   let handle: AskStreamHandle;
   try {
@@ -96,40 +173,10 @@ export async function runParticipantTurn(
     return {};
   }
 
-  let sessionId: string | undefined;
-  let sawContent = false;
-  let sawToken = false;
-  let registered = false;
+  let state: StreamState = { sawContent: false, sawToken: false };
   try {
-    for await (const ev of handle) {
-      if (ev.type !== "done") sawContent = true;
-      if (!registered && handle.streamId.length > 0) {
-        deps.registerStreamWithHitl(handle.streamId);
-        registered = true;
-      }
-      if (ev.type === "token") {
-        sawToken = true;
-        sink.markdown(ev.text);
-      } else if (ev.type === "subTaskProgress") {
-        sink.progress(ev.status);
-      } else if (ev.type === "hitlBatch") {
-        // Consent is collected out-of-band by the shared HITL modal router (via
-        // registerStreamWithHitl). Just tell the user what's happening.
-        sink.progress("Waiting for your approval…");
-      } else if (ev.type === "error") {
-        sink.markdown(`Nimbus ran into a problem: ${ev.message}`);
-        deps.log.error(`participant stream error: ${ev.code}: ${ev.message}`);
-        break;
-      } else if (ev.type === "done") {
-        if (!sawToken && ev.reply.trim().length > 0) {
-          sink.markdown(ev.reply);
-          sawContent = true;
-        }
-        if (ev.sessionId.length > 0) sessionId = ev.sessionId;
-        break;
-      }
-    }
-    if (!sawContent && !ac.signal.aborted) sink.markdown(NO_LLM_NOTICE);
+    state = await consumeStream(handle, sink, deps);
+    if (!state.sawContent && !ac.signal.aborted) sink.markdown(NO_LLM_NOTICE);
   } catch (e) {
     if (!ac.signal.aborted) {
       deps.log.error(`participant: stream failed: ${errMsg(e)}`);
@@ -143,5 +190,5 @@ export async function runParticipantTurn(
   }
 
   await citations;
-  return sessionId !== undefined ? { sessionId } : {};
+  return state.sessionId !== undefined ? { sessionId: state.sessionId } : {};
 }

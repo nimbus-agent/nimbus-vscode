@@ -53,6 +53,21 @@ const state: State = {
   streaming: false,
 };
 
+// Finalize the in-flight turn and append a "Stopped" marker. Extracted from
+// applyMessage's switch to keep that function's cognitive complexity in bounds.
+function applyCancelled(r: Refs): void {
+  if (!state.streaming) return;
+  const streamingTurn = r.transcript.querySelector("article.turn-streaming");
+  finalizeStreamingTurn(r);
+  if (streamingTurn !== null) {
+    const marker = document.createElement("div");
+    marker.className = "turn-stopped-marker";
+    marker.textContent = "⏹ Stopped";
+    streamingTurn.appendChild(marker);
+  }
+  setStreaming(r, false);
+}
+
 function applyMessage(r: Refs, msg: ExtensionToWebview): void {
   switch (msg.type) {
     case "reset":
@@ -124,19 +139,9 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
       finalizeStreamingTurn(r);
       setStreaming(r, false);
       return;
-    case "cancelled": {
-      if (!state.streaming) return;
-      const streamingTurn = r.transcript.querySelector("article.turn-streaming");
-      finalizeStreamingTurn(r);
-      if (streamingTurn !== null) {
-        const marker = document.createElement("div");
-        marker.className = "turn-stopped-marker";
-        marker.textContent = "⏹ Stopped";
-        streamingTurn.appendChild(marker);
-      }
-      setStreaming(r, false);
+    case "cancelled":
+      applyCancelled(r);
       return;
-    }
     case "error":
       finalizeStreamingTurn(r);
       {
