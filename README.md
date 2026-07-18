@@ -3,6 +3,7 @@
 Local-first AI agent for the editor. Ask and search against your private [Nimbus](https://github.com/nimbus-agent/Nimbus) index — all running on your machine.
 
 - **Ask** — chat with the Nimbus agent in a side panel; responses stream token-by-token, and a **Stop** button cancels a long generation cleanly while keeping the partial reply.
+- **`@nimbus` Chat participant** — talk to Nimbus right in VS Code's built-in Chat view: `/explain`, `/fix`, and `/test` operate on your selection (or file), free-form questions can pull in `#file` context, answers stream token-by-token, and replies include clickable citations back to local-index sources.
 - **Quick Ask** — ask about a selection (or the whole file) and get a one-shot answer in a read-only tab, without opening the chat panel.
 - **Search** — live ranked (semantic + keyword) search over your local Nimbus index; results update as you type, and selecting one opens its source (or notifies you when it has none). **Search Selection** seeds it from the editor.
 - **Find related** — from a selection or an Index sidebar item, pivot to the local knowledge around it (ranked search that excludes the item itself).
