@@ -56,12 +56,12 @@ This plan produces the release-automation files on a branch. It is **prepared no
 
 - [ ] **Step 2: Create `.release-please-config.json`**
 
-`bootstrap-sha` is the current `main` tip (a real commit — the walkthrough merge). Once `v0.4.0` is tagged, the tag governs the "last release" and this only bounds the first history scan; Step 6 of Task 4 re-pins it to the v0.4.0 commit before the automation PR merges.
+`bootstrap-sha` is the **v0.4.0 release commit** on `main` (the last released version, matching the manifest). It bounds the first history scan; once `v0.4.0` is tagged, the tag governs the "last release". Task 4 Step 3 shows how to obtain it (`git rev-parse v0.4.0^{commit}`).
 
 ```json
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
-  "bootstrap-sha": "eec2112b82cf6c09aa5e66769179ac58e1c6dc8c",
+  "bootstrap-sha": "275870ab8e71b4381f8697f3f1ef1aa83ff7aef9",
   "packages": {
     ".": {
       "release-type": "node",
@@ -99,6 +99,7 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      issues: write # release-please creates its autorelease:* labels on first run
     steps:
       - name: Harden Runner
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -291,7 +292,7 @@ Repository secrets:
 
 | Secret | What | Why |
 | --- | --- | --- |
-| `RELEASE_PLEASE_PAT` | Fine-grained PAT — **Contents: RW** + **Pull requests: RW**, this repo only | Release Please pushes the tag as this identity so `publish.yml` fires. With only the default `GITHUB_TOKEN`, the release PR still opens but the tag never triggers publishing. |
+| `RELEASE_PLEASE_PAT` | Fine-grained PAT — **Contents: RW**, **Pull requests: RW**, **Issues: RW**, this repo only | Release Please pushes the tag as this identity so `publish.yml` fires (with only the default `GITHUB_TOKEN`, the release PR opens but the tag never triggers publishing). Issues RW lets it create the `autorelease:*` labels on the first run. |
 | `VSCE_PAT` | Azure DevOps PAT, **Marketplace (Manage)**, publisher `nimbus-agent` | Marketplace publish (in the `release` environment). |
 | `OVSX_PAT` | Open VSX token, namespace `nimbus-agent` | Open VSX publish (in the `release` environment). |
 
@@ -309,7 +310,7 @@ but no auto notes (Release Please normally writes those).
 
 | Symptom | Cause / fix |
 | --- | --- |
-| Release PR opens, but no tag/publish after merge | `RELEASE_PLEASE_PAT` missing or expired → the tag was created by `GITHUB_TOKEN` (or not at all) and didn't trigger `publish.yml`. Rotate the PAT; re-run `release-please` (or push a lightweight `vX.Y.Z` tag manually to trigger publish for the already-merged version). |
+| Release PR opens, but no tag/publish after merge | `RELEASE_PLEASE_PAT` missing or expired → the tag was created by `GITHUB_TOKEN` (or not at all) and didn't trigger `publish.yml`. Rotate the PAT, then recover by tag state: **no `vX.Y.Z` tag exists** → re-run `release-please` (it creates the tag → publish fires), or push the tag from your machine (`git tag vX.Y.Z <sha> && git push origin vX.Y.Z`). **Tag already exists** (created by `GITHUB_TOKEN`) → re-pushing it is a no-op and won't re-trigger; delete and recreate it from your machine (`git push origin :vX.Y.Z` then `git tag vX.Y.Z <sha> && git push origin vX.Y.Z`), or publish the built `.vsix` by hand (`vsce publish` / `ovsx publish`). |
 | No release PR appears after merging `feat:`/`fix:` PRs | PR titles weren't Conventional Commits (nothing to release), or `release-please` didn't run — check the Actions tab. |
 | Tag push rejected | A tag protection rule / ruleset (or required signed tags) blocks the PAT actor. Adjust the rule or exempt the actor. |
 | `publish.yml` fails at "Resolve version from tag" | Tag isn't `vMAJOR.MINOR.PATCH` (optionally `-prerelease`). |
@@ -354,7 +355,8 @@ scripted here. Do them in order. **Do not merge the release-automation PR (Tasks
 
 - [ ] **Step 2: Create the `RELEASE_PLEASE_PAT` secret.** GitHub → *Settings →
   Developer settings → Fine-grained tokens*: this repo only, **Contents: Read and
-  write** + **Pull requests: Read and write**. Add it as a repo secret named
+  write** + **Pull requests: Read and write** + **Issues: Read and write** (the
+  last lets release-please create its `autorelease:*` labels). Add it as a repo secret named
   `RELEASE_PLEASE_PAT`. Confirm no tag protection rule blocks it.
 
 - [ ] **Step 3: Re-pin `bootstrap-sha` to the v0.4.0 commit** (in the

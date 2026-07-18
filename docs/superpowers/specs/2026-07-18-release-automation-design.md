@@ -120,7 +120,8 @@ Create a **fine-grained** Personal Access Token and add it as repo secret
 `RELEASE_PLEASE_PAT`:
 - Repository access: this repo only.
 - Permissions: **Contents: Read and write** (create tags/releases/version-bump
-  commits) and **Pull requests: Read and write** (open/update the release PR).
+  commits), **Pull requests: Read and write** (open/update the release PR), and
+  **Issues: Read and write** (create the `autorelease:*` labels on the first run).
 - Without it, the workflow still opens the release PR (via `github.token`) but the
   tag won't trigger `publish.yml` — a clear, documented failure mode.
 

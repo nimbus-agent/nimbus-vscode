@@ -36,7 +36,7 @@ Repository secrets:
 
 | Secret | What | Why |
 | --- | --- | --- |
-| `RELEASE_PLEASE_PAT` | Fine-grained PAT — **Contents: RW** + **Pull requests: RW**, this repo only | Release Please pushes the tag as this identity so `publish.yml` fires. With only the default `GITHUB_TOKEN`, the release PR still opens but the tag never triggers publishing. |
+| `RELEASE_PLEASE_PAT` | Fine-grained PAT — **Contents: RW**, **Pull requests: RW**, **Issues: RW**, this repo only | Release Please pushes the tag as this identity so `publish.yml` fires (with only the default `GITHUB_TOKEN`, the release PR opens but the tag never triggers publishing). Issues RW lets it create the `autorelease:*` labels on the first run. |
 | `VSCE_PAT` | Azure DevOps PAT, **Marketplace (Manage)**, publisher `nimbus-agent` | Marketplace publish (in the `release` environment). |
 | `OVSX_PAT` | Open VSX token, namespace `nimbus-agent` | Open VSX publish (in the `release` environment). |
 
@@ -54,7 +54,7 @@ but no auto notes (Release Please normally writes those).
 
 | Symptom | Cause / fix |
 | --- | --- |
-| Release PR opens, but no tag/publish after merge | `RELEASE_PLEASE_PAT` missing or expired → the tag was created by `GITHUB_TOKEN` (or not at all) and didn't trigger `publish.yml`. Rotate the PAT; re-run `release-please` (or push a lightweight `vX.Y.Z` tag manually to trigger publish for the already-merged version). |
+| Release PR opens, but no tag/publish after merge | `RELEASE_PLEASE_PAT` missing or expired → the tag was created by `GITHUB_TOKEN` (or not at all) and didn't trigger `publish.yml`. Rotate the PAT, then recover by tag state: **no `vX.Y.Z` tag exists** → re-run `release-please` (it creates the tag → publish fires), or push the tag from your machine (`git tag vX.Y.Z <sha> && git push origin vX.Y.Z`). **Tag already exists** (created by `GITHUB_TOKEN`) → re-pushing it is a no-op and won't re-trigger; delete and recreate it from your machine (`git push origin :vX.Y.Z` then `git tag vX.Y.Z <sha> && git push origin vX.Y.Z`), or publish the built `.vsix` by hand (`vsce publish` / `ovsx publish`). |
 | No release PR appears after merging `feat:`/`fix:` PRs | PR titles weren't Conventional Commits (nothing to release), or `release-please` didn't run — check the Actions tab. |
 | Tag push rejected | A tag protection rule / ruleset (or required signed tags) blocks the PAT actor. Adjust the rule or exempt the actor. |
 | `publish.yml` fails at "Resolve version from tag" | Tag isn't `vMAJOR.MINOR.PATCH` (optionally `-prerelease`). |
