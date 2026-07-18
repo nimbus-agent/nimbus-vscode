@@ -1,11 +1,21 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 — 2026-07-18
 
 - **Get Started walkthrough** — a first-run walkthrough (`Nimbus: Open Walkthrough`,
   also on the Welcome page) that guides you through connecting the Gateway and
   trying Ask, Search, and Quick Ask, then points at the sidebar and egress ledger.
   The "Connect the Gateway" step checks itself off on a real connection.
+- **Fix: the chat panel now renders in current VS Code.** The webview dropped
+  every extension→webview message (blank panel) because its message guard required
+  `ev.source === window.parent`, but VS Code's MessageChannel transport delivers
+  host messages with a different source. It now trusts the non-spoofable
+  `vscode-webview://` origin instead.
+- **Ask surfaces failures instead of failing silently** — when the Gateway can't
+  answer (e.g. no LLM provider configured / invalid API key), the panel now shows a
+  clear, actionable message rather than nothing (a thrown stream error or an
+  empty completion used to leave a blank turn).
+- **Fix: broken install-guide link** (`nimbus-agent.dev/install` → `…/user-guide/install/`).
 
 ## 0.3.0 — 2026-07-17
 

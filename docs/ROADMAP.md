@@ -38,23 +38,16 @@ rough T-shirt size (S / M / L).
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
+| **Get Started walkthrough** — first-run walkthrough (install → connect Gateway → try Ask/Search/Quick Ask), on the Welcome page and via `Nimbus: Open Walkthrough` | *VS Code Walkthroughs API — no RPC* |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
 
 ---
 
-## Phase 1 — Quick wins & onboarding
+## Phase 1 — Quick wins & onboarding — ✅ complete
 
-Small, high-leverage items on RPCs we already consume (or that exist unused in
-`0.4.0`), plus the onboarding that drives adoption. Nothing here needs the SDK to
-change.
-
-| Feature | Value | Client RPC | Effort |
-| --- | --- | --- | --- |
-| First-run **Walkthrough** (install → connect Gateway → try Ask/Search/Quick-ask) | Turns a fresh install into a working setup | *VS Code Walkthroughs API — no RPC* | M |
-
-> The other four Phase 1 items — **egress status-bar badge**, **Stop** affordance,
-> **connection troubleshooter**, and **Find related** — shipped in `0.3.0`; see
-> **Already shipped** above.
+All Phase 1 items have shipped: the **egress status-bar badge**, **Stop**
+affordance, **connection troubleshooter**, and **Find related** in `0.3.0`, and the
+first-run **Get Started walkthrough** in `0.4.0`. See **Already shipped** above.
 
 ## Phase 2 — Differentiators & reach
 
