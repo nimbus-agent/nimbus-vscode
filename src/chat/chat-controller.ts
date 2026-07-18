@@ -64,21 +64,27 @@ function buildSubTaskMessage(ev: {
 
 export function createChatController(deps: ChatControllerDeps): ChatController {
   let active: AskStreamHandle | undefined;
+  // Bumped whenever the display intent changes (start / resume / newConversation
+  // / rehydrate). An in-flight hydrate captures the generation at request time
+  // and discards its result if a newer intent superseded it while awaiting — so
+  // a slow getSessionTranscript can't clobber a session the user has since
+  // switched away from, and a started stream invalidates a pending hydrate.
+  let generation = 0;
 
   const post = (m: ExtensionToWebview): void => {
     void deps.panel.postMessage(m);
   };
 
   const hydrate = async (sessionId: string, limit: number): Promise<void> => {
+    const gen = generation;
+    const superseded = (): boolean => active !== undefined || gen !== generation;
     try {
       const r = await deps.client.getSessionTranscript({ sessionId, limit });
-      // A stream may have started while the transcript was loading (the entry
-      // guard only covers the synchronous path). Don't clobber a live turn.
-      if (active !== undefined) return;
+      if (superseded()) return;
       post({ type: "hydrate", turns: r.turns });
     } catch (e) {
       deps.log.warn(`getSessionTranscript failed: ${errMsg(e)}`);
-      if (active !== undefined) return;
+      if (superseded()) return;
       post({ type: "emptyState", sub: "no-transcript" });
     }
   };
@@ -125,6 +131,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       if (active !== undefined) {
         throw new Error("Stream in progress; click Stop or wait for it to finish.");
       }
+      generation += 1; // a new live turn supersedes any in-flight hydrate
       const opts = buildAskStreamOptions(deps.sessionStore, deps.agent);
       let handle: AskStreamHandle;
       try {
@@ -188,6 +195,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await handle.cancel();
     },
     async newConversation(): Promise<void> {
+      generation += 1; // clearing the conversation supersedes any in-flight hydrate
       if (active !== undefined) {
         const handle = active;
         active = undefined;
@@ -202,6 +210,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       // would post emptyState/hydrate and clobber the buffered conversation the
       // stream just delivered. Leave the active stream's turns intact.
       if (active !== undefined) return;
+      generation += 1;
       const sid = deps.sessionStore.get();
       if (sid === undefined) {
         post({ type: "emptyState", sub: "no-transcript" });
@@ -210,6 +219,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await hydrate(sid, limit);
     },
     async resume(sessionId, limit): Promise<void> {
+      generation += 1; // switching sessions supersedes any in-flight hydrate
       if (active !== undefined) {
         const handle = active;
         active = undefined;

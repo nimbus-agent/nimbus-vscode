@@ -592,6 +592,54 @@ describe("ChatController", () => {
     await pStart;
   });
 
+  test("a stale resume transcript does not overwrite a newer resumed session", async () => {
+    // Two resume()s race: resume("A") is slow to load; resume("B") starts before
+    // A resolves. Both pass the active guard (resume clears `active`), so A's
+    // late transcript must be invalidated by session generation, not posted.
+    let releaseA = (): void => undefined;
+    let releaseB = (): void => undefined;
+    const gateA = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const gateB = new Promise<void>((r) => {
+      releaseB = r;
+    });
+    const client: ChatClientLike = {
+      askStream: () => pendingStream().handle,
+      cancelStream: async () => ({ ok: true }),
+      getSessionTranscript: async ({ sessionId }) => {
+        await (sessionId === "A" ? gateA : gateB);
+        return {
+          sessionId,
+          turns: [{ role: "user" as const, text: `turns-${sessionId}`, timestamp: 1 }],
+          hasMore: false,
+        };
+      },
+    };
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(client, {
+        panel,
+        sessionStore: { get: () => undefined, set: async () => undefined, clear: async () => undefined },
+      }),
+    );
+    const pA = ctrl.resume("A", 50);
+    await Promise.resolve();
+    await Promise.resolve();
+    const pB = ctrl.resume("B", 50);
+    await Promise.resolve();
+    await Promise.resolve();
+    releaseB();
+    await pB;
+    releaseA();
+    await pA;
+    const hydrates = posted.filter((m) => (m as { type: string }).type === "hydrate") as Array<{
+      turns: Array<{ text: string }>;
+    }>;
+    const postedStaleA = hydrates.some((h) => h.turns.some((t) => t.text === "turns-A"));
+    expect(postedStaleA).toBe(false);
+  });
+
   test("rehydrateIfNeeded falls back to emptyState when the transcript fetch fails", async () => {
     const { panel, posted } = capturingPanel();
     const warn = vi.fn();
