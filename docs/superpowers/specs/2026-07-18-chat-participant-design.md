@@ -104,13 +104,30 @@ Plus:
 
 ### Narrow interfaces (sketch)
 
+The authoritative source is [`participant-types.ts`](../../../src/chat-participant/participant-types.ts);
+this is an illustrative sketch kept in sync with it, not a spec that overrides it.
+
 ```ts
-// participant-types.ts (illustrative — finalised during implementation)
-export interface ChatRequestLike {
-  prompt: string;
-  command?: string;                 // "explain" | "fix" | "test" | undefined
-  references: ReadonlyArray<{ id: string; value: unknown }>;
-  priorSessionId?: string;          // read from the last response turn's ChatResult.metadata; undefined = new conversation
+// participant-types.ts (illustrative sketch — see the file itself for the source of truth)
+
+// An attached code file — an explicit #file reference (free-form) or the active
+// selection/whole file (slash commands). `path` is the REAL local path:
+// redacted before it is sent to the Gateway, and used to self-exclude the active
+// file from citations.
+export interface AttachedFile {
+  path: string;
+  languageId: string;
+  code: string;
+}
+
+export type ParticipantCommand = "explain" | "fix" | "test";
+
+export interface ParticipantRequest {
+  prompt: string;                   // user free text (may be empty for a bare slash command)
+  command?: ParticipantCommand;
+  attachments: AttachedFile[];      // resolved #file refs (free-form turns)
+  selection?: AttachedFile;         // active selection / whole file (slash-command turns)
+  priorSessionId?: string;          // from the prior turn's ChatResult.metadata
 }
 
 // A citation carries the REAL local target so VS Code can open it on click, plus
@@ -130,31 +147,32 @@ export interface ChatResponseSink {
   button(title: string, command: string, args?: unknown[]): void; // adapter -> response.button({ command, title, arguments })
 }
 
-// The pure handler returns the resolved session id; the adapter maps it onto
-// ChatResult.metadata so the next turn in this conversation can thread it.
-export interface ParticipantResult {
-  sessionId?: string;
-}
-
 export interface CancellationLike {
-  isCancelled: boolean;
-  onCancelled(cb: () => void): void;
-}
-
-export interface ParticipantDeps {
-  client: () => ParticipantClientLike | undefined;   // undefined = disconnected
-  activeEditor: () => { code: string; filePath: string; languageId: string; hasSelection: boolean } | undefined;
-  registerStreamWithHitl(streamId: string): void;
-  unregisterStreamWithHitl(streamId: string): void;
-  agent: () => string;                               // askAgent() setting
-  citationLimit: number;                             // small cap, e.g. 5
-  reconnectCommand: string;                          // command id for the disconnected button
-  log: Logger;
+  readonly isCancelled: boolean;
+  // Returns a disposable so the handler can unsubscribe in its finally block —
+  // a turn that completes without cancelling must not leak the listener.
+  onCancelled(cb: () => void): { dispose(): void };
 }
 
 export interface ParticipantClientLike {
   askStream(input: string, opts?: AskStreamOptions): AskStreamHandle;
   searchRanked(params?: RankedSearchParams): Promise<RankedSearchItem[]>;
+}
+
+export interface ParticipantDeps {
+  client(): ParticipantClientLike | undefined; // undefined = disconnected
+  registerStreamWithHitl(streamId: string): void;
+  unregisterStreamWithHitl(streamId: string): void;
+  agent(): string;                             // askAgent() setting; "" = omit
+  citationLimit: number;                       // small cap, e.g. 5
+  reconnectCommand: string;                    // e.g. "nimbus.troubleshootConnection"
+  log: Logger;
+}
+
+// The pure handler returns the resolved session id; the adapter maps it onto
+// ChatResult.metadata so the next turn in this conversation can thread it.
+export interface ParticipantResult {
+  sessionId?: string;
 }
 ```
 

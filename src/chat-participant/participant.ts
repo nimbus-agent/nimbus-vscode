@@ -24,11 +24,13 @@ async function emitCitations(
   sink: ChatResponseSink,
   query: string,
   excludeBasename: string | undefined,
+  signal: AbortSignal,
 ): Promise<void> {
   const q = query.trim();
   if (q.length === 0) return;
   try {
     const rows = await client.searchRanked({ name: q, limit: deps.citationLimit });
+    if (signal.aborted) return;
     const citationOpts =
       excludeBasename !== undefined
         ? { excludeBasename, limit: deps.citationLimit }
@@ -62,26 +64,25 @@ export async function runParticipantTurn(
     return {};
   }
 
-  // Start citations WITHOUT awaiting — they resolve in parallel with the stream
-  // so the first token is never delayed. Await it at the end so late references
-  // still land before the turn completes.
-  const excludeBasename = req.selection !== undefined ? redactPath(req.selection.path) : undefined;
-  // Best-effort and intentionally not tied to `ac.signal`/cancellation: on cancel it
-  // simply resolves on its own, and a late sink.citation() after cancellation is harmless.
-  const citations = emitCitations(client, deps, sink, req.prompt, excludeBasename);
-
-  const opts: AskStreamOptions = {};
-  if (req.priorSessionId !== undefined && req.priorSessionId.length > 0)
-    opts.sessionId = req.priorSessionId;
-  const agentName = deps.agent();
-  if (agentName.length > 0) opts.agent = agentName;
-
   const ac = new AbortController();
   // Track the cancellation subscription so it is disposed on every exit path — a
   // turn that finishes without being cancelled must not leak the listener.
   let cancelSub: { dispose(): void } | undefined;
   if (cancel.isCancelled) ac.abort();
   else cancelSub = cancel.onCancelled(() => ac.abort());
+
+  // Start citations WITHOUT awaiting — they resolve in parallel with the stream
+  // so the first token is never delayed. Await it at the end so late references
+  // still land before the turn completes. Guarded by `ac.signal` so a cancelled
+  // turn never emits a late citation chip.
+  const excludeBasename = req.selection !== undefined ? redactPath(req.selection.path) : undefined;
+  const citations = emitCitations(client, deps, sink, req.prompt, excludeBasename, ac.signal);
+
+  const opts: AskStreamOptions = {};
+  if (req.priorSessionId !== undefined && req.priorSessionId.length > 0)
+    opts.sessionId = req.priorSessionId;
+  const agentName = deps.agent();
+  if (agentName.length > 0) opts.agent = agentName;
   opts.signal = ac.signal;
 
   let handle: AskStreamHandle;
@@ -97,6 +98,7 @@ export async function runParticipantTurn(
 
   let sessionId: string | undefined;
   let sawContent = false;
+  let sawToken = false;
   let registered = false;
   try {
     for await (const ev of handle) {
@@ -106,6 +108,7 @@ export async function runParticipantTurn(
         registered = true;
       }
       if (ev.type === "token") {
+        sawToken = true;
         sink.markdown(ev.text);
       } else if (ev.type === "subTaskProgress") {
         sink.progress(ev.status);
@@ -118,16 +121,22 @@ export async function runParticipantTurn(
         deps.log.error(`participant stream error: ${ev.code}: ${ev.message}`);
         break;
       } else if (ev.type === "done") {
+        if (!sawToken && ev.reply.trim().length > 0) {
+          sink.markdown(ev.reply);
+          sawContent = true;
+        }
         if (ev.sessionId.length > 0) sessionId = ev.sessionId;
         break;
       }
     }
-    if (!sawContent) sink.markdown(NO_LLM_NOTICE);
+    if (!sawContent && !ac.signal.aborted) sink.markdown(NO_LLM_NOTICE);
   } catch (e) {
-    deps.log.error(`participant: stream failed: ${errMsg(e)}`);
-    sink.markdown(
-      `Nimbus ran into a problem answering: ${errMsg(e)}. If that mentions a missing model or invalid API key, set up an LLM provider in your Gateway and try again.`,
-    );
+    if (!ac.signal.aborted) {
+      deps.log.error(`participant: stream failed: ${errMsg(e)}`);
+      sink.markdown(
+        `Nimbus ran into a problem answering: ${errMsg(e)}. If that mentions a missing model or invalid API key, set up an LLM provider in your Gateway and try again.`,
+      );
+    }
   } finally {
     if (handle.streamId.length > 0) deps.unregisterStreamWithHitl(handle.streamId);
     cancelSub?.dispose();

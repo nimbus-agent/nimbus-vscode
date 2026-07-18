@@ -7,13 +7,31 @@ const COMMAND_TEMPLATES: Record<ParticipantCommand, string> = {
   test: "Write focused unit tests for the following code, following the project's existing test framework and conventions.",
 };
 
-// A fenced code block headed by the redacted file path + language, clamped to the
-// shared quick-ask size cap so a single turn can't ship an unbounded payload.
-function codeBlock(file: AttachedFile): string {
-  const { code, truncated } = clampContext(file.code, QUICK_ASK_MAX_CONTEXT_CHARS);
-  const suffix = truncated ? " (truncated)" : "";
-  const header = `File: ${redactPath(file.path)} (${file.languageId})${suffix}`;
-  return `${header}\n\`\`\`${file.languageId}\n${code}\n\`\`\``;
+// Total code-content budget for a single turn, shared across every
+// attachment/selection block — bounds the TOTAL payload regardless of how many
+// files are attached (a single file is still clamped per-file below this cap).
+export const PARTICIPANT_MAX_TOTAL_CONTEXT_CHARS = QUICK_ASK_MAX_CONTEXT_CHARS;
+
+// Render fenced, path-redacted code blocks for `files` against a shared running
+// budget: each file is clamped to whatever remains (never more than the
+// per-file cap), and once the budget is exhausted no further blocks are added.
+function budgetedBlocks(files: AttachedFile[], totalBudget: number): string[] {
+  const blocks: string[] = [];
+  let remaining = totalBudget;
+  for (const file of files) {
+    if (file.code.trim().length === 0) continue;
+    if (remaining <= 0) break;
+    const { code, truncated } = clampContext(
+      file.code,
+      Math.min(remaining, QUICK_ASK_MAX_CONTEXT_CHARS),
+    );
+    if (code.trim().length === 0) continue;
+    remaining -= code.length;
+    const suffix = truncated ? " (truncated)" : "";
+    const header = `File: ${redactPath(file.path)} (${file.languageId})${suffix}`;
+    blocks.push(`${header}\n\`\`\`${file.languageId}\n${code}\n\`\`\``);
+  }
+  return blocks;
 }
 
 // Build the agent prompt. Slash commands wrap the active selection in a
@@ -26,10 +44,12 @@ export function buildParticipantPrompt(req: ParticipantRequest): string {
     const instruction = COMMAND_TEMPLATES[req.command];
     const head = userText.length > 0 ? `${instruction}\n\n${userText}` : instruction;
     if (req.selection === undefined || req.selection.code.trim().length === 0) return head;
-    return `${head}\n\n${codeBlock(req.selection)}`;
+    const selectionBlocks = budgetedBlocks([req.selection], PARTICIPANT_MAX_TOTAL_CONTEXT_CHARS);
+    if (selectionBlocks.length === 0) return head;
+    return `${head}\n\n${selectionBlocks[0]}`;
   }
 
-  const blocks = req.attachments.filter((a) => a.code.trim().length > 0).map(codeBlock);
+  const blocks = budgetedBlocks(req.attachments, PARTICIPANT_MAX_TOTAL_CONTEXT_CHARS);
   if (blocks.length === 0) return userText;
   return [userText, ...blocks].filter((s) => s.length > 0).join("\n\n");
 }

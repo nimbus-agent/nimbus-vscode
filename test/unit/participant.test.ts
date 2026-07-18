@@ -237,4 +237,74 @@ describe("runParticipantTurn", () => {
     expect(askStream).not.toHaveBeenCalled();
     expect(f.md.join(" ")).toMatch(/ask me|\/explain/i);
   });
+
+  test("a done event with only a reply (no tokens) renders the reply, not the no-LLM notice", async () => {
+    const f = fakeSink();
+    const client = fakeClient({
+      askStream: () => streamOf([{ type: "done", reply: "the whole answer", sessionId: "s" }]),
+    });
+    await runParticipantTurn(req(), deps({ client: () => client }), f.sink, noCancel);
+    expect(f.md.join("")).toContain("the whole answer");
+    expect(f.md.join(" ")).not.toMatch(/no answer|LLM provider/i);
+  });
+
+  test("a subTaskProgress event reports its status string", async () => {
+    const f = fakeSink();
+    const client = fakeClient({
+      askStream: () =>
+        streamOf([
+          { type: "subTaskProgress", subTaskId: "t1", status: "Searching the index…" },
+          { type: "done", reply: "ok", sessionId: "s" },
+        ]),
+    });
+    await runParticipantTurn(req(), deps({ client: () => client }), f.sink, noCancel);
+    expect(f.progress).toContain("Searching the index…");
+  });
+
+  test("a hitlBatch event reports the waiting-for-approval message", async () => {
+    const f = fakeSink();
+    const client = fakeClient({
+      askStream: () =>
+        streamOf([
+          { type: "hitlBatch", requestId: "r1", prompt: "allow?", details: {} },
+          { type: "done", reply: "ok", sessionId: "s" },
+        ]),
+    });
+    await runParticipantTurn(req(), deps({ client: () => client }), f.sink, noCancel);
+    expect(f.progress).toContain("Waiting for your approval…");
+  });
+
+  test("askStream throwing synchronously at start surfaces the couldn't-start message", async () => {
+    const f = fakeSink();
+    const client = fakeClient({
+      askStream: () => {
+        throw new Error("boom");
+      },
+    });
+    await runParticipantTurn(req(), deps({ client: () => client }), f.sink, noCancel);
+    expect(f.md.join(" ")).toContain("couldn't start the request");
+  });
+
+  test("cancellation suppresses the error message when the iterator throws", async () => {
+    const f = fakeSink();
+    const alreadyCancelled: CancellationLike = {
+      isCancelled: true,
+      onCancelled: () => ({ dispose: () => undefined }),
+    };
+    const throwing = {
+      streamId: "s1",
+      cancel: vi.fn(async () => undefined),
+      [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
+        return {
+          async next(): Promise<IteratorResult<StreamEvent>> {
+            throw new Error("aborted mid-stream");
+          },
+        };
+      },
+    } as unknown as AskStreamHandle;
+    const client = fakeClient({ askStream: () => throwing });
+    const result = await runParticipantTurn(req(), deps({ client: () => client }), f.sink, alreadyCancelled);
+    expect(f.md.join(" ")).not.toMatch(/ran into a problem/);
+    expect(result).toEqual({});
+  });
 });

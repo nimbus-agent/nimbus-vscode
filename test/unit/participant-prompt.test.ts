@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildParticipantPrompt } from "../../src/chat-participant/prompt.js";
+import { buildParticipantPrompt, PARTICIPANT_MAX_TOTAL_CONTEXT_CHARS } from "../../src/chat-participant/prompt.js";
 import type { ParticipantRequest } from "../../src/chat-participant/participant-types.js";
 
 function req(over: Partial<ParticipantRequest>): ParticipantRequest {
@@ -57,5 +57,24 @@ describe("buildParticipantPrompt", () => {
     );
     expect(out).toContain("(truncated)");
     expect(out.length).toBeLessThan(big.length); // clamped below the raw size
+  });
+
+  test("multiple oversized attachments share one total budget, not one cap each", () => {
+    const big = "x".repeat(40_000);
+    const out = buildParticipantPrompt(
+      req({
+        prompt: "q",
+        attachments: [
+          { path: "a.ts", languageId: "typescript", code: big },
+          { path: "b.ts", languageId: "typescript", code: big },
+          { path: "c.ts", languageId: "typescript", code: big },
+        ],
+      }),
+    );
+    // 3 * 40k = 120k; a naive per-file cap would allow up to 3 * 50k = 150k.
+    // The shared budget must keep the total well under that.
+    expect(out.length).toBeLessThan(60_000);
+    expect(out.length).toBeLessThan(PARTICIPANT_MAX_TOTAL_CONTEXT_CHARS + 5_000);
+    expect(out).toContain("(truncated)");
   });
 });
