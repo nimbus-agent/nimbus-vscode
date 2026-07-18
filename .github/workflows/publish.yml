@@ -143,10 +143,12 @@ jobs:
           name: nimbus-vsix-${{ needs.publish.outputs.version }}
           path: dist-vsix
 
-      - name: Upload .vsix to GitHub Release
+      - name: Attach .vsix to the GitHub Release
+        # Release Please already created the release with changelog-derived notes;
+        # only attach the packaged .vsix, don't overwrite its title/body. (For a
+        # manual tag with no pre-existing release, this creates a bare release with
+        # just the asset — the expected exception now that releases are automated.)
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
         with:
           files: dist-vsix/nimbus-${{ needs.publish.outputs.version }}.vsix
           tag_name: ${{ github.ref_name }}
-          name: VS Code extension ${{ needs.publish.outputs.version }}
-          generate_release_notes: true
