@@ -16,10 +16,9 @@ creates the tag + GitHub Release, which drives publishing.
 
 - No change to *what* gets published or *how* (`.vsix` → VS Code Marketplace +
   Open VSX). The existing `publish.yml` remains the publisher.
-- No commit-message linting / enforcement tooling in this change (the repo already
-  follows Conventional Commits by convention; a `commitlint` gate is out of scope,
-  YAGNI). A lighter-weight **PR-title** guard is a recorded optional follow-up —
-  see *Deferred / optional enhancements*.
+- No local `commitlint`/git-hook tooling (YAGNI). A CI **PR-title** guard *is*
+  included (see Components) — the repo squash-merges, so the PR title is the commit
+  Release Please reads, and it's worth protecting from a malformed title.
 - Release Please does **not** own the 0.4.0 release (see Sequencing).
 
 ## Model
@@ -101,6 +100,14 @@ only attach the `.vsix` asset to the existing release — drop `name` and
 the existing release in place, so the asset lands on Release Please's release
 without clobbering its title/body. No other `publish.yml` change.
 
+### New: `.github/workflows/pr-title-lint.yml`
+A `pull_request` workflow (`amannn/action-semantic-pull-request`, SHA-pinned,
+harden-runner, `ubuntu-24.04`) that fails when a PR title isn't a Conventional
+Commit. Because the repo squash-merges, the PR title is what lands on `main` and
+what Release Please parses — this stops a malformed title from silently producing
+no release / miscategorized notes. Default type set, no required scope. (The same
+guard is being added to the Nimbus main repo, which had the same gap.)
+
 ### Edit: `docs/releasing.md`
 Rewrite from the manual "update CHANGELOG, tag, push" procedure to the automated
 flow: land Conventional-Commit PRs → review/merge the Release Please PR → publish
@@ -173,16 +180,9 @@ current way and start automation from 0.5.0:
 
 ## Deferred / optional enhancements
 
-These are **not** part of this change (they go beyond "mirror the Nimbus repo,"
-which has neither), but are recorded as easy, well-scoped follow-ups.
-
-- **PR-title validation** (recommended) — a lightweight `pull_request` workflow
-  (e.g. `amannn/action-semantic-pull-request`, ~15 lines) that fails the check when
-  a PR title isn't a valid Conventional Commit. Because the repo squash-merges with
-  the PR title as the `main` commit, this directly protects Release Please's version
-  bump + changelog from a malformed title. Deferred because: the Nimbus repo we're
-  mirroring relies on convention without it, a required title check adds per-PR
-  process friction that's a team-policy call, and it's trivial to add later. Adopt
-  it the first time a bad title slips through — or now, if you'd rather enforce it
-  from the start.
+- **PR-title validation** — *now included* (see Components → `pr-title-lint.yml`),
+  and additionally added to the Nimbus main repo, which had the same gap. Promoted
+  from deferred at the owner's request.
+- **Local `commitlint` / git hooks** — still out of scope (YAGNI); the CI PR-title
+  check covers the case that actually feeds Release Please.
 

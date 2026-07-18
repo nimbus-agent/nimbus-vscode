@@ -19,7 +19,7 @@
 - **Harden runner** — every job's first step is `step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4` with `egress-policy: audit`.
 - **`publish.yml` is otherwise unchanged** — only its final "attach .vsix to release" step is edited so it does not overwrite the notes Release Please writes.
 - **Manifest baseline** — `.release-please-manifest.json` starts at `0.4.0` (0.4.0 ships manually via PR #26; automation owns 0.5.0+).
-- **No PR-title-lint / commitlint** in this change (recorded as a deferred optional enhancement in the spec).
+- **PR-title lint is included** — a `pull_request` workflow enforces Conventional-Commit PR titles (squash-merge uses the title as the `main` commit Release Please reads). No `commitlint`/local hooks (still YAGNI).
 
 ## Prerequisites / rollout ordering (owner actions — see final section)
 
@@ -27,7 +27,7 @@ This plan produces the release-automation files on a branch. It is **prepared no
 
 ## File Structure
 
-- **Task 1 — Release Please setup:** create `.github/workflows/release-please.yml`, `.release-please-config.json`, `.release-please-manifest.json`.
+- **Task 1 — Release Please setup:** create `.github/workflows/release-please.yml`, `.release-please-config.json`, `.release-please-manifest.json`, and `.github/workflows/pr-title-lint.yml` (guards the Conventional-Commit titles Release Please depends on).
 - **Task 2 — publish integration:** modify `.github/workflows/publish.yml` (the final release-asset step only).
 - **Task 3 — docs:** rewrite `docs/releasing.md` for the automated flow.
 - **Task 4 — rollout checklist:** manual owner actions (PAT, sequencing, verification) — documentation, no code.
@@ -40,10 +40,11 @@ This plan produces the release-automation files on a branch. It is **prepared no
 - Create: `.release-please-config.json`
 - Create: `.release-please-manifest.json`
 - Create: `.github/workflows/release-please.yml`
+- Create: `.github/workflows/pr-title-lint.yml`
 
 **Interfaces:**
 - Consumes: the repo's `package.json` (`version`, `name: nimbus-vscode`) and `CHANGELOG.md`.
-- Produces: a `release-please` workflow on `main` that maintains a release PR and, on merge, creates tag `vX.Y.Z` + a GitHub Release. The tag is what Task 2's `publish.yml` consumes.
+- Produces: a `release-please` workflow on `main` that maintains a release PR and, on merge, creates tag `vX.Y.Z` + a GitHub Release (the tag Task 2's `publish.yml` consumes), plus a `pull_request` workflow that fails when a PR title isn't a Conventional Commit (protecting the titles Release Please reads).
 
 - [ ] **Step 1: Create `.release-please-manifest.json`**
 
@@ -111,6 +112,42 @@ jobs:
           token: ${{ secrets.RELEASE_PLEASE_PAT || github.token }}
 ```
 
+- [ ] **Step 3b: Create `.github/workflows/pr-title-lint.yml`**
+
+Guards the Conventional-Commit PR titles Release Please reads (the repo
+squash-merges, so the PR title becomes the `main` commit).
+
+```yaml
+name: Lint PR Title
+
+# The repo squash-merges, so the PR title becomes the commit on `main` that
+# Release Please reads to compute the version bump and changelog. Enforce a
+# Conventional Commit title so a malformed one can't silently break a release.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-pr-title:
+    name: Validate PR title
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: amannn/action-semantic-pull-request@e7fef9b497b2d55c02c110d513558fe041d5f661 # v5.5.3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
 - [ ] **Step 4: Validate the two JSON files parse**
 
 Run:
@@ -123,16 +160,15 @@ Expected: `json ok`.
 
 Run whichever is available (bun is the repo's toolchain, so the `bunx` form needs no Python):
 ```bash
-bunx yaml-lint .github/workflows/release-please.yml                                                     # Node fallback (no Python)
-python -c "import yaml; yaml.safe_load(open('.github/workflows/release-please.yml')); print('yaml ok')" # if pyyaml is present
+bunx yaml-lint .github/workflows/release-please.yml .github/workflows/pr-title-lint.yml   # Node fallback (no Python)
 ```
-Expected: valid YAML confirmed. Last resort: push the branch and let GitHub's workflow validator catch a malformed file (a bad workflow surfaces as a failed/skipped run in the Actions tab).
+Expected: `√ YAML Lint successful.` for both. Last resort: push the branch and let GitHub's workflow validator catch a malformed file (a bad workflow surfaces as a failed/skipped run in the Actions tab).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add .release-please-config.json .release-please-manifest.json .github/workflows/release-please.yml
-git commit -m "ci: add Release Please (automated release PR + tagging)
+git add .release-please-config.json .release-please-manifest.json .github/workflows/release-please.yml .github/workflows/pr-title-lint.yml
+git commit -m "ci: add Release Please + Conventional-Commit PR-title lint
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```
