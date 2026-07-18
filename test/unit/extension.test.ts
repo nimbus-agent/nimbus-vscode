@@ -5,6 +5,7 @@ import { describe, expect, test, vi } from "vitest";
 import { commands, env } from "vscode";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
+import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
 import { activateWithDeps, createSourceOpener } from "../../src/extension.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
@@ -60,6 +61,10 @@ interface Captured {
   // simulate the chat panel posting messages back to the extension host.
   webviewMessageHandlers: Array<(msg: unknown) => void>;
   panelRevealedCount: number;
+  // Lets a test invoke the chat panel's onDispose listeners directly (the same
+  // way a real webview panel firing onDidDispose would), without exposing the
+  // panel object itself.
+  disposeChatPanel: () => void;
   openedDocs: Array<{ title: string; content: string }>;
   treeProviders: Map<string, RegisteredProvider>;
   saveJsonCalls: Array<{ defaultName: string; content: string }>;
@@ -362,6 +367,7 @@ function makeFixture(opts: {
     get panelRevealedCount(): number {
       return panelRevealed;
     },
+    disposeChatPanel: () => chatPanel.dispose(),
     openedDocs,
     treeProviders,
     saveJsonCalls,
@@ -399,6 +405,56 @@ function disconnectedClient(): () => Promise<ClientLike> {
   return async () => {
     throw new Error("ECONNREFUSED");
   };
+}
+
+// An askStream handle that never completes (its cancel() resolves the same
+// gate its iterator awaits), so a test can observe a genuinely in-progress
+// stream — e.g. to drive a second submitAsk into the "Stream in progress"
+// rejection, or a stopStream whose cancel() rejects.
+function neverEndingAskStream(opts: {
+  streamId?: string;
+  cancel?: () => Promise<void>;
+}): ReturnType<typeof vi.fn> {
+  const streamId = opts.streamId ?? "s1";
+  return vi.fn(() => ({
+    streamId,
+    cancel: opts.cancel ?? (async () => undefined),
+    [Symbol.asyncIterator]: () => ({
+      next: () => new Promise<never>(() => undefined), // never resolves
+    }),
+  }));
+}
+
+// A fixture whose chat stream yields one "token" event (enough for the chat
+// controller to register the stream for HITL) and then hangs forever — so a
+// HITL request naming that streamId routes inline (chatPanelVisibleAndFocused
+// + streamRegistered both true), and the request stays pending until the test
+// resolves it (via a webview hitlResponse, or by disposing the panel).
+function makeInlineHitlFixture(streamId = "s-inline"): {
+  f: Captured & { deps: ActivateDeps };
+  askStream: ReturnType<typeof vi.fn>;
+} {
+  let sentFirst = false;
+  const askStream = vi.fn(() => ({
+    streamId,
+    cancel: vi.fn(async () => undefined),
+    [Symbol.asyncIterator]: () => ({
+      next: async () => {
+        if (!sentFirst) {
+          sentFirst = true;
+          return { value: { type: "token", text: "…" }, done: false };
+        }
+        return await new Promise<never>(() => undefined); // hang after the first event
+      },
+    }),
+  }));
+  const f = makeFixture({
+    inputBoxAnswers: ["hi"],
+    panelVisible: true,
+    panelActive: true,
+    openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+  });
+  return { f, askStream };
 }
 
 // ---------------------------------------------------------------------------
@@ -1956,6 +2012,281 @@ describe("activateWithDeps", () => {
       "nimbus.connected",
       true,
     );
+  });
+
+  test("fireConnectionState re-renders the status bar from an externally supplied state", async () => {
+    const f = makeFixture({});
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    handle.fireConnectionState({ kind: "disconnected", socketPath: "/tmp/x.sock", reason: "manual" });
+    expect(f.statusItem.text).toMatch(/Gateway not running/);
+  });
+
+  test("the egress badge falls back to disconnected if the client drops while state stays connected", async () => {
+    // connection.dispose() clears the client but does not itself transition
+    // the manager's reported state away from "connected" — a real race if a
+    // poll is in flight when the extension deactivates. Capture the command
+    // handler before tearing down (disposing removes it from the registry),
+    // then dispose everything and invoke the captured handler directly.
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const refreshEgress = cmd(f, "nimbus.refreshEgress");
+    const hideSpy = vi.fn();
+    f.statusItem.hide = hideSpy;
+    for (const s of f.ctx.subscriptions) s.dispose();
+    refreshEgress();
+    await flush();
+    expect(hideSpy).toHaveBeenCalled();
+  });
+
+  test("the registered egress provider lists ledger rows via egressList", async () => {
+    const egressList = vi.fn(async () => ({
+      rows: [
+        {
+          id: 1,
+          timestamp: 0,
+          destination: "gmail",
+          method: "send",
+          resultStatus: "authorized",
+          hitlStatus: "approved",
+        },
+      ],
+    }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ egressList } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = f.treeProviders.get("nimbus.egressView");
+    if (provider === undefined) throw new Error("egress provider not registered");
+    const rows = await provider.getChildren(undefined);
+    expect(egressList).toHaveBeenCalled();
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("a second submitAsk while a stream is active logs the rejection instead of throwing", async () => {
+    const askStream = neverEndingAskStream({});
+    const f = makeFixture({
+      inputBoxAnswers: ["first"],
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.ask")(); // starts the (never-completing) stream; don't await
+    await flush();
+    const fire = f.webviewMessageHandlers[0];
+    if (fire === undefined) throw new Error("no webview message handler registered");
+    fire({ type: "submitAsk", text: "second" });
+    await flush();
+    expect(
+      f.outputAppendLines.some(
+        (l) => l.includes("submitAsk failed") && l.includes("in progress"),
+      ),
+    ).toBe(true);
+    expect(askStream).toHaveBeenCalledTimes(1); // the second start() never called askStream
+  });
+
+  test("stopStream logs a warning (not a throw) when cancel() rejects", async () => {
+    const askStream = neverEndingAskStream({
+      cancel: async () => {
+        throw new Error("cancel boom");
+      },
+    });
+    const f = makeFixture({
+      inputBoxAnswers: ["hi"],
+      openClient: makeFakeClient({ askStream } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.ask")(); // never resolves; don't await
+    await flush();
+    const fire = f.webviewMessageHandlers[0];
+    if (fire === undefined) throw new Error("no webview message handler registered");
+    fire({ type: "stopStream" });
+    await flush();
+    expect(
+      f.outputAppendLines.some((l) => l.includes("stopStream failed") && l.includes("cancel boom")),
+    ).toBe(true);
+  });
+
+  test("a webview hitlResponse resolves the matching pending inline HITL prompt and sends the decision", async () => {
+    const { f, askStream } = makeInlineHitlFixture();
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.ask")(); // starts+registers the stream for HITL; never resolves
+    await flush();
+    expect(askStream).toHaveBeenCalledTimes(1);
+
+    handle.fireHitl({
+      requestId: "req-x",
+      prompt: "Allow?",
+      streamId: "s-inline",
+    } as Parameters<typeof handle.fireHitl>[0]);
+    await flush();
+    // Routed inline (the panel is visible+focused and the stream is
+    // registered) rather than as a toast/modal.
+    expect(f.deps.window.showInformationMessage).not.toHaveBeenCalled();
+
+    const fire = f.webviewMessageHandlers.at(-1);
+    if (fire === undefined) throw new Error("no webview message handler registered");
+    fire({ type: "hitlResponse", requestId: "req-x", decision: "approve" });
+    await flush();
+
+    // Approving routes the decision to the Gateway; the fake client has no
+    // `.ipc`, so sendConsentResponse throws and the failure is logged rather
+    // than silently dropped — proving sendResponse actually ran.
+    expect(f.outputAppendLines.some((l) => l.includes("HITL sendResponse failed"))).toBe(true);
+  });
+
+  test("an approved HITL request while disconnected is dropped with a warning, not sent", async () => {
+    const f = makeFixture({ openClient: disconnectedClient(), infoMessageClicks: ["Approve"] });
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    handle.fireHitl({
+      requestId: "req-disc",
+      prompt: "Allow?",
+    } as Parameters<typeof handle.fireHitl>[0]);
+    await flush();
+    expect(f.deps.window.showInformationMessage).toHaveBeenCalled(); // routed via toast
+    expect(
+      f.outputAppendLines.some((l) => l.includes("HITL response dropped: no Gateway connection")),
+    ).toBe(true);
+  });
+
+  test("disposing the chat panel resolves a pending inline HITL prompt and drops the stale controller", async () => {
+    const { f, askStream } = makeInlineHitlFixture();
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.ask")();
+    await flush();
+
+    handle.fireHitl({
+      requestId: "req-y",
+      prompt: "Allow?",
+      streamId: "s-inline",
+    } as Parameters<typeof handle.fireHitl>[0]);
+    await flush();
+    expect(f.deps.window.showInformationMessage).not.toHaveBeenCalled();
+
+    f.disposeChatPanel();
+    await flush();
+
+    // The pending prompt resolved with "no decision" (dispose, not a user
+    // choice), so nothing was ever sent to the Gateway.
+    expect(f.outputAppendLines.some((l) => l.includes("HITL sendResponse failed"))).toBe(false);
+
+    // The stale controller must have been dropped so the next Ask builds a
+    // fresh one — proven by a second, distinct askStream call rather than an
+    // immediate "Stream in progress" rejection from the old controller.
+    (f.deps.window.showInputBox as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+      "second ask",
+    );
+    cmd(f, "nimbus.ask")();
+    await flush();
+    expect(askStream).toHaveBeenCalledTimes(2);
+  });
+
+  test("nimbus.showPendingHitl reveals the panel while a request is pending", async () => {
+    const { f } = makeInlineHitlFixture();
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.ask")(); // creates+reveals the panel
+    await flush();
+    const revealedBefore = f.panelRevealedCount;
+
+    // Fire, then check synchronously — handleOne's pending.set()/emitCount()
+    // run before its first await, so the request is already "pending" here.
+    handle.fireHitl({ requestId: "req-z", prompt: "Allow?" } as Parameters<
+      typeof handle.fireHitl
+    >[0]);
+    cmd(f, "nimbus.showPendingHitl")();
+    expect(f.panelRevealedCount).toBeGreaterThan(revealedBefore);
+  });
+
+  test("subscribeHitl's callback routes a pushed request through the HITL router", async () => {
+    let hitlCallback: ((req: { requestId: string; prompt: string }) => void) | undefined;
+    const f = makeFixture({
+      openClient: makeFakeClient({
+        subscribeHitl: (cb: (req: { requestId: string; prompt: string }) => void) => {
+          hitlCallback = cb;
+          return { dispose: () => undefined };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(hitlCallback).toBeDefined();
+    hitlCallback?.({ requestId: "req-live", prompt: "Allow live push?" });
+    await flush();
+    expect(f.infoMessages.some((m) => m.includes("Allow live push?"))).toBe(true);
+  });
+
+  test("nimbus.findRelatedFromIndex excludes the source item (by url and by name) from ranked results", async () => {
+    const f = makeFixture({
+      searchDebounceMs: 0,
+      openClient: makeFakeClient({
+        searchRanked: async () => [
+          { name: "billing", service: "gdrive", score: 1, url: "https://x/billing" }, // same url -> excluded
+          { name: "Billing", service: "gdrive", score: 0.9 }, // same name, no url -> excluded
+          { name: "invoices", service: "gdrive", score: 0.5, url: "https://x/invoices" }, // kept
+        ],
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.findRelatedFromIndex")({
+      payload: { id: "1", name: "billing", service: "gdrive", url: "https://x/billing" },
+    });
+    await flush();
+    const qp = f.quickPicks[0] as FakeQuickPick;
+    const labels = (qp.items as Array<{ label: string }>).map((i) => i.label);
+    expect(labels).toEqual(["invoices"]);
+  });
+
+  test("quick ask warns when the file content is truncated to the context cap", async () => {
+    const bigText = "x".repeat(60_000); // exceeds QUICK_ASK_MAX_CONTEXT_CHARS (50_000)
+    const calls: Array<{ input: string }> = [];
+    const f = makeFixture({
+      activeEditor: { text: bigText, empty: true, fileName: "/p/big.ts", languageId: "typescript" },
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: ["q"],
+      openClient: makeFakeClient({
+        agentInvoke: async (input: string) => {
+          calls.push({ input });
+          return { reply: "ok" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(f.warnMessages.some((m) => m.includes("context truncated"))).toBe(true);
+    expect(calls[0]?.input).toContain("(truncated)");
+  });
+
+  test("proveEgressWindow warns when disconnected", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.proveEgressWindow")();
+    expect(f.warnMessages.some((m) => /not connected/i.test(m))).toBe(true);
+  });
+
+  test("participant deps proxy the Gateway client, HITL stream registry, and active agent", async () => {
+    let captured: ParticipantDeps | undefined;
+    const f = makeFixture({ cfg: { askAgent: "researcher" } });
+    f.deps.registerChatParticipant = ({ deps }) => {
+      captured = deps;
+      return { dispose: () => undefined };
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(captured).toBeDefined();
+    expect(captured?.client()).toBeDefined();
+    expect(() => captured?.registerStreamWithHitl("stream-x")).not.toThrow();
+    expect(() => captured?.unregisterStreamWithHitl("stream-x")).not.toThrow();
+    expect(captured?.agent()).toBe("researcher");
   });
 });
 

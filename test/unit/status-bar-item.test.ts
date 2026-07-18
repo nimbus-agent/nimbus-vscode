@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 
+import type { ConnectionState } from "../../src/connection/connection-manager.js";
 import { formatStatusBar, type StatusBarInputs } from "../../src/status-bar/status-bar-item.js";
 
 function inputs(p: Partial<StatusBarInputs> = {}): StatusBarInputs {
@@ -82,5 +83,15 @@ describe("formatStatusBar", () => {
     expect(r.text).toMatch(/3 pending/);
     expect(r.text).toMatch(/1 degraded/);
     expect(r.command).toBe("nimbus.showPendingHitl");
+  });
+
+  test("an unrecognized non-connected state falls through to the connected renderer", () => {
+    // formatNonConnected's if-chain is exhaustive over today's ConnectionState
+    // union, but it's a forward-compatibility guard: a future connection kind
+    // the chain doesn't recognize yet must fall through (return undefined) so
+    // formatStatusBar renders it via formatConnected rather than crashing.
+    const unknownState = { kind: "reticulating-splines" } as unknown as ConnectionState;
+    const r = formatStatusBar(inputs({ connection: unknownState }));
+    expect(r).toEqual(formatStatusBar(inputs()));
   });
 });

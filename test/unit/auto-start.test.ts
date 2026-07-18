@@ -53,4 +53,21 @@ describe("AutoStarter.spawn", () => {
     const r = await starter.spawn("/run/nimbus-test/x.sock");
     expect(r.kind).toBe("spawn-error");
   });
+
+  test("returns spawn-error with the thrown message when spawn() itself throws synchronously", async () => {
+    // Distinct from spawnFails above: that simulates an async "error" event on
+    // the child process; this simulates node's child_process.spawn throwing
+    // synchronously (e.g. EACCES on the command itself, or a mocked-out spawn
+    // in an unusual host environment).
+    const deps = makeDeps({});
+    const throwingDeps: AutoStartDeps = {
+      ...deps,
+      spawn: vi.fn(() => {
+        throw new Error("EACCES: permission denied");
+      }),
+    };
+    const starter = createAutoStarter(throwingDeps);
+    const r = await starter.spawn("/run/nimbus-test/x.sock");
+    expect(r).toEqual({ kind: "spawn-error", message: "EACCES: permission denied" });
+  });
 });
