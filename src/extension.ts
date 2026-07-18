@@ -772,12 +772,14 @@ export function activateWithDeps(
     });
     const labels = report.actions.map((a) => a.label);
     const opts = { modal: true };
-    const choice =
-      report.level === "error"
-        ? await deps.window.showErrorMessage(report.message, opts, ...labels)
-        : report.level === "warn"
-          ? await deps.window.showWarningMessage(report.message, opts, ...labels)
-          : await deps.window.showInformationMessage(report.message, opts, ...labels);
+    let choice: string | undefined;
+    if (report.level === "error") {
+      choice = await deps.window.showErrorMessage(report.message, opts, ...labels);
+    } else if (report.level === "warn") {
+      choice = await deps.window.showWarningMessage(report.message, opts, ...labels);
+    } else {
+      choice = await deps.window.showInformationMessage(report.message, opts, ...labels);
+    }
     const action = report.actions.find((a) => a.label === choice);
     if (action === undefined) return;
     await deps.commands.executeCommand(action.command, ...(action.args ?? []));
