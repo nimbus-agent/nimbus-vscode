@@ -1,0 +1,33 @@
+name: release-please
+
+# On every push to main, Release Please reads Conventional Commits and maintains
+# a "release PR" (version bump + CHANGELOG). Merging that PR creates the vX.Y.Z
+# tag + GitHub Release. The tag is pushed as RELEASE_PLEASE_PAT so publish.yml
+# (on: push tags v*) fires — a tag from the default GITHUB_TOKEN would not.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  release-please:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          config-file: .release-please-config.json
+          manifest-file: .release-please-manifest.json
+          token: ${{ secrets.RELEASE_PLEASE_PAT || github.token }}
