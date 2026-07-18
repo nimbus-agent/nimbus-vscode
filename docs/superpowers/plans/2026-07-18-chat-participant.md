@@ -622,13 +622,17 @@ function req(over: Partial<ParticipantRequest> = {}): ParticipantRequest {
 }
 
 describe("runParticipantTurn", () => {
-  test("disconnected → friendly note + reconnect button, no client used", async () => {
+  test("disconnected → friendly note + reconnect button, no stream started", async () => {
     const f = fakeSink();
+    const askStream = vi.fn();
     const searchRanked = vi.fn();
+    const client: ParticipantClientLike = { askStream, searchRanked };
     const result = await runParticipantTurn(req(), deps({ client: () => undefined }), f.sink, noCancel);
     expect(f.md.join(" ")).toMatch(/connect/i);
     expect(f.buttons).toEqual([{ title: expect.any(String), command: "nimbus.troubleshootConnection" }]);
-    expect(searchRanked).not.toHaveBeenCalled();
+    // The disconnected guard must return before touching a client at all.
+    expect(client.askStream).not.toHaveBeenCalled();
+    expect(client.searchRanked).not.toHaveBeenCalled();
     expect(result).toEqual({});
   });
 
