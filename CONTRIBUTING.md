@@ -6,7 +6,7 @@ Thanks for helping improve the Nimbus VS Code extension!
 
 - [Bun](https://bun.sh) v1.2+
 - VS Code 1.90+ (for running the extension host)
-- A running [Nimbus Gateway](https://nimbus-agent.dev/install) for manual testing
+- A running [Nimbus Gateway](https://nimbus-agent.dev/user-guide/install/) for manual testing
 
 ## Setup
 

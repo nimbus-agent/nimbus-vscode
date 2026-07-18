@@ -343,6 +343,7 @@ export function activateWithDeps(
   let hitlSubscription: DisposableLike | undefined;
   const stateSub = connection.onState((s) => {
     renderStatusBar(s);
+    void deps.commands.executeCommand("setContext", "nimbus.connected", s.kind === "connected");
     if (s.kind === "connected") {
       const c = nimbus();
       if (c !== undefined) {
@@ -778,6 +779,13 @@ export function activateWithDeps(
 
   register("nimbus.openLogs", () => {
     out.show(true);
+  });
+
+  register("nimbus.openWalkthrough", async () => {
+    await deps.commands.executeCommand(
+      "workbench.action.openWalkthrough",
+      "nimbus-agent.nimbus-vscode#nimbusGettingStarted",
+    );
   });
 
   register("nimbus.quickActions", async () => {

@@ -308,6 +308,53 @@ describe("ChatController", () => {
     expect(ctrl.isStreaming()).toBe(false);
   });
 
+  test("surfaces a thrown stream error as an error message in the panel", async () => {
+    // The Gateway agent can fail mid-stream (e.g. "No LLM provider available"),
+    // which the client surfaces by throwing from the async iterator rather than
+    // yielding an error event. That must still reach the user as a visible turn.
+    const throwing = {
+      streamId: "s1",
+      cancel: vi.fn(async () => undefined),
+      [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
+        return {
+          async next(): Promise<IteratorResult<StreamEvent>> {
+            throw new Error("No LLM provider available");
+          },
+        };
+      },
+    } as unknown as AskStreamHandle;
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => throwing }), { panel }),
+    );
+    await ctrl.start("hi");
+    const err = posted.find((m) => (m as { type: string }).type === "error") as
+      | { message?: string }
+      | undefined;
+    expect(err?.message).toContain("No LLM provider available");
+    expect(ctrl.isStreaming()).toBe(false);
+  });
+
+  test("shows a no-answer notice when the stream ends without producing content", async () => {
+    // A Gateway with no working model can complete the stream immediately with
+    // an empty reply and no tokens; an empty assistant bubble tells the user
+    // nothing, so surface an explicit notice instead.
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () => streamOf([{ type: "done", reply: "", sessionId: "" }]),
+        }),
+        { panel },
+      ),
+    );
+    await ctrl.start("hi");
+    const err = posted.find((m) => (m as { type: string }).type === "error") as
+      | { message?: string }
+      | undefined;
+    expect(err?.message).toMatch(/no answer|LLM provider|Gateway/i);
+  });
+
   test("a hitlBatch event posts an inline HITL prompt", async () => {
     const { panel, posted } = capturingPanel();
     const ctrl = createChatController(
@@ -482,6 +529,115 @@ describe("ChatController", () => {
       | { turns: unknown[] }
       | undefined;
     expect(hydrate?.turns).toEqual(turns);
+  });
+
+  test("rehydrateIfNeeded does not post while a stream is active", async () => {
+    // On a fresh panel the webview posts "ready" mid-stream, which drives
+    // onReady -> rehydrateIfNeeded. That must NOT run: its emptyState/hydrate
+    // would clobber the live conversation the buffered stream just delivered.
+    const { handle } = pendingStream();
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => handle }), { panel }),
+    );
+    const p = ctrl.start("hi");
+    await Promise.resolve();
+    expect(ctrl.isStreaming()).toBe(true);
+
+    await ctrl.rehydrateIfNeeded(50);
+
+    expect(postedTypes(posted)).not.toContain("emptyState");
+    expect(postedTypes(posted)).not.toContain("hydrate");
+
+    await ctrl.stop();
+    await p;
+  });
+
+  test("rehydrateIfNeeded aborts if a stream starts while the transcript is loading", async () => {
+    // TOCTOU: the synchronous guard passes (no active stream), then start() sets
+    // `active` during the getSessionTranscript await. The resolved hydrate must
+    // not post over the now-live stream.
+    let releaseTranscript = (): void => undefined;
+    const gate = new Promise<void>((r) => {
+      releaseTranscript = r;
+    });
+    const client: ChatClientLike = {
+      askStream: () => pendingStream("sX").handle,
+      cancelStream: async () => ({ ok: true }),
+      getSessionTranscript: async () => {
+        await gate;
+        return {
+          sessionId: "s",
+          turns: [{ role: "user" as const, text: "old", timestamp: 1 }],
+          hasMore: false,
+        };
+      },
+    };
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(client, {
+        panel,
+        sessionStore: { get: () => "s", set: async () => undefined, clear: async () => undefined },
+      }),
+    );
+    const pRehydrate = ctrl.rehydrateIfNeeded(50); // passes sync guard, awaits transcript
+    await Promise.resolve();
+    const pStart = ctrl.start("hi"); // sets active during the await
+    await Promise.resolve();
+    expect(ctrl.isStreaming()).toBe(true);
+    releaseTranscript();
+    await pRehydrate;
+    expect(postedTypes(posted)).not.toContain("hydrate");
+    await ctrl.stop();
+    await pStart;
+  });
+
+  test("a stale resume transcript does not overwrite a newer resumed session", async () => {
+    // Two resume()s race: resume("A") is slow to load; resume("B") starts before
+    // A resolves. Both pass the active guard (resume clears `active`), so A's
+    // late transcript must be invalidated by session generation, not posted.
+    let releaseA = (): void => undefined;
+    let releaseB = (): void => undefined;
+    const gateA = new Promise<void>((r) => {
+      releaseA = r;
+    });
+    const gateB = new Promise<void>((r) => {
+      releaseB = r;
+    });
+    const client: ChatClientLike = {
+      askStream: () => pendingStream().handle,
+      cancelStream: async () => ({ ok: true }),
+      getSessionTranscript: async ({ sessionId }) => {
+        await (sessionId === "A" ? gateA : gateB);
+        return {
+          sessionId,
+          turns: [{ role: "user" as const, text: `turns-${sessionId}`, timestamp: 1 }],
+          hasMore: false,
+        };
+      },
+    };
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(client, {
+        panel,
+        sessionStore: { get: () => undefined, set: async () => undefined, clear: async () => undefined },
+      }),
+    );
+    const pA = ctrl.resume("A", 50);
+    await Promise.resolve();
+    await Promise.resolve();
+    const pB = ctrl.resume("B", 50);
+    await Promise.resolve();
+    await Promise.resolve();
+    releaseB();
+    await pB;
+    releaseA();
+    await pA;
+    const hydrates = posted.filter((m) => (m as { type: string }).type === "hydrate") as Array<{
+      turns: Array<{ text: string }>;
+    }>;
+    const postedStaleA = hydrates.some((h) => h.turns.some((t) => t.text === "turns-A"));
+    expect(postedStaleA).toBe(false);
   });
 
   test("rehydrateIfNeeded falls back to emptyState when the transcript fetch fails", async () => {

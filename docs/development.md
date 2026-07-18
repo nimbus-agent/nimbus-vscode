@@ -7,7 +7,7 @@ these commands see [architecture.md](./architecture.md).
 
 - [Bun](https://bun.sh) v1.2+ (package manager + test runner)
 - VS Code 1.90+ (to run the Extension Development Host)
-- A running [Nimbus Gateway](https://nimbus-agent.dev/install) for manual testing
+- A running [Nimbus Gateway](https://nimbus-agent.dev/user-guide/install/) for manual testing
   (Ask/Search need a Gateway to talk to over IPC)
 
 ## Setup

@@ -1915,6 +1915,48 @@ describe("activateWithDeps", () => {
     await flush();
     expect(egressHead).toHaveBeenCalled();
   });
+
+  test("nimbus.openWalkthrough opens the Get Started walkthrough", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await flush();
+    await f.commandHandlers.get("nimbus.openWalkthrough")?.();
+    expect(f.deps.commands.executeCommand).toHaveBeenCalledWith(
+      "workbench.action.openWalkthrough",
+      "nimbus-agent.nimbus-vscode#nimbusGettingStarted",
+    );
+  });
+
+  test("sets nimbus.connected=true once the Gateway connects", async () => {
+    const f = makeFixture({}); // default openClient resolves → connected
+    activateWithDeps(f.ctx, f.deps);
+    await flush();
+    expect(f.deps.commands.executeCommand).toHaveBeenCalledWith(
+      "setContext",
+      "nimbus.connected",
+      true,
+    );
+  });
+
+  test("sets nimbus.connected=false when the Gateway is unreachable", async () => {
+    const f = makeFixture({
+      openClient: async () => {
+        throw new Error("no gateway");
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await flush();
+    expect(f.deps.commands.executeCommand).toHaveBeenCalledWith(
+      "setContext",
+      "nimbus.connected",
+      false,
+    );
+    expect(f.deps.commands.executeCommand).not.toHaveBeenCalledWith(
+      "setContext",
+      "nimbus.connected",
+      true,
+    );
+  });
 });
 
 describe("createSourceOpener", () => {

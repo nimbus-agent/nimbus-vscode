@@ -64,17 +64,27 @@ function buildSubTaskMessage(ev: {
 
 export function createChatController(deps: ChatControllerDeps): ChatController {
   let active: AskStreamHandle | undefined;
+  // Bumped whenever the display intent changes (start / resume / newConversation
+  // / rehydrate). An in-flight hydrate captures the generation at request time
+  // and discards its result if a newer intent superseded it while awaiting — so
+  // a slow getSessionTranscript can't clobber a session the user has since
+  // switched away from, and a started stream invalidates a pending hydrate.
+  let generation = 0;
 
   const post = (m: ExtensionToWebview): void => {
     void deps.panel.postMessage(m);
   };
 
   const hydrate = async (sessionId: string, limit: number): Promise<void> => {
+    const gen = generation;
+    const superseded = (): boolean => active !== undefined || gen !== generation;
     try {
       const r = await deps.client.getSessionTranscript({ sessionId, limit });
+      if (superseded()) return;
       post({ type: "hydrate", turns: r.turns });
     } catch (e) {
       deps.log.warn(`getSessionTranscript failed: ${errMsg(e)}`);
+      if (superseded()) return;
       post({ type: "emptyState", sub: "no-transcript" });
     }
   };
@@ -121,18 +131,51 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       if (active !== undefined) {
         throw new Error("Stream in progress; click Stop or wait for it to finish.");
       }
+      generation += 1; // a new live turn supersedes any in-flight hydrate
       const opts = buildAskStreamOptions(deps.sessionStore, deps.agent);
-      const handle = deps.client.askStream(input, opts);
+      let handle: AskStreamHandle;
+      try {
+        handle = deps.client.askStream(input, opts);
+      } catch (e) {
+        deps.log.error(`ask: askStream failed to start: ${errMsg(e)}`);
+        post({ type: "userMessage", text: input });
+        post({ type: "error", message: `Nimbus couldn't start the request: ${errMsg(e)}` });
+        return;
+      }
       active = handle;
       post({ type: "userMessage", text: input });
+      let sawContent = false;
       try {
         let registered = false;
         for await (const ev of handle) {
+          if (ev.type !== "done") sawContent = true;
           if (!registered && handle.streamId.length > 0) {
             deps.registerStreamWithHitl(handle.streamId);
             registered = true;
           }
           if (await handleEvent(ev, handle)) break;
+        }
+        // A stream that ends without any token/error/HITL event produced no
+        // answer — common when the Gateway has no working LLM provider. An
+        // empty assistant bubble tells the user nothing, so say so explicitly.
+        // Guard on `active === handle` so a superseded stream stays silent.
+        if (active === handle && !sawContent) {
+          post({
+            type: "error",
+            message:
+              "Nimbus reached the Gateway, but no answer came back — this usually means no language model is set up yet. Add an LLM provider (or API key) in your Gateway configuration, then try again.",
+          });
+        }
+      } catch (e) {
+        // The client can surface a mid-stream failure (e.g. the agent hitting
+        // "No LLM provider available") by throwing from the iterator rather than
+        // yielding an error event. Make it visible instead of failing silently.
+        deps.log.error(`ask: stream failed: ${errMsg(e)}`);
+        if (active === handle) {
+          post({
+            type: "error",
+            message: `Nimbus ran into a problem answering: ${errMsg(e)}. If that mentions a missing model or invalid API key, set up an LLM provider in your Gateway and try again.`,
+          });
         }
       } finally {
         if (handle.streamId.length > 0) {
@@ -152,6 +195,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await handle.cancel();
     },
     async newConversation(): Promise<void> {
+      generation += 1; // clearing the conversation supersedes any in-flight hydrate
       if (active !== undefined) {
         const handle = active;
         active = undefined;
@@ -161,6 +205,12 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       post({ type: "reset" });
     },
     async rehydrateIfNeeded(limit): Promise<void> {
+      // A live stream owns the transcript. The webview's "ready" (which drives
+      // this on a freshly-created panel) can land mid-stream; rehydrating then
+      // would post emptyState/hydrate and clobber the buffered conversation the
+      // stream just delivered. Leave the active stream's turns intact.
+      if (active !== undefined) return;
+      generation += 1;
       const sid = deps.sessionStore.get();
       if (sid === undefined) {
         post({ type: "emptyState", sub: "no-transcript" });
@@ -169,6 +219,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await hydrate(sid, limit);
     },
     async resume(sessionId, limit): Promise<void> {
+      generation += 1; // switching sessions supersedes any in-flight hydrate
       if (active !== undefined) {
         const handle = active;
         active = undefined;

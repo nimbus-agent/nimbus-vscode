@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **Get Started walkthrough** — a first-run walkthrough (`Nimbus: Open Walkthrough`,
+  also on the Welcome page) that guides you through connecting the Gateway and
+  trying Ask, Search, and Quick Ask, then points at the sidebar and egress ledger.
+  The "Connect the Gateway" step checks itself off on a real connection.
+
 ## 0.3.0 — 2026-07-17
 
 - **Egress status-bar badge** — a status-bar item (shown while connected, on by

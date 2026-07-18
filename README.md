@@ -21,9 +21,11 @@ Local-first AI agent for the editor. Ask and search against your private [Nimbus
 
 Run **`Nimbus: Ask`** from the command palette, or right-click a selection in the editor and choose *Ask About Selection* / *Search Selection*. The extension connects to your local Nimbus Gateway automatically (enable `nimbus.autoStartGateway` to have it start the Gateway for you).
 
+First time? Run **`Nimbus: Open Walkthrough`** (or open it from the **Get Started** / Welcome page) for a guided setup — connect the Gateway, then try Ask, Search, and Quick Ask.
+
 ## Requires
 
-A running Nimbus Gateway. See <https://nimbus-agent.dev/install> for setup.
+A running Nimbus Gateway. See <https://nimbus-agent.dev/user-guide/install/> for setup.
 
 ## Settings
 
