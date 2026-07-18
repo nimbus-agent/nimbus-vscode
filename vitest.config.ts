@@ -16,6 +16,7 @@ export default defineConfig({
         "src/**/*.d.ts",
         "src/vscode-shim.ts",
         "src/chat/real-chat-panel.ts",
+        "src/chat-participant/real-participant.ts",
         "src/connection/ping-socket.ts",
       ],
       // No hard thresholds here: coverage quality is enforced by SonarCloud's

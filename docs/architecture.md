@@ -77,6 +77,7 @@ code paths without a running editor. Keep `src/` and `test/` self-contained.
 | `src/extension.ts` | Activation entry: registers commands, wires the connection manager, status bar, and HITL router. |
 | `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, …) stay `vscode`-free. |
 | `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). |
+| `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. |
 | `src/connection/` | Connection manager and optional `nimbus start` auto-start. |
 | `src/hitl/` | Human-in-the-loop consent: router + modal / toast / details surfaces. |
 | `src/status-bar/` | Connector-health status bar item. |
@@ -92,7 +93,9 @@ TypeScript **strict**, **no `any`** (use `unknown` for external data). Biome
 ## Current surface
 
 Implemented: Ask (streaming chat panel), Search (Quick Pick over the local
-index), Ask/Search Selection; a Nimbus sidebar with Audit, Sessions, Index,
-Agents, and an **Egress** ledger viewer (with Verify-ledger and Prove-window
-commands); plus connection + HITL plumbing. Workflow / share surfaces are
-intentionally **not** implemented yet.
+index), Ask/Search Selection; a native `@nimbus` **Chat participant** in VS
+Code's built-in Chat view (`/explain`, `/fix`, `/test` slash commands,
+`#file`/selection context, streaming answers, local-index citations); a
+Nimbus sidebar with Audit, Sessions, Index, Agents, and an **Egress** ledger
+viewer (with Verify-ledger and Prove-window commands); plus connection + HITL
+plumbing. Workflow / share surfaces are intentionally **not** implemented yet.

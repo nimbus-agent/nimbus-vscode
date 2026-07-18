@@ -35,6 +35,7 @@ rough T-shirt size (S / M / L).
 | **Search** — live ranked search over the local index (+ configurable limit, duplicates badge, Search Selection) | `searchRanked` |
 | **Find related** — pivot from a selection or Index item to ranked local neighbors (self-excluded) | `searchRanked` |
 | **Quick Ask** — one-shot editor quick-ask (preset actions + custom), reply in a read-only tab | `agentInvoke` |
+| **`@nimbus` Chat participant** — native participant in VS Code's built-in Chat view, with slash commands (`/explain`, `/fix`, `/test`), `#file`/selection context, streaming answers, and local-index citations | `askStream`, `searchRanked` |
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
@@ -55,9 +56,11 @@ The features that move the extension from good to **great** — the ones that le
 into what Copilot-style tools cannot do (local-first, agent-based, egress-audited)
 or that meet developers where they already work. All still on existing RPCs.
 
+The **native VS Code Chat participant** has shipped — see **Already shipped**
+above; the remaining Phase 2 items below are still open.
+
 | Feature | Value | Client RPC | Effort |
 | --- | --- | --- | --- |
-| **Native VS Code Chat participant** — `@nimbus` in the built-in Chat view, with slash commands (`/explain`, `/test`, `/fix`) and `#file`/selection context | Puts Nimbus where developers already are, grounded in the local index | `askStream` / `agentInvoke` + VS Code Chat API | L |
 | **Dev-workflow trio** — Generate commit message (staged diff), "Review my changes" (working diff), Generate tests / docstrings | The features touched every single day | `agentInvoke` + SCM API | M |
 | **"Preview what leaves" pre-flight** — before an agent action, show the exact context that will be sent, with redacted paths | The privacy moat made visible; extends the `redactPath` work | local + `egressList` | M |
 | **Context-grounded Ask** — `@`-mention / attach files, search results, or index items into a question | Answers cite *your* local knowledge, not the model's guess | `searchRanked` / `queryItems` + `askStream` | M |

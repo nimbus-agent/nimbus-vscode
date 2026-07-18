@@ -6,6 +6,11 @@ import { type ChatController, createChatController } from "./chat/chat-controlle
 import type { ChatPanel, ChatPanelFactory } from "./chat/chat-panel.js";
 import { createRealChatPanelFactory } from "./chat/real-chat-panel.js";
 import { createSessionStore } from "./chat/session-store.js";
+import type {
+  ParticipantClientLike,
+  ParticipantDeps,
+} from "./chat-participant/participant-types.js";
+import { registerNimbusChatParticipant } from "./chat-participant/real-participant.js";
 import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js";
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
@@ -86,6 +91,7 @@ export interface ActivateDeps {
   openClient?: (socketPath: string) => Promise<NimbusClient>;
   discoverSocket?: typeof discoverSocketPath;
   chatPanelFactory?: (deps: { log: Logger }) => ChatPanelFactory;
+  registerChatParticipant?: (opts: { deps: ParticipantDeps; log: Logger }) => { dispose(): void };
   autoStarter?: AutoStarter;
   openReadonlyJson?: (title: string, content: string) => Promise<void>;
   openSource?: (item: { url?: string }) => Promise<void>;
@@ -918,6 +924,20 @@ export function activateWithDeps(
       void deps.window.showErrorMessage(`Nimbus: egress prove failed: ${msg}`);
     }
   });
+
+  const participantDeps: ParticipantDeps = {
+    client: () => nimbus() as unknown as ParticipantClientLike | undefined,
+    registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
+    unregisterStreamWithHitl: (id) => {
+      registeredHitlStreams.delete(id);
+    },
+    agent: () => settings.askAgent(),
+    citationLimit: 5,
+    reconnectCommand: "nimbus.troubleshootConnection",
+    log,
+  };
+  const registerParticipant = deps.registerChatParticipant ?? registerNimbusChatParticipant;
+  ctx.subscriptions.push(registerParticipant({ deps: participantDeps, log }));
 
   register("nimbus.showPendingHitl", () => {
     if (hitlRouter.snapshot().length === 0) return;

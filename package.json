@@ -7,7 +7,7 @@
   "license": "MIT",
   "private": false,
   "engines": {
-    "vscode": "^1.90.0"
+    "vscode": "^1.95.0"
   },
   "categories": [
     "AI",
@@ -178,6 +178,20 @@
         "command": "nimbus.openWalkthrough",
         "title": "Open Walkthrough",
         "category": "Nimbus"
+      }
+    ],
+    "chatParticipants": [
+      {
+        "id": "nimbus-agent.nimbus",
+        "name": "nimbus",
+        "fullName": "Nimbus",
+        "description": "Ask the local Nimbus agent — grounded in your local index",
+        "isSticky": true,
+        "commands": [
+          { "name": "explain", "description": "Explain the selected code" },
+          { "name": "fix", "description": "Suggest a fix for the selected code" },
+          { "name": "test", "description": "Generate tests for the selected code" }
+        ]
       }
     ],
     "viewsContainers": {
@@ -498,7 +512,7 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
     "@types/node": "^26.0.0",
-    "@types/vscode": "^1.90.0",
+    "@types/vscode": "^1.95.0",
     "@vitest/coverage-v8": "^4.1.9",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
