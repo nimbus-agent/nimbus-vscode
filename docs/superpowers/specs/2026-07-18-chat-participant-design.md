@@ -38,7 +38,8 @@ reaches past the typed client.
 - Auto-applying `/fix` / `/test` output as a `WorkspaceEdit` (that is the Phase 3
   "quick-ask code-editing actions" item). MVP returns suggestions as code blocks.
 - Inline chat HITL buttons (`response.button()`-driven approve/deny). MVP reuses
-  the existing modal HITL surface.
+  the existing modal HITL surface. (`button` *is* stable API, so this is a genuine
+  Phase 3 UX upgrade, not an API-blocked one — see Risks.)
 - Auto-including the active editor on *free-form* turns (privacy posture — see
   "Context inputs").
 - Workflow / share surfaces (Phase 4; blocked upstream).
@@ -50,7 +51,7 @@ reaches past the typed client.
 | # | Decision | Choice |
 | - | -------- | ------ |
 | 1 | Backing RPC | **`askStream`** — streaming-native, supports `AbortSignal` + `sessionId` + `agent`; reuses the Ask panel's proven event loop. |
-| 2 | Session model | **Dedicated rolling session** — the participant threads its own `sessionId` across follow-up turns, resets on a new conversation (empty history), isolated from the Ask panel's `sessionStore`. |
+| 2 | Session model | **Dedicated per-conversation session** — the participant stashes its Nimbus `sessionId` in the returned `ChatResult.metadata` and reads it back from the last response turn in `context.history` on the next turn. This keys the session to *that* VS Code conversation (history is per-conversation), so concurrent chat tabs never cross-talk; isolated from the Ask panel's `sessionStore`. |
 | 3 | Grounding / citations | **Client-side `searchRanked` + citation chips** — makes local grounding visible and clickable. |
 | 4 | HITL | **Reuse the existing modal router** — register the stream via `registerStreamWithHitl` so `hitlBatch` pops the standard modal. |
 | 5 | Context inputs | **Explicit refs + slash-command selection** — free-form uses only attached `#file`; slash commands use the active selection (or whole file if none); always path-redacted + size-clamped. |
@@ -78,7 +79,7 @@ src/chat-participant/
   participant.ts        # pure handler: (request, deps) -> drives askStream -> emits to a ChatResponseSink
   prompt.ts             # per-command prompt building (reuses redactPath / clampContext from quick-ask.ts)
   citations.ts          # searchRanked hits -> citation descriptors (self-excluded, top-N)
-  session.ts            # rolling sessionId: fresh on empty history, threaded on follow-ups
+  session.ts            # session id from ChatResult.metadata: read priorSessionId in, emit resolved id out (stateless)
   participant-types.ts  # narrow interfaces: ChatRequestLike, ChatResponseSink, CancellationLike, ParticipantDeps
 ```
 
@@ -87,9 +88,15 @@ Plus:
 - A thin real adapter (in `src/extension.ts` or a small `real-participant.ts`)
   that: calls `vscode.chat.createChatParticipant(id, handler)`; adapts
   `vscode.ChatResponseStream` → the narrow `ChatResponseSink`
-  (`markdown` / `reference` / `progress` / `button`); reads `request.references`
-  and the active editor selection through the existing `vscode-shim` seam; and
-  bridges the `CancellationToken` → an `AbortSignal`.
+  (`markdown` / `progress` / `citation`→`anchor(uri, label)` / `button`→`button(Command)`);
+  reads `request.references` and the active editor selection through the existing
+  `vscode-shim` seam; reads `priorSessionId` from the last `ChatResponseTurn` in
+  `context.history` (`turn.result.metadata`) and writes the resolved id back into
+  the returned `ChatResult.metadata`; and bridges the `CancellationToken` → an
+  `AbortSignal`. Every chat API used
+  (`chat.createChatParticipant`, `ChatResponseStream.markdown/anchor/progress/button`,
+  `ChatResult.metadata`, `request.references`, `ChatResponseTurn.result`) is
+  **stable** — verified against `@types/vscode`, no proposed APIs.
 - `contributes.chatParticipants` in `package.json` declaring id
   `nimbus-agent.nimbus`, name `nimbus`, a `description`, and the three commands
   (`explain`, `fix`, `test`) each with a short description. The
@@ -103,19 +110,30 @@ export interface ChatRequestLike {
   prompt: string;
   command?: string;                 // "explain" | "fix" | "test" | undefined
   references: ReadonlyArray<{ id: string; value: unknown }>;
-  isNewConversation: boolean;       // derived from empty context.history in the adapter
+  priorSessionId?: string;          // read from the last response turn's ChatResult.metadata; undefined = new conversation
 }
 
+// A citation carries the REAL local target so VS Code can open it on click, plus
+// a display label. redactPath governs only what is *sent to the Gateway*; a
+// citation target is a local file the user already has, is never sent anywhere,
+// so it keeps its true path. The adapter renders it via anchor(uri, label) for a
+// labeled, clickable link (reference(uri) has no label param).
 export interface CitationRef {
-  title: string;
-  uri?: string;                     // resolvable local target when present
+  label: string;                    // display text, e.g. basename or relative path
+  target: string;                   // real absolute local path / URL (vscode-free; adapter -> vscode.Uri)
 }
 
 export interface ChatResponseSink {
   markdown(text: string): void;
   progress(text: string): void;
-  reference(ref: CitationRef): void;
-  button(title: string, command: string, args?: unknown[]): void;
+  citation(ref: CitationRef): void; // adapter -> response.anchor(uri, label)
+  button(title: string, command: string, args?: unknown[]): void; // adapter -> response.button({ command, title, arguments })
+}
+
+// The pure handler returns the resolved session id; the adapter maps it onto
+// ChatResult.metadata so the next turn in this conversation can thread it.
+export interface ParticipantResult {
+  sessionId?: string;
 }
 
 export interface CancellationLike {
@@ -126,7 +144,6 @@ export interface CancellationLike {
 export interface ParticipantDeps {
   client: () => ParticipantClientLike | undefined;   // undefined = disconnected
   activeEditor: () => { code: string; filePath: string; languageId: string; hasSelection: boolean } | undefined;
-  session: SessionState;                              // rolling sessionId (session.ts)
   registerStreamWithHitl(streamId: string): void;
   unregisterStreamWithHitl(streamId: string): void;
   agent: () => string;                               // askAgent() setting
@@ -146,8 +163,11 @@ export interface ParticipantClientLike {
 The pure `participant.ts` handler runs this sequence:
 
 1. **Disconnected guard.** If `deps.client()` is `undefined`, emit a friendly
-   "Nimbus Gateway isn't connected" markdown note plus a `button` to the existing
-   reconnect/troubleshooter command, and return. No RPC is attempted.
+   "Nimbus Gateway isn't connected" markdown note plus a `button` (rendered by the
+   adapter as `response.button({ command: "nimbus.troubleshootConnection", title:
+   … })` — the command is already registered), and return. No RPC is attempted.
+   `ChatResponseStream.button(command)` is stable API; no `command:`-URI markdown
+   workaround is needed.
 
 2. **Build the prompt** (`prompt.ts`):
    - **Slash command** (`/explain` | `/fix` | `/test`): wrap the user's text in a
@@ -159,17 +179,27 @@ The pure `participant.ts` handler runs this sequence:
      **explicitly attached `#file`** references (redacted + clamped). No implicit
      inclusion of the active file.
 
-3. **Citations** (`citations.ts`): call
-   `searchRanked({ name: <query>, limit: citationLimit })`, self-exclude the active
-   file, and emit each surviving hit as a `reference` chip. This is best-effort —
-   a `searchRanked` failure is logged and swallowed, never blocking the answer.
-   (Runs concurrently with / before the stream; ordering is an implementation
-   detail, but citations must not delay first token materially.)
+3. **Citations** (`citations.ts`): kick off
+   `searchRanked({ name: <query>, limit: citationLimit })` **concurrently** — the
+   handler must **not** `await` it before starting `askStream`. Start the search
+   promise, start streaming immediately, and when the search resolves, self-exclude
+   the active file and emit each surviving hit as a `citation` (adapter →
+   `anchor(uri, label)`). References may be pushed to the response stream at any
+   point during the turn — order relative to tokens does not matter — so the text
+   renders instantly and citations populate a few ms later. Best-effort: a
+   `searchRanked` failure is logged and swallowed, never blocking the answer. The
+   `target` on each `CitationRef` is the hit's **real** local path/URL (so click
+   opens it); only the display `label` may be shortened.
 
-4. **Session** (`session.ts`): if the request is a new conversation
-   (empty history), start fresh — omit `sessionId`. Otherwise thread the stored
-   `sessionId`. After the stream's `done`, capture `done.sessionId` for the next
-   turn. This state is isolated from the Ask panel's `sessionStore`.
+4. **Session** (`session.ts`): read `request.priorSessionId` (the adapter pulls it
+   from the last `ChatResponseTurn`'s `ChatResult.metadata` in `context.history`).
+   If absent (new conversation), start fresh — omit `sessionId`; otherwise thread
+   it into the `askStream` options. Capture the `done.sessionId` and return it as
+   `ParticipantResult.sessionId`, which the adapter writes into this turn's
+   `ChatResult.metadata` for the *next* turn to read. Because `context.history` is
+   per-conversation, this keys the Nimbus session to *this* chat conversation —
+   concurrent chat tabs get independent sessions with no global map or cleanup.
+   Isolated from the Ask panel's `sessionStore`.
 
 5. **Stream** `askStream(prompt, { sessionId?, agent?, signal })`:
    - `agent` comes from the existing `askAgent()` setting (empty ⇒ omit).
@@ -204,8 +234,8 @@ Reuse the exact failure taxonomy already proven in `chat-controller.ts`:
 Additive and independent:
 
 - The Ask webview panel, its commands, and its `sessionStore` are untouched.
-- The participant uses its **own** rolling session state, so the two surfaces do
-  not cross-contaminate memory.
+- The participant uses its **own** per-conversation session (carried in
+  `ChatResult.metadata`), so the two surfaces do not cross-contaminate memory.
 - Both share the same connection manager and the same HITL modal router.
 
 ## Testing (TDD)
@@ -224,8 +254,11 @@ Unit tests live in `test/unit/` under Vitest, mirroring
 - Cancellation aborts the stream (signal fires); HITL `streamId`
   registered then unregistered.
 - Error event / thrown mid-stream / no-content each produce the right message.
-- Session: fresh on empty history, threaded on follow-up, isolated from the Ask
-  panel's session store.
+- Session: no `priorSessionId` (new conversation) omits `sessionId`; a
+  `priorSessionId` is threaded into the stream; the `done.sessionId` is returned as
+  `ParticipantResult.sessionId`. Two independent handler calls with different
+  `priorSessionId`s stay independent (no shared/global state) — the
+  multi-conversation isolation guarantee.
 
 Then the **verify-extension** skill:
 
@@ -245,17 +278,58 @@ Then the **verify-extension** skill:
 
 ## Risks & mitigations
 
-- **Chat API stability at engine `^1.90.0`.** `vscode.chat` +
-  `contributes.chatParticipants` and `request.references` / `response.reference`
-  are stable from 1.90 (May 2024). No proposed APIs are used. Mitigation: keep the
-  vscode-facing adapter thin so any API delta is contained.
+- **Chat API stability.** `vscode.chat` + `contributes.chatParticipants`,
+  `request.references`, `ChatResponseStream.markdown/anchor/progress/button`,
+  `ChatResult.metadata`, and `ChatResponseTurn.result` are all stable (verified
+  against `@types/vscode` 1.125). No proposed APIs are used. Note the labeled
+  citation uses `anchor(uri, title)` (not `reference`, which has no label param).
+  Mitigation: keep the vscode-facing adapter thin so any API delta is contained.
 - **Double retrieval** (agent grounds server-side *and* we call `searchRanked`).
   Accepted: the client-side call exists to make citations *visible*; it is small
   (top-N) and best-effort. Overlap is cosmetic, not incorrect.
-- **Citation targets that aren't local files** (e.g. email items). Render only
-  hits with a resolvable target as clickable references; skip or plain-text the
-  rest. Never fail the turn on an unresolvable citation.
-- **Session identity across multiple concurrent chat conversations.** MVP keeps a
-  single rolling session keyed off "is this a new conversation" (empty history).
-  This is correct for the common single-conversation case; multi-conversation
-  isolation is a future refinement, not an MVP blocker.
+- **Citation targets that aren't local files** (e.g. email items). The `target`
+  is the hit's real path/URL; render only hits with a resolvable local target as
+  clickable citations, skip or plain-text the rest. Redaction never applies to a
+  citation target — it is a local file the user already has and is never sent to
+  the Gateway. Never fail the turn on an unresolvable citation.
+- **HITL modal steals focus from the sidebar chat.** Chat is a sidebar surface; a
+  modal consent dialog can interrupt a user mid-type. Accepted for the MVP to
+  avoid new UI surface and reuse the proven router. Because
+  `ChatResponseStream.button` is available, **inline in-chat consent** (approve/deny
+  buttons wired to commands, correlated by `requestId`) is a viable Phase 3
+  upgrade and should be prioritised there for a native feel.
+- **Multi-conversation isolation — resolved in-design.** The Nimbus session id is
+  carried in `ChatResult.metadata` and read back from the per-conversation
+  `context.history`, so concurrent chat tabs get independent sessions. No global
+  session map, no cleanup. (Superseded the earlier "single rolling session" risk
+  after the 2026-07-18 review.)
+
+## Review disposition (2026-07-18)
+
+Dispositions for [`2026-07-18-chat-participant-design-feedback.md`](./2026-07-18-chat-participant-design-feedback.md),
+each verified against `@types/vscode` 1.125:
+
+1. **Multi-conversation isolation — FIXED, adapted mechanism.** The concern is
+   real. But the suggested fix (a `vscode.ChatSession` id + global map + cleanup)
+   does not fit the API: the handler is `(request, context, response, token)` with
+   no `ChatSession` object and no stable per-conversation id. Adopted instead the
+   idiomatic **`ChatResult.metadata` round-trip** — write the session id into the
+   turn's result, read it back from the last `ChatResponseTurn` in
+   `context.history`. Per-conversation by construction; no global state or cleanup.
+2. **Citation URI vs. label — FIXED.** `CitationRef` now carries the real
+   `target` (opened on click) separate from the display `label`. Clarified that
+   `redactPath` governs only Gateway-bound prompt context; local citation targets
+   are never sent and keep their true path. Sharpened: labeled citations use
+   `anchor(uri, label)` because `reference(uri)` has no label parameter.
+3. **Concurrent search + stream — FIXED.** Request flow now mandates never
+   `await`-ing `searchRanked` before `askStream`; the search runs concurrently and
+   pushes citations when it resolves, so the first token is never delayed.
+4. **Disconnected button — REJECTED (premise incorrect).**
+   `ChatResponseStream.button(command: Command)` **is** stable API (verified), so
+   no `command:`-URI markdown fallback is required. Spec now names the exact
+   command (`nimbus.troubleshootConnection`) and the verified API. No design change
+   beyond that precision.
+5. **HITL modal UX friction — FIXED (doc).** Added an explicit risk: a modal
+   steals focus from the sidebar chat; acceptable for MVP, and — since `button` is
+   available — inline in-chat consent is flagged as the prioritised Phase 3
+   upgrade.
