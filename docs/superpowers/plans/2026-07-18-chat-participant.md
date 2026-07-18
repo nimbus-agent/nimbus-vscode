@@ -101,7 +101,9 @@ export interface ChatResponseSink {
 
 export interface CancellationLike {
   readonly isCancelled: boolean;
-  onCancelled(cb: () => void): void;
+  // Returns a disposable so the handler can unsubscribe in its finally block —
+  // a turn that completes without cancelling must not leak the listener.
+  onCancelled(cb: () => void): { dispose(): void };
 }
 
 export interface ParticipantClientLike {
@@ -126,9 +128,9 @@ export interface ParticipantResult {
 }
 ```
 
-- [ ] **Step 2: Bump the engine floor**
+- [ ] **Step 2: Bump the engine floor (and align the types floor)**
 
-In `package.json`, change the engines floor so the full `ChatResponseStream` part set (`anchor`, `button`) is guaranteed at runtime:
+In `package.json`, raise the engines floor so the full `ChatResponseStream` part set (`anchor`, `button`) is guaranteed at runtime:
 
 ```json
 "engines": {
@@ -136,7 +138,16 @@ In `package.json`, change the engines floor so the full `ChatResponseStream` par
 },
 ```
 
-(`@types/vscode` already resolves to 1.125, so no dependency reinstall is needed — leave `devDependencies` as-is.)
+Also raise the `@types/vscode` **floor** in `devDependencies` to match — not because typecheck would otherwise fail (the installed `@types/vscode` is already `1.125.0`, which satisfies `^1.90.0` and includes every chat API this plan uses), but so the declared compile-time floor never sits *below* the runtime floor:
+
+```json
+"@types/vscode": "^1.95.0",
+```
+
+Then sync the lockfile (the resolved version stays `1.125.0` — this only records the new floor):
+
+Run: `bun install`
+Expected: completes; `bun.lock` updated to record the `^1.95.0` range; no change to the resolved `@types/vscode` version.
 
 - [ ] **Step 3: Run the gate to verify it compiles**
 
@@ -146,7 +157,7 @@ Expected: all PASS; `check-bundle` still reports `vscode` as the only external.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/chat-participant/participant-types.ts package.json
+git add src/chat-participant/participant-types.ts package.json bun.lock
 git commit -m "feat(chat): participant interfaces + engine floor for Chat API"
 ```
 
@@ -580,7 +591,10 @@ function fakeSink(): {
   };
 }
 
-const noCancel: CancellationLike = { isCancelled: false, onCancelled: () => undefined };
+const noCancel: CancellationLike = {
+  isCancelled: false,
+  onCancelled: () => ({ dispose: () => undefined }),
+};
 
 function fakeClient(over: Partial<ParticipantClientLike> = {}): ParticipantClientLike {
   return {
@@ -697,9 +711,16 @@ describe("runParticipantTurn", () => {
     expect(unregisterStreamWithHitl).toHaveBeenCalledWith("stream-9");
   });
 
-  test("aborts the stream signal when cancellation fires", async () => {
+  test("aborts the stream signal when cancellation fires, then disposes the listener", async () => {
     let onCancel = (): void => undefined;
-    const cancel: CancellationLike = { isCancelled: false, onCancelled: (cb) => (onCancel = cb) };
+    const dispose = vi.fn();
+    const cancel: CancellationLike = {
+      isCancelled: false,
+      onCancelled: (cb) => {
+        onCancel = cb;
+        return { dispose };
+      },
+    };
     let capturedSignal: AbortSignal | undefined;
     const client = fakeClient({
       askStream: (_i, opts) => {
@@ -709,9 +730,10 @@ describe("runParticipantTurn", () => {
     });
     await runParticipantTurn(req(), deps({ client: () => client }), fakeSink().sink, cancel);
     expect(capturedSignal).toBeInstanceOf(AbortSignal);
-    expect(capturedSignal?.aborted).toBe(false);
     onCancel();
     expect(capturedSignal?.aborted).toBe(true);
+    // The turn already completed, so the listener must have been disposed.
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   test("an error event surfaces a message and logs it", async () => {
@@ -840,14 +862,18 @@ export async function runParticipantTurn(
   if (agentName.length > 0) opts.agent = agentName;
 
   const ac = new AbortController();
+  // Track the cancellation subscription so it is disposed on every exit path — a
+  // turn that finishes without being cancelled must not leak the listener.
+  let cancelSub: { dispose(): void } | undefined;
   if (cancel.isCancelled) ac.abort();
-  else cancel.onCancelled(() => ac.abort());
+  else cancelSub = cancel.onCancelled(() => ac.abort());
   opts.signal = ac.signal;
 
   let handle: AskStreamHandle;
   try {
     handle = client.askStream(prompt, opts);
   } catch (e) {
+    cancelSub?.dispose();
     deps.log.error(`participant: askStream failed to start: ${errMsg(e)}`);
     sink.markdown(`Nimbus couldn't start the request: ${errMsg(e)}`);
     await citations;
@@ -889,6 +915,7 @@ export async function runParticipantTurn(
     );
   } finally {
     if (handle.streamId.length > 0) deps.unregisterStreamWithHitl(handle.streamId);
+    cancelSub?.dispose();
   }
 
   await citations;
@@ -1092,9 +1119,9 @@ export function registerNimbusChatParticipant(opts: {
       get isCancelled(): boolean {
         return token.isCancellationRequested;
       },
-      onCancelled: (cb: () => void): void => {
-        token.onCancellationRequested(() => cb());
-      },
+      // Return the vscode.Disposable so runParticipantTurn can dispose it — the
+      // token outlives a normally-completing turn, so an undisposed listener leaks.
+      onCancelled: (cb: () => void): { dispose(): void } => token.onCancellationRequested(cb),
     };
     const result = await runParticipantTurn(req, opts.deps, sink, cancel);
     return { metadata: toResultMetadata(result.sessionId) };
@@ -1102,6 +1129,16 @@ export function registerNimbusChatParticipant(opts: {
   return vscode.chat.createChatParticipant(PARTICIPANT_ID, handler);
 }
 ```
+
+**Attached-file size (deferred, by design):** `resolveReferences` calls
+`openTextDocument` then `getText()`, which loads the whole referenced file into
+memory before `prompt.ts` clamps it — a very large `#file` could cause a brief
+stutter. An explicit `fs.stat` pre-check is deliberately **not** added for the
+MVP (YAGNI): VS Code's `openTextDocument` already rejects files over its max size
+(~50 MB by default), and that rejection is caught by the `try/catch` above —
+oversized references are logged and skipped, not loaded. The prompt-side
+`clampContext` bounds what is actually sent. This is recorded as a known
+performance risk; a size-aware skip is a cheap future follow-up if it ever bites.
 
 - [ ] **Step 5: Wire it into `extension.ts`**
 
@@ -1275,4 +1312,26 @@ Release Please will open/update the release PR from the conventional commits.
 
 **Type consistency:** `runParticipantTurn(req, deps, sink, cancel)` signature is identical across Tasks 5 and 6. `ParticipantDeps` fields (`client`, `registerStreamWithHitl`, `unregisterStreamWithHitl`, `agent`, `citationLimit`, `reconnectCommand`, `log`) match between Task 1, the Task 5 fake, and the Task 6 wiring. `CitationRef` (`label`/`target`) is consistent across Tasks 1, 4, 6. `readPriorSessionId`/`toResultMetadata`/`NIMBUS_SESSION_META_KEY` names match between Task 3 and Task 6. `buildParticipantPrompt` and `buildCitations` signatures match their consumers.
 
-**Note on `vitest.config.ts` (Task 6, Step 7):** confirm how `real-chat-panel.ts` is excluded before editing — if it is covered by a directory/glob pattern, the new file may already be excluded and no edit is needed.
+**Note on `vitest.config.ts` (Task 6, Step 7):** confirmed `real-chat-panel.ts` is excluded as a literal path in the coverage `exclude` list, so the new `real-participant.ts` literal must be added there.
+
+## Review disposition (2026-07-18)
+
+Dispositions for [`2026-07-18-chat-participant-feedback.md`](./2026-07-18-chat-participant-feedback.md), each verified against the installed toolchain:
+
+1. **`@types/vscode` bump — FIXED (mechanism), REJECTED (stated reasoning).** The
+   premise is wrong: `@types/vscode` `1.125.0` **is** installed and already
+   satisfies the existing `^1.90.0` range, and it includes every chat API this
+   plan uses (`button`, `anchor`, `ChatResult.metadata`) — so `bun run typecheck`
+   would **not** fail. But aligning the compile-time floor with the new runtime
+   floor is good hygiene, so Task 1 Step 2 now raises `@types/vscode` to `^1.95.0`
+   and runs `bun install` to sync `bun.lock` (resolved version unchanged).
+2. **Cancellation listener leak — FIXED.** Correct catch.
+   `CancellationLike.onCancelled` now returns `{ dispose(): void }`;
+   `runParticipantTurn` tracks the subscription and disposes it on every exit path
+   (Task 1 interface, Task 5 handler + test, Task 6 adapter returns the
+   `token.onCancellationRequested` disposable).
+3. **Large attached-file performance — DEFERRED (documented).** Legitimate but
+   minor, and the feedback itself scoped it as post-MVP. No `fs.stat` pre-check is
+   added (YAGNI): `openTextDocument` already rejects oversized files and the
+   existing `try/catch` logs-and-skips them, while `clampContext` bounds what is
+   sent. Recorded as a known perf risk in Task 6 with a cheap follow-up noted.
