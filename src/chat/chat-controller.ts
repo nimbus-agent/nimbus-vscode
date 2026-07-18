@@ -122,17 +122,49 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
         throw new Error("Stream in progress; click Stop or wait for it to finish.");
       }
       const opts = buildAskStreamOptions(deps.sessionStore, deps.agent);
-      const handle = deps.client.askStream(input, opts);
+      let handle: AskStreamHandle;
+      try {
+        handle = deps.client.askStream(input, opts);
+      } catch (e) {
+        deps.log.error(`ask: askStream failed to start: ${errMsg(e)}`);
+        post({ type: "userMessage", text: input });
+        post({ type: "error", message: `Nimbus couldn't start the request: ${errMsg(e)}` });
+        return;
+      }
       active = handle;
       post({ type: "userMessage", text: input });
+      let sawContent = false;
       try {
         let registered = false;
         for await (const ev of handle) {
+          if (ev.type !== "done") sawContent = true;
           if (!registered && handle.streamId.length > 0) {
             deps.registerStreamWithHitl(handle.streamId);
             registered = true;
           }
           if (await handleEvent(ev, handle)) break;
+        }
+        // A stream that ends without any token/error/HITL event produced no
+        // answer — common when the Gateway has no working LLM provider. An
+        // empty assistant bubble tells the user nothing, so say so explicitly.
+        // Guard on `active === handle` so a superseded stream stays silent.
+        if (active === handle && !sawContent) {
+          post({
+            type: "error",
+            message:
+              "Nimbus reached the Gateway, but no answer came back — this usually means no language model is set up yet. Add an LLM provider (or API key) in your Gateway configuration, then try again.",
+          });
+        }
+      } catch (e) {
+        // The client can surface a mid-stream failure (e.g. the agent hitting
+        // "No LLM provider available") by throwing from the iterator rather than
+        // yielding an error event. Make it visible instead of failing silently.
+        deps.log.error(`ask: stream failed: ${errMsg(e)}`);
+        if (active === handle) {
+          post({
+            type: "error",
+            message: `Nimbus ran into a problem answering: ${errMsg(e)}. If that mentions a missing model or invalid API key, set up an LLM provider in your Gateway and try again.`,
+          });
         }
       } finally {
         if (handle.streamId.length > 0) {

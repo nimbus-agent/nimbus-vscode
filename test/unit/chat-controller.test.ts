@@ -308,6 +308,53 @@ describe("ChatController", () => {
     expect(ctrl.isStreaming()).toBe(false);
   });
 
+  test("surfaces a thrown stream error as an error message in the panel", async () => {
+    // The Gateway agent can fail mid-stream (e.g. "No LLM provider available"),
+    // which the client surfaces by throwing from the async iterator rather than
+    // yielding an error event. That must still reach the user as a visible turn.
+    const throwing = {
+      streamId: "s1",
+      cancel: vi.fn(async () => undefined),
+      [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
+        return {
+          async next(): Promise<IteratorResult<StreamEvent>> {
+            throw new Error("No LLM provider available");
+          },
+        };
+      },
+    } as unknown as AskStreamHandle;
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => throwing }), { panel }),
+    );
+    await ctrl.start("hi");
+    const err = posted.find((m) => (m as { type: string }).type === "error") as
+      | { message?: string }
+      | undefined;
+    expect(err?.message).toContain("No LLM provider available");
+    expect(ctrl.isStreaming()).toBe(false);
+  });
+
+  test("shows a no-answer notice when the stream ends without producing content", async () => {
+    // A Gateway with no working model can complete the stream immediately with
+    // an empty reply and no tokens; an empty assistant bubble tells the user
+    // nothing, so surface an explicit notice instead.
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () => streamOf([{ type: "done", reply: "", sessionId: "" }]),
+        }),
+        { panel },
+      ),
+    );
+    await ctrl.start("hi");
+    const err = posted.find((m) => (m as { type: string }).type === "error") as
+      | { message?: string }
+      | undefined;
+    expect(err?.message).toMatch(/no answer|LLM provider|Gateway/i);
+  });
+
   test("a hitlBatch event posts an inline HITL prompt", async () => {
     const { panel, posted } = capturingPanel();
     const ctrl = createChatController(
