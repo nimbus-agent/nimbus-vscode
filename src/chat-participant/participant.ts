@@ -66,6 +66,8 @@ export async function runParticipantTurn(
   // so the first token is never delayed. Await it at the end so late references
   // still land before the turn completes.
   const excludeBasename = req.selection !== undefined ? redactPath(req.selection.path) : undefined;
+  // Best-effort and intentionally not tied to `ac.signal`/cancellation: on cancel it
+  // simply resolves on its own, and a late sink.citation() after cancellation is harmless.
   const citations = emitCitations(client, deps, sink, req.prompt, excludeBasename);
 
   const opts: AskStreamOptions = {};

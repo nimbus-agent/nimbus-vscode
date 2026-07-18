@@ -65,6 +65,9 @@ async function adaptRequest(
     const sel = readActiveSelection();
     if (sel !== undefined) req.selection = sel;
   } else {
+    // By design (spec decision #5): slash commands read the active selection; only
+    // free-form turns pull in #file references. A slash command issued with #file
+    // refs intentionally ignores them.
     req.attachments = await resolveReferences(request.references, log);
   }
   return req;
@@ -90,18 +93,24 @@ export function registerNimbusChatParticipant(opts: { deps: ParticipantDeps; log
   dispose(): void;
 } {
   const handler: vscode.ChatRequestHandler = async (request, context, response, token) => {
-    const req = await adaptRequest(request, context, opts.log);
-    const sink = adaptSink(response);
-    const cancel = {
-      get isCancelled(): boolean {
-        return token.isCancellationRequested;
-      },
-      // Return the vscode.Disposable so runParticipantTurn can dispose it — the
-      // token outlives a normally-completing turn, so an undisposed listener leaks.
-      onCancelled: (cb: () => void): { dispose(): void } => token.onCancellationRequested(cb),
-    };
-    const result = await runParticipantTurn(req, opts.deps, sink, cancel);
-    return { metadata: toResultMetadata(result.sessionId) };
+    try {
+      const req = await adaptRequest(request, context, opts.log);
+      const sink = adaptSink(response);
+      const cancel = {
+        get isCancelled(): boolean {
+          return token.isCancellationRequested;
+        },
+        // Return the vscode.Disposable so runParticipantTurn can dispose it — the
+        // token outlives a normally-completing turn, so an undisposed listener leaks.
+        onCancelled: (cb: () => void): { dispose(): void } => token.onCancellationRequested(cb),
+      };
+      const result = await runParticipantTurn(req, opts.deps, sink, cancel);
+      return { metadata: toResultMetadata(result.sessionId) };
+    } catch (e) {
+      opts.log.error(`participant: unhandled error handling request: ${errMsg(e)}`);
+      response.markdown("Nimbus ran into an unexpected problem handling that request.");
+      return { metadata: {} };
+    }
   };
   return vscode.chat.createChatParticipant(PARTICIPANT_ID, handler);
 }
