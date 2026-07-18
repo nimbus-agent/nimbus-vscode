@@ -237,14 +237,17 @@ function bootstrap(): void {
   });
 
   window.addEventListener("message", (ev) => {
-    // Origin verification (CodeQL js/missing-origin-check, Sonar S2819):
-    // VS Code webviews receive messages from the extension host frame that
-    // embeds this iframe. The host sets `ev.source === window.parent` and
-    // uses a `vscode-webview://` origin scheme. Both guards must stay inline
-    // — extracting them into a helper hides the check from static analysis,
-    // which is why commit 985ab9cc reverted that indirection in May 2026.
-    if (ev.source !== window.parent) return;
-    if (ev.origin === "" || !ev.origin.startsWith("vscode-webview")) return;
+    // Origin verification (CodeQL js/missing-origin-check, Sonar S2819).
+    // VS Code posts host->webview messages from a `vscode-webview://<id>`
+    // origin — a browser-assigned, non-spoofable opaque origin that only the
+    // webview host can produce, so this is the real trust boundary. We do NOT
+    // additionally require `ev.source === window.parent`: on VS Code's
+    // MessageChannel transport the source is the channel port (neither
+    // window.parent nor null), so that check rejected every legitimate message
+    // and left the panel blank. The anchored `vscode-webview://` prefix also
+    // rejects an empty/foreign origin. Kept inline so static analysis still
+    // sees the origin check (see 985ab9cc).
+    if (!ev.origin.startsWith("vscode-webview://")) return;
     const data = ev.data as ExtensionToWebview;
     if (data === null || typeof data !== "object" || typeof data.type !== "string") return;
     applyMessage(r, data);

@@ -24,12 +24,15 @@ interface VsCodeApi {
   setState: (s: unknown) => void;
 }
 
-// The VS Code host posts messages from the embedding (parent) frame with a
-// `vscode-webview://` origin. main.ts enforces BOTH `ev.source === window.parent`
-// and a non-empty `vscode-webview` origin (an inline CodeQL/Sonar origin check).
-// dispatch() mirrors a trusted host message by default; individual tests override
-// `origin`/`source` to exercise those guards. `source` is set via defineProperty
-// because jsdom's MessageEvent constructor does not accept a Window for `source`.
+// The VS Code host posts messages with a `vscode-webview://<id>` origin — a
+// browser-assigned, non-spoofable opaque origin only the webview host can
+// produce. That origin is main.ts's trust boundary (an inline CodeQL/Sonar
+// origin check). It does NOT require `ev.source === window.parent`: on VS Code's
+// MessageChannel transport the source is the channel port, not window.parent, so
+// such a check would drop every legitimate message. dispatch() mirrors a trusted
+// host message by default; individual tests override `origin`/`source` to
+// exercise the guard. `source` is set via defineProperty because jsdom's
+// MessageEvent constructor does not accept a Window for `source`.
 function dispatch(origin: string, data: unknown, source: unknown = window.parent): void {
   const ev = new MessageEvent("message", { origin, data });
   Object.defineProperty(ev, "source", { value: source, configurable: true });
@@ -71,9 +74,13 @@ describe("webview message listener", () => {
     expect(transcriptHtml()).not.toContain("smuggled");
   });
 
-  test("drops messages whose source is not the parent frame", () => {
-    dispatch("vscode-webview://xyz", { type: "userMessage", text: "no-source-payload" }, null);
-    expect(transcriptHtml()).not.toContain("no-source-payload");
+  test("renders a trusted vscode-webview message regardless of source (MessageChannel transport)", () => {
+    // Regression: VS Code's MessageChannel transport delivers host messages with
+    // a source that is the channel port, not window.parent. Requiring
+    // source === window.parent dropped every real message and left the panel
+    // blank. The non-spoofable vscode-webview:// origin is the real guard.
+    dispatch("vscode-webview://xyz", { type: "userMessage", text: "channel-transport" }, null);
+    expect(transcriptHtml()).toContain("channel-transport");
   });
 
   test("ignores payloads that do not look like ExtensionToWebview", () => {
