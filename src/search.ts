@@ -59,8 +59,11 @@ export function parseRankedItem(raw: unknown): RankedResult | undefined {
     // The client types this as a bare `readonly string[]` with no documented
     // contract, so whether entries are canonical URLs or index primary keys —
     // and whether the item itself is included — is still unconfirmed against a
-    // live Gateway. Tracked in issue #19. If entries turn out to be primary
-    // keys, this under-counts by at most one; it never over-counts.
+    // live Gateway. Tracked in issue #19. The guard is therefore best-effort in
+    // BOTH directions, and the badge is advisory until #19 settles the shape:
+    // if entries are primary keys the filter never matches, so a self-entry
+    // would be counted (over-count); if entries are URLs, a genuine duplicate
+    // sharing this item's canonical URL is filtered out (under-count).
     const count = duplicates.filter(
       (d): d is string => typeof d === "string" && d.length > 0 && d !== url,
     ).length;
