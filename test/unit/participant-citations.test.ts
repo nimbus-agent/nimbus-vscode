@@ -8,7 +8,9 @@ function row(name: string, canonicalUrl?: string): Record<string, unknown> {
 
 describe("buildCitations", () => {
   test("maps rows with a url to {label, target}", () => {
-    const out = buildCitations([row("a.ts", "file:///w/a.ts"), row("b.ts", "file:///w/b.ts")], { limit: 5 });
+    const out = buildCitations([row("a.ts", "file:///w/a.ts"), row("b.ts", "file:///w/b.ts")], {
+      limit: 5,
+    });
     expect(out).toEqual([
       { label: "a.ts", target: "file:///w/a.ts" },
       { label: "b.ts", target: "file:///w/b.ts" },
@@ -20,10 +22,13 @@ describe("buildCitations", () => {
   });
 
   test("self-excludes the active file by basename", () => {
-    const out = buildCitations([row("self.ts", "file:///w/self.ts"), row("other.ts", "file:///w/other.ts")], {
-      excludeBasename: "self.ts",
-      limit: 5,
-    });
+    const out = buildCitations(
+      [row("self.ts", "file:///w/self.ts"), row("other.ts", "file:///w/other.ts")],
+      {
+        excludeBasename: "self.ts",
+        limit: 5,
+      },
+    );
     expect(out.map((c) => c.label)).toEqual(["other.ts"]);
   });
 
@@ -33,6 +38,8 @@ describe("buildCitations", () => {
   });
 
   test("skips malformed rows without throwing", () => {
-    expect(buildCitations([null, 42, row("ok.ts", "file:///w/ok.ts")], { limit: 5 })).toHaveLength(1);
+    expect(buildCitations([null, 42, row("ok.ts", "file:///w/ok.ts")], { limit: 5 })).toHaveLength(
+      1,
+    );
   });
 });

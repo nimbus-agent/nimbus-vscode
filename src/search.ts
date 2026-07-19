@@ -55,6 +55,12 @@ export function parseRankedItem(raw: unknown): RankedResult | undefined {
     // conservative guard so the badge reflects *other* copies even if the
     // Gateway includes the primary in the array. (`url` is undefined-safe:
     // when absent, no entry equals it, so nothing is over-filtered.)
+    //
+    // The client types this as a bare `readonly string[]` with no documented
+    // contract, so whether entries are canonical URLs or index primary keys —
+    // and whether the item itself is included — is still unconfirmed against a
+    // live Gateway. Tracked in issue #19. If entries turn out to be primary
+    // keys, this under-counts by at most one; it never over-counts.
     const count = duplicates.filter(
       (d): d is string => typeof d === "string" && d.length > 0 && d !== url,
     ).length;

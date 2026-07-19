@@ -32,10 +32,15 @@ describe("buildTroubleshooter", () => {
       { autoStartGateway: true, platform: "linux" },
     );
     expect(r.level).toBe("warn");
-    expect(commandsOf({ kind: "disconnected", socketPath: "/run/n.sock", reason: "x" }, {
-      autoStartGateway: true,
-      platform: "linux",
-    })).toEqual(["nimbus.reconnect", "nimbus.openLogs"]);
+    expect(
+      commandsOf(
+        { kind: "disconnected", socketPath: "/run/n.sock", reason: "x" },
+        {
+          autoStartGateway: true,
+          platform: "linux",
+        },
+      ),
+    ).toEqual(["nimbus.reconnect", "nimbus.openLogs"]);
   });
 
   test("permission-denied on Unix mentions chmod/chown and offers Edit setting", () => {

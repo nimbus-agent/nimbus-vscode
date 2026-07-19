@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { buildParticipantPrompt, PARTICIPANT_MAX_TOTAL_CONTEXT_CHARS } from "../../src/chat-participant/prompt.js";
 import type { ParticipantRequest } from "../../src/chat-participant/participant-types.js";
+import {
+  buildParticipantPrompt,
+  PARTICIPANT_MAX_TOTAL_CONTEXT_CHARS,
+} from "../../src/chat-participant/prompt.js";
 
 function req(over: Partial<ParticipantRequest>): ParticipantRequest {
   return { prompt: "", attachments: [], ...over };
@@ -15,7 +18,9 @@ describe("buildParticipantPrompt", () => {
     const out = buildParticipantPrompt(
       req({
         prompt: "what is this",
-        attachments: [{ path: "/home/me/src/a.ts", languageId: "typescript", code: "const a = 1;" }],
+        attachments: [
+          { path: "/home/me/src/a.ts", languageId: "typescript", code: "const a = 1;" },
+        ],
       }),
     );
     expect(out).toContain("what is this");
@@ -38,7 +43,11 @@ describe("buildParticipantPrompt", () => {
 
   test("slash command with extra prompt text keeps both instruction and text", () => {
     const out = buildParticipantPrompt(
-      req({ command: "fix", prompt: "focus on the loop", selection: { path: "a.ts", languageId: "typescript", code: "x" } }),
+      req({
+        command: "fix",
+        prompt: "focus on the loop",
+        selection: { path: "a.ts", languageId: "typescript", code: "x" },
+      }),
     );
     expect(out).toContain("focus on the loop");
     expect(out.toLowerCase()).toContain("fix");

@@ -86,9 +86,16 @@ function req(over: Partial<ParticipantRequest> = {}): ParticipantRequest {
 describe("runParticipantTurn", () => {
   test("disconnected → friendly note + reconnect button, no stream started", async () => {
     const f = fakeSink();
-    const result = await runParticipantTurn(req(), deps({ client: () => undefined }), f.sink, noCancel);
+    const result = await runParticipantTurn(
+      req(),
+      deps({ client: () => undefined }),
+      f.sink,
+      noCancel,
+    );
     expect(f.md.join(" ")).toMatch(/connect/i);
-    expect(f.buttons).toEqual([{ title: expect.any(String), command: "nimbus.troubleshootConnection" }]);
+    expect(f.buttons).toEqual([
+      { title: expect.any(String), command: "nimbus.troubleshootConnection" },
+    ]);
     expect(result).toEqual({});
   });
 
@@ -102,7 +109,12 @@ describe("runParticipantTurn", () => {
           { type: "done", reply: "Hello world", sessionId: "sess-1" },
         ]),
     });
-    const result = await runParticipantTurn(req(), deps({ client: () => client }), f.sink, noCancel);
+    const result = await runParticipantTurn(
+      req(),
+      deps({ client: () => client }),
+      f.sink,
+      noCancel,
+    );
     expect(f.md.join("")).toBe("Hello world");
     expect(result).toEqual({ sessionId: "sess-1" });
   });
@@ -110,18 +122,26 @@ describe("runParticipantTurn", () => {
   test("emits citations from searchRanked", async () => {
     const f = fakeSink();
     const client = fakeClient({
-      searchRanked: async () => [
-        { name: "a.ts", service: "fs", score: 1, canonicalUrl: "file:///w/a.ts" },
-      ] as never,
+      searchRanked: async () =>
+        [{ name: "a.ts", service: "fs", score: 1, canonicalUrl: "file:///w/a.ts" }] as never,
     });
-    await runParticipantTurn(req({ prompt: "auth flow" }), deps({ client: () => client }), f.sink, noCancel);
+    await runParticipantTurn(
+      req({ prompt: "auth flow" }),
+      deps({ client: () => client }),
+      f.sink,
+      noCancel,
+    );
     expect(f.citations).toEqual([{ label: "a.ts", target: "file:///w/a.ts" }]);
   });
 
   test("a failing searchRanked does not block the answer", async () => {
     const f = fakeSink();
     const client = fakeClient({
-      askStream: () => streamOf([{ type: "token", text: "answer" }, { type: "done", reply: "answer", sessionId: "s" }]),
+      askStream: () =>
+        streamOf([
+          { type: "token", text: "answer" },
+          { type: "done", reply: "answer", sessionId: "s" },
+        ]),
       searchRanked: async () => {
         throw new Error("index down");
       },
@@ -139,7 +159,12 @@ describe("runParticipantTurn", () => {
         return streamOf([{ type: "done", reply: "", sessionId: "s2" }]);
       },
     });
-    await runParticipantTurn(req({ priorSessionId: "prev" }), deps({ client: () => client }), fakeSink().sink, noCancel);
+    await runParticipantTurn(
+      req({ priorSessionId: "prev" }),
+      deps({ client: () => client }),
+      fakeSink().sink,
+      noCancel,
+    );
     expect(seen[0]?.sessionId).toBe("prev");
   });
 
@@ -151,7 +176,12 @@ describe("runParticipantTurn", () => {
         return streamOf([{ type: "done", reply: "", sessionId: "s" }]);
       },
     });
-    await runParticipantTurn(req(), deps({ client: () => client, agent: () => "coder" }), fakeSink().sink, noCancel);
+    await runParticipantTurn(
+      req(),
+      deps({ client: () => client, agent: () => "coder" }),
+      fakeSink().sink,
+      noCancel,
+    );
     expect(seen[0]?.agent).toBe("coder");
   });
 
@@ -159,7 +189,14 @@ describe("runParticipantTurn", () => {
     const registerStreamWithHitl = vi.fn();
     const unregisterStreamWithHitl = vi.fn();
     const client = fakeClient({
-      askStream: () => streamOf([{ type: "token", text: "x" }, { type: "done", reply: "x", sessionId: "s" }], "stream-9"),
+      askStream: () =>
+        streamOf(
+          [
+            { type: "token", text: "x" },
+            { type: "done", reply: "x", sessionId: "s" },
+          ],
+          "stream-9",
+        ),
     });
     await runParticipantTurn(
       req(),
@@ -199,7 +236,9 @@ describe("runParticipantTurn", () => {
   test("an error event surfaces a message and logs it", async () => {
     const f = fakeSink();
     const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
-    const client = fakeClient({ askStream: () => streamOf([{ type: "error", code: "E", message: "kaboom" }]) });
+    const client = fakeClient({
+      askStream: () => streamOf([{ type: "error", code: "E", message: "kaboom" }]),
+    });
     await runParticipantTurn(req(), deps({ client: () => client, log }), f.sink, noCancel);
     expect(f.md.join(" ")).toContain("kaboom");
     expect(log.error).toHaveBeenCalled();
@@ -207,7 +246,9 @@ describe("runParticipantTurn", () => {
 
   test("a stream that ends with no content shows the no-LLM notice", async () => {
     const f = fakeSink();
-    const client = fakeClient({ askStream: () => streamOf([{ type: "done", reply: "", sessionId: "" }]) });
+    const client = fakeClient({
+      askStream: () => streamOf([{ type: "done", reply: "", sessionId: "" }]),
+    });
     await runParticipantTurn(req(), deps({ client: () => client }), f.sink, noCancel);
     expect(f.md.join(" ")).toMatch(/no answer|LLM provider|Gateway/i);
   });
@@ -233,7 +274,12 @@ describe("runParticipantTurn", () => {
   test("empty prompt with no context nudges the user, no stream", async () => {
     const f = fakeSink();
     const askStream = vi.fn();
-    await runParticipantTurn(req({ prompt: "   " }), deps({ client: () => fakeClient({ askStream }) }), f.sink, noCancel);
+    await runParticipantTurn(
+      req({ prompt: "   " }),
+      deps({ client: () => fakeClient({ askStream }) }),
+      f.sink,
+      noCancel,
+    );
     expect(askStream).not.toHaveBeenCalled();
     expect(f.md.join(" ")).toMatch(/ask me|\/explain/i);
   });
@@ -303,7 +349,12 @@ describe("runParticipantTurn", () => {
       },
     } as unknown as AskStreamHandle;
     const client = fakeClient({ askStream: () => throwing });
-    const result = await runParticipantTurn(req(), deps({ client: () => client }), f.sink, alreadyCancelled);
+    const result = await runParticipantTurn(
+      req(),
+      deps({ client: () => client }),
+      f.sink,
+      alreadyCancelled,
+    );
     expect(f.md.join(" ")).not.toMatch(/ran into a problem/);
     expect(result).toEqual({});
   });

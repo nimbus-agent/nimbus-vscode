@@ -19,9 +19,16 @@ That is why, for the Gateway-backed items, the phase boundary that matters most
 is "does the RPC exist yet?":
 
 - **Phases 1–3** need nothing new from the SDK. They deepen surfaces and exploit
-  RPCs that a published client already exposes (through `0.4.0`).
+  RPCs that a published client already exposes (through `0.5.0`, the latest
+  published version — it added no RPCs over `0.4.0`).
 - **Phase 4** is blocked until a published `@nimbus-dev/client` surfaces the
   required RPC, typed. An item graduates out of Phase 4 the moment its RPC ships.
+  As of `0.5.0` the client's full method list is `open`, `agentInvoke`,
+  `askStream`, `subscribeHitl`, `getSessionTranscript`, `cancelStream`,
+  `queryItems`, `searchRanked`, `querySql`, `auditList`, `egressHead`,
+  `egressList`, `egressVerify`, `egressProveWindow`, `close` — every one of which
+  the extension already consumes. So no Phase 4 item is unblocked today, and
+  none is a version bump away.
 
 The columns below name the enabling client RPC (or, for Phase 4, the new SDK
 capability required) so the split is verifiable, not aspirational. Effort is a

@@ -3,9 +3,9 @@ import { describe, expect, test } from "vitest";
 import {
   buildAskPrompt,
   groupByService,
+  type IndexItem,
   iconForItemType,
   iconForService,
-  type IndexItem,
   indexToTree,
   labelForService,
   parseIndexRow,

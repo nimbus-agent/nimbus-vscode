@@ -28,7 +28,8 @@ function fakeWindow(answer: string | undefined): WindowApi {
     createQuickPick: vi.fn(),
     registerTreeDataProvider: vi.fn(() => ({ dispose: () => undefined })),
     activeTextEditor: undefined,
-    withProgress: (async (_opts: unknown, task: () => Promise<unknown>) => task()) as WindowApi["withProgress"],
+    withProgress: (async (_opts: unknown, task: () => Promise<unknown>) =>
+      task()) as WindowApi["withProgress"],
   };
 }
 

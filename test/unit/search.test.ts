@@ -93,8 +93,12 @@ describe("parseRankedItem", () => {
   test("omits duplicateCount when missing, empty, non-array, or all-invalid", () => {
     expect("duplicateCount" in (parseRankedItem(row()) as object)).toBe(false);
     expect("duplicateCount" in (parseRankedItem(row({ duplicates: [] })) as object)).toBe(false);
-    expect("duplicateCount" in (parseRankedItem(row({ duplicates: "nope" })) as object)).toBe(false);
-    expect("duplicateCount" in (parseRankedItem(row({ duplicates: ["", 7] })) as object)).toBe(false);
+    expect("duplicateCount" in (parseRankedItem(row({ duplicates: "nope" })) as object)).toBe(
+      false,
+    );
+    expect("duplicateCount" in (parseRankedItem(row({ duplicates: ["", 7] })) as object)).toBe(
+      false,
+    );
   });
 });
 

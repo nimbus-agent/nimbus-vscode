@@ -6,7 +6,7 @@ these commands see [architecture.md](./architecture.md).
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+ (package manager + test runner)
-- VS Code 1.90+ (to run the Extension Development Host)
+- VS Code 1.95+ (to run the Extension Development Host — matches `engines.vscode` in `package.json`)
 - A running [Nimbus Gateway](https://nimbus-agent.dev/user-guide/install/) for manual testing
   (Ask/Search need a Gateway to talk to over IPC)
 
@@ -21,20 +21,25 @@ bun install
 | Command | What it does |
 | --- | --- |
 | `bun run typecheck` | `tsc --noEmit` (strict, no emit) |
-| `bun run lint` | `biome check src/` |
+| `bun run lint` | `biome check .` (the whole repo — `src/`, `test/`, `scripts/`) |
 | `bun run test` | `vitest run` (unit tests) |
 | `bun run test:coverage` | tests with V8 coverage |
 | `bun run build` | esbuild bundles into `dist/` + `media/` |
 | `bun run watch` | `build --watch` — rebuild on save |
 | `bun run check-bundle` | assert the bundle keeps `vscode` as its only external (run after `build`) |
+| `bun run check-vsix-contents` | assert the `.vsix` ships only allowlisted files (run after `build`) |
+| `bun run check-settings-docs` | assert every `nimbus.*` setting is documented |
 | `bun run clean` | remove build artifacts |
 | `bun run package` | produce a `.vsix` via `vsce` (`--no-dependencies`) |
 
 The full pre-PR gate (the same one CI runs) is:
 
 ```bash
-bun run typecheck && bun run lint && bun run test && bun run build && bun run check-bundle
+bun run typecheck && bun run lint && bun run check-settings-docs && \
+  bun run test && bun run build && bun run check-bundle && bun run check-vsix-contents
 ```
+
+The two `check-*` steps that inspect build output must run **after** `build`.
 
 ## Run it in VS Code (F5)
 
@@ -74,5 +79,7 @@ When adding code:
 
 TypeScript **strict**, **no `any`** (use `unknown` for external data). Log via
 the output channel, never `console` (Biome's `noConsole` fails the lint in
-`src/`). The full rule set is in [`biome.json`](../biome.json); the editor is set
-up to format with Biome on save via [`.vscode/settings.json`](../.vscode/settings.json).
+`src/`; it is turned off for `test/` and `scripts/`, where console output is the
+interface). The full rule set is in [`biome.json`](../biome.json); the editor is
+set up to format with Biome on save via
+[`.vscode/settings.json`](../.vscode/settings.json).
