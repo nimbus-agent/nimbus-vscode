@@ -37,8 +37,16 @@ Repository secrets:
 | Secret | What | Why |
 | --- | --- | --- |
 | `RELEASE_PLEASE_PAT` | Fine-grained PAT — **Contents: RW**, **Pull requests: RW**, **Issues: RW**, this repo only | Release Please pushes the tag as this identity so `publish.yml` fires (with only the default `GITHUB_TOKEN`, the release PR opens but the tag never triggers publishing). Issues RW lets it create the `autorelease:*` labels on the first run. |
-| `VSCE_PAT` | Azure DevOps PAT, **Marketplace (Manage)**, publisher `nimbus-agent` | Marketplace publish (in the `release` environment). |
-| `OVSX_PAT` | Open VSX token, namespace `nimbus-agent` | Open VSX publish (in the `release` environment). |
+| `VSCE_PAT` | Azure DevOps PAT, **Marketplace (Manage)**, publisher `nimbus-agent` | Marketplace publish. |
+| `OVSX_PAT` | Open VSX token, namespace `nimbus-agent` | Open VSX publish. |
+
+> **Note on the `release` environment.** `publish.yml`'s job declares
+> `environment: release`, but `VSCE_PAT` and `OVSX_PAT` are currently configured
+> as **repository** secrets, and the `release` environment has no protection
+> rules. Publishing works, but the environment provides no approval gate or
+> secret isolation today. To get that isolation, move both secrets onto the
+> `release` environment (Settings → Environments → release) and add a required
+> reviewer; until then, treat any workflow on this repo as able to read them.
 
 Also confirm no **tag protection rule / ruleset** (or "require signed tags") blocks
 the PAT actor from creating `v*` tags (Settings → Rules/Tags).

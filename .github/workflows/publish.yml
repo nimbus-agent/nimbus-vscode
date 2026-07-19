@@ -63,6 +63,11 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      # Same six pre-build gates ci.yml runs. A release must not be able to
+      # publish something a PR would have been blocked for.
+      - name: Check settings docs
+        run: bun run check-settings-docs
+
       - name: Test
         run: bun run test
         env:
@@ -86,6 +91,9 @@ jobs:
 
       - name: Verify bundle invariant (vscode is the only external)
         run: bun run check-bundle
+
+      - name: Verify .vsix ships only the allowlisted files
+        run: bun run check-vsix-contents
 
       - name: Package .vsix
         run: |

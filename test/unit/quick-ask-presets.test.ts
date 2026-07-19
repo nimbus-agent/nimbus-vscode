@@ -1,9 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import {
-  DEFAULT_QUICK_ASK_PRESETS,
-  resolvePresets,
-} from "../../src/quick-ask-presets.js";
+import { DEFAULT_QUICK_ASK_PRESETS, resolvePresets } from "../../src/quick-ask-presets.js";
 
 describe("resolvePresets", () => {
   test("empty array yields the built-in defaults", () => {

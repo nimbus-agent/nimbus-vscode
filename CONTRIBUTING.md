@@ -5,7 +5,7 @@ Thanks for helping improve the Nimbus VS Code extension!
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+
-- VS Code 1.90+ (for running the extension host)
+- VS Code 1.95+ (for running the extension host — matches `engines.vscode`)
 - A running [Nimbus Gateway](https://nimbus-agent.dev/user-guide/install/) for manual testing
 
 ## Setup
@@ -18,7 +18,7 @@ bun install
 
 ```bash
 bun run typecheck   # tsc --noEmit (strict)
-bun run lint        # biome check src/
+bun run lint        # biome check . (whole repo)
 bun run test        # vitest run
 bun run build       # esbuild bundles into dist/ + media/
 ```
@@ -46,11 +46,29 @@ settings, and the release runbook.
 ## Pull requests
 
 - Keep PRs focused; include tests for behavior changes.
-- `bun run typecheck && bun run lint && bun run test && bun run build && bun run check-bundle`
-  must pass (CI runs the same on Ubuntu).
+- **The PR title must be a [Conventional Commit](https://www.conventionalcommits.org)**
+  (`feat:`, `fix:`, `chore:`, `docs:`, …). The repo squash-merges, so the title
+  becomes the commit on `main` that Release Please reads to compute the version
+  bump and changelog. `.github/workflows/pr-title-lint.yml` enforces this.
+- The full gate must pass locally:
+
+  ```bash
+  bun run typecheck && bun run lint && bun run check-settings-docs && \
+    bun run test && bun run build && bun run check-bundle && bun run check-vsix-contents
+  ```
+
+  CI runs the same set on Ubuntu, plus a lean Windows job (typecheck, test,
+  build, bundle guards).
 
 ## Releases
 
-Releases are tag-driven: pushing a `vX.Y.Z` tag runs `.github/workflows/publish.yml`,
-which publishes to the VS Code Marketplace + Open VSX and mirrors the `.vsix` on a
-GitHub Release. The tag version is stamped into `package.json` at publish time.
+Releases are automated with **Release Please**. Merging Conventional-Commit PRs
+to `main` keeps a release PR open with the computed version bump and changelog;
+merging *that* PR tags `vX.Y.Z`, which triggers
+`.github/workflows/publish.yml` to publish to the VS Code Marketplace + Open VSX
+and mirror the `.vsix` on a GitHub Release. The tag version is stamped into
+`package.json` at publish time.
+
+Do **not** hand-edit `CHANGELOG.md` or create tags manually — Release Please owns
+both. See [docs/releasing.md](./docs/releasing.md) for the full runbook and the
+manual fallback.

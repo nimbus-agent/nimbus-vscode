@@ -5,7 +5,7 @@ import { createEgressView, type EgressClientLike } from "../../src/sidebar/egres
 import type { SidebarConnection } from "../../src/sidebar/tree-view.js";
 
 function makeConnection(initial: ConnectionState): { connection: SidebarConnection } {
-  let state = initial;
+  const state = initial;
   const listeners = new Set<(s: ConnectionState) => void>();
   return {
     connection: {

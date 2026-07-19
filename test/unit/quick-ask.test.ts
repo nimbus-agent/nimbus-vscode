@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 
 import {
-  QUICK_ASK_MAX_CONTEXT_CHARS,
   buildQuickAskPrompt,
   clampContext,
   extractReply,
+  QUICK_ASK_MAX_CONTEXT_CHARS,
   redactPath,
   validateQuestion,
 } from "../../src/quick-ask.js";
@@ -46,7 +46,14 @@ describe("buildQuickAskPrompt", () => {
     expect(p).toContain("File: src/a.ts (typescript) (truncated)");
   });
   test("omits the fenced block for blank code, sending the question alone", () => {
-    expect(buildQuickAskPrompt({ question: "  just this  ", code: "   ", filePath: "src/a.ts", languageId: "typescript" })).toBe("just this");
+    expect(
+      buildQuickAskPrompt({
+        question: "  just this  ",
+        code: "   ",
+        filePath: "src/a.ts",
+        languageId: "typescript",
+      }),
+    ).toBe("just this");
   });
   test("preserves leading indentation of the code verbatim", () => {
     const code = "    if x:\n        return 1";

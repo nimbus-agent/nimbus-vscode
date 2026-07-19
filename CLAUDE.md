@@ -10,7 +10,7 @@ Extracted from the Nimbus monorepo (`packages/vscode-extension`) on 2026-06-22 s
 
 - **IPC-only.** All Gateway interaction goes through `@nimbus-dev/client` (published to npm). There are no direct cloud/network calls and **no imports from the Nimbus gateway source** — the only Nimbus dependency is `@nimbus-dev/client`.
 - **Bundled.** `esbuild.mjs` bundles `src/extension.ts` (node CJS) and the webview entry `src/chat/webview/main.ts` (browser IIFE) into `dist/` + `media/`, with only `vscode` external. The published `.vsix` therefore has **no runtime npm dependency** on `@nimbus-dev/client` — it's inlined at build time; the dep is build/typecheck-time only.
-- **Surface today:** Ask (streaming chat panel, with a **Stop** button that cancels an in-flight generation via `cancelStream`), Search (Quick Pick over the local index), Ask/Search Selection, **Find related** (pivot from a selection or Index item to ranked neighbors via `searchRanked`), **Quick Ask** (one-shot editor quick-ask over `agentInvoke` — reply in a read-only tab, no chat panel), the **`@nimbus` Chat participant** (native participant in VS Code's built-in Chat view — `/explain`, `/fix`, `/test` slash commands, `#file`/selection context, streaming answers via `askStream`, local-index citations via `searchRanked`); a Nimbus activity-bar sidebar with **Audit**, **Sessions** (with chat resume), **Index**, and **Agents** views; an **Egress** ledger viewer (with Verify-ledger and Prove-window commands) plus an **egress status-bar badge** (row count + ledger-live ✓ via `egressHead`; shown while connected, on by default, toggle `nimbus.egress.showStatusBarBadge`); a **connection troubleshooter** (state-aware modal, no RPC); a **Get Started walkthrough** (first-run onboarding via `Nimbus: Open Walkthrough` / the Welcome page, no RPC); a status-bar quick menu and connection + HITL plumbing. For where this is going, see [docs/ROADMAP.md](docs/ROADMAP.md) (phased by SDK-readiness). Workflow / share surfaces are **not implemented yet** — they are blocked upstream, not deferred by choice: no published `@nimbus-dev/client` exposes those RPCs (checked through `0.4.0`, which added the egress RPCs this surface now uses), and the non-negotiable below forbids reaching past the typed client. Building them starts with the Gateway shipping the RPCs and the client surfacing them typed.
+- **Surface today:** Ask (streaming chat panel, with a **Stop** button that cancels an in-flight generation via `cancelStream`), Search (Quick Pick over the local index), Ask/Search Selection, **Find related** (pivot from a selection or Index item to ranked neighbors via `searchRanked`), **Quick Ask** (one-shot editor quick-ask over `agentInvoke` — reply in a read-only tab, no chat panel), the **`@nimbus` Chat participant** (native participant in VS Code's built-in Chat view — `/explain`, `/fix`, `/test` slash commands, `#file`/selection context, streaming answers via `askStream`, local-index citations via `searchRanked`); a Nimbus activity-bar sidebar with **Audit**, **Sessions** (with chat resume), **Index**, and **Agents** views; an **Egress** ledger viewer (with Verify-ledger and Prove-window commands) plus an **egress status-bar badge** (row count + ledger-live ✓ via `egressHead`; shown while connected, on by default, toggle `nimbus.egress.showStatusBarBadge`); a **connection troubleshooter** (state-aware modal, no RPC); a **Get Started walkthrough** (first-run onboarding via `Nimbus: Open Walkthrough` / the Welcome page, no RPC); a status-bar quick menu and connection + HITL plumbing. For where this is going, see [docs/ROADMAP.md](docs/ROADMAP.md) (phased by SDK-readiness). Workflow / share surfaces are **not implemented yet** — they are blocked upstream, not deferred by choice: no published `@nimbus-dev/client` exposes those RPCs (checked through `0.5.0`, the latest published version; `0.4.0` added the egress RPCs this surface now uses and `0.5.0` added no new RPCs), and the non-negotiable below forbids reaching past the typed client. Building them starts with the Gateway shipping the RPCs and the client surfacing them typed.
 
 ## Layout
 
@@ -18,9 +18,9 @@ Extracted from the Nimbus monorepo (`packages/vscode-extension`) on 2026-06-22 s
 - `src/vscode-shim.ts` — the seam over the `vscode` API (stubbed in tests via `test/unit/vscode-stub.ts`)
 - `test/unit/` — Vitest unit tests; `vscode` is aliased to the stub in `vitest.config.ts`
 - `esbuild.mjs` — build
-- `scripts/` — Node ESM maintenance helpers: `clean.mjs`, `check-bundle.mjs` (guards the no-runtime-dep bundling invariant). See `scripts/README.md`.
+- `scripts/` — Node ESM maintenance helpers: `clean.mjs`, `check-bundle.mjs` (guards the no-runtime-dep bundling invariant), `check-vsix-contents.mjs` (guards what the `.vsix` ships), `check-settings-docs.mjs` (guards settings-doc drift). See `scripts/README.md`.
 - `docs/` — contributor/maintainer reference: `architecture.md`, `development.md`, `settings.md`, `releasing.md`. See `docs/README.md`.
-- `.github/workflows/ci.yml` — typecheck + lint + test + build + check-bundle on PR/push
+- `.github/workflows/ci.yml` — typecheck + lint + check-settings-docs + test + build + check-bundle + check-vsix-contents on PR/push (Ubuntu), plus a lean Windows job (typecheck + test + build + the two bundle guards)
 - `.github/workflows/publish.yml` — on a `v*` tag: Marketplace + Open VSX + GitHub Release
 
 ## Commands
@@ -33,6 +33,8 @@ bun run test          # vitest run
 bun run build         # esbuild bundles
 bun run watch         # esbuild bundles, rebuild on save
 bun run check-bundle  # assert vscode is the bundle's only external (run after build)
+bun run check-vsix-contents  # assert the .vsix ships only allowlisted files (run after build)
+bun run check-settings-docs  # assert every nimbus.* setting is documented
 bun run package       # .vsix via vsce (--no-dependencies; esbuild already inlined deps)
 ```
 
@@ -47,7 +49,7 @@ bun run package       # .vsix via vsce (--no-dependencies; esbuild already inlin
 
 1. `publish.yml` stamps the package version **from the git tag** — the `version` in `package.json` is only a baseline.
 2. Tag `vX.Y.Z` and push → `publish.yml` publishes to the VS Code Marketplace + Open VSX and mirrors the `.vsix` on a GitHub Release.
-3. Requires repo secrets `VSCE_PAT` (Azure DevOps, "Marketplace (Manage)") and `OVSX_PAT` (Open VSX namespace `nimbus-agent`) in the `release` environment.
+3. Requires repository secrets `VSCE_PAT` (Azure DevOps, "Marketplace (Manage)") and `OVSX_PAT` (Open VSX namespace `nimbus-agent`). The `publish` job declares `environment: release`, but both secrets are currently configured at the **repository** level, not on that environment — so the environment adds no approval gate today. See [docs/releasing.md](docs/releasing.md).
 
 ## Requires (runtime)
 

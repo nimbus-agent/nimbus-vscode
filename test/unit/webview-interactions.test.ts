@@ -179,7 +179,12 @@ describe("webview interactions", () => {
     const input = $("#input-text") as HTMLTextAreaElement;
     input.value = "via keyboard";
     input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }),
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
     );
     expect(posted.at(-1)).toEqual({ type: "submitAsk", text: "via keyboard" });
   });

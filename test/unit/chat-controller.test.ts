@@ -443,7 +443,9 @@ describe("ChatController", () => {
     // observe no "cancelled" message yet at the assertion point below.
     const { handle, releaseCancel } = pendingCancelStream();
     const { panel, posted } = capturingPanel();
-    const ctrl = createChatController(baseDeps(fakeChatClient({ askStream: () => handle }), { panel }));
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => handle }), { panel }),
+    );
     const pStart = ctrl.start("hi");
     await Promise.resolve();
     expect(ctrl.isStreaming()).toBe(true);
@@ -620,7 +622,11 @@ describe("ChatController", () => {
     const ctrl = createChatController(
       baseDeps(client, {
         panel,
-        sessionStore: { get: () => undefined, set: async () => undefined, clear: async () => undefined },
+        sessionStore: {
+          get: () => undefined,
+          set: async () => undefined,
+          clear: async () => undefined,
+        },
       }),
     );
     const pA = ctrl.resume("A", 50);
@@ -662,7 +668,12 @@ describe("ChatController", () => {
       progress?: number;
     }>;
     expect(subTasks).toHaveLength(2);
-    expect(subTasks[0]).toEqual({ type: "subTask", subTaskId: "t1", status: "running", progress: 0.5 });
+    expect(subTasks[0]).toEqual({
+      type: "subTask",
+      subTaskId: "t1",
+      status: "running",
+      progress: 0.5,
+    });
     expect(subTasks[1]).toEqual({ type: "subTask", subTaskId: "t2", status: "queued" });
     expect("progress" in (subTasks[1] as object)).toBe(false);
   });

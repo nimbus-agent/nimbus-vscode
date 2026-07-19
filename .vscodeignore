@@ -1,20 +1,30 @@
-.vscode/**
-.vscode-test/**
-src/**
-test/**
-node_modules/**
+# What ships in the .vsix — an ALLOWLIST, not a denylist.
+#
+# vsce packages everything this file does not exclude, so the usual
+# "list the junk" form fails open: every new top-level directory (CI config,
+# coverage output, agent scratch notes) silently joins the published artifact.
+# This repo shipped 140 such files before this was inverted.
+#
+# So: exclude everything, then re-include only what users need. Adding a
+# genuinely shippable path means adding a `!` line here AND to ALLOWED in
+# scripts/check-vsix-contents.mjs, which enforces this from the other side and
+# runs in CI.
+**
+
+# The bundles esbuild produces (extension host + webview) — the actual payload.
+!dist/**
+!media/**
+
+# Runtime assets: walkthrough media, icons.
+!resources/**
+!icon.png
+
+# The manifest, and the docs the Marketplace / Open VSX listing renders.
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+!SECURITY.md
+
+# Source maps are large and reference paths that do not exist in the .vsix.
 **/*.map
-**/*.test.ts
-tsconfig.json
-biome.json
-vitest.config.ts
-esbuild.mjs
-.gitignore
-**/.DS_Store
-docs/**
-scripts/**
-CLAUDE.md
-sonar-project.properties
-.coderabbit.yaml
-.gitlab-ci.yml
-.gitattributes
