@@ -8,8 +8,8 @@ import {
   connectionPlaceholder,
   createDataView,
   createPlaceholderView,
-  toTreeItem,
   type SidebarConnection,
+  toTreeItem,
 } from "../../src/sidebar/tree-view.js";
 
 // A controllable SidebarConnection: tests drive state transitions via `set`,

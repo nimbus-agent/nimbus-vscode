@@ -46,7 +46,9 @@ describe("formatStatusBar", () => {
   });
 
   test("starting-gateway state is a non-actionable spinner", () => {
-    const r = formatStatusBar(inputs({ connection: { kind: "starting-gateway", socketPath: "/x" } }));
+    const r = formatStatusBar(
+      inputs({ connection: { kind: "starting-gateway", socketPath: "/x" } }),
+    );
     expect(r.text).toMatch(/starting Gateway/);
     expect(r.tooltip).toContain("waiting for socket");
     expect(r.command).toBeUndefined();

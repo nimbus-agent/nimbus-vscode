@@ -31,10 +31,10 @@ for (const key of settings) {
   // (`| `nimbus.x` | … |`) in the README. `includes()` would false-pass on a
   // stray prose or example mention.
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  if (!new RegExp("^###\\s+.*`" + escaped + "`", "m").test(settingsDoc)) {
+  if (!new RegExp(`^###\\s+.*\`${escaped}\``, "m").test(settingsDoc)) {
     failures.push(`docs/settings.md is missing a section for: ${key}`);
   }
-  if (!new RegExp("^\\|.*`" + escaped + "`.*\\|", "m").test(readme)) {
+  if (!new RegExp(`^\\|.*\`${escaped}\`.*\\|`, "m").test(readme)) {
     failures.push(`README.md settings table is missing a row for: ${key}`);
   }
 }

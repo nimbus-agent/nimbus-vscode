@@ -46,7 +46,8 @@ if (existsSync(EXTENSION_BUNDLE)) {
 
   for (const spec of [...required].sort()) {
     if (!allowed.has(spec)) {
-      const hint = spec === "@nimbus-dev/client" ? " (must be inlined, not required at runtime)" : "";
+      const hint =
+        spec === "@nimbus-dev/client" ? " (must be inlined, not required at runtime)" : "";
       failures.push(`unexpected external require in ${EXTENSION_BUNDLE}: "${spec}"${hint}`);
     }
   }

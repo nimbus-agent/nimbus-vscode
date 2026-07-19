@@ -35,14 +35,16 @@ const isAllowed = (file) =>
 // only way to set it through this API: listFiles() derives `dependencies` from
 // `packageManager`, so passing `dependencies: false` is silently overridden and
 // vsce then shells out to `npm list`, which fails on a bun-installed tree.
-const files = (
-  await listFiles({ cwd: process.cwd(), packageManager: PackageManager.None })
-).map((f) => f.split("\\").join("/"));
+const files = (await listFiles({ cwd: process.cwd(), packageManager: PackageManager.None })).map(
+  (f) => f.split("\\").join("/"),
+);
 
 const unexpected = files.filter((f) => !isAllowed(f)).sort();
 
 if (unexpected.length > 0) {
-  console.error(`check-vsix-contents: FAILED — ${unexpected.length} unexpected file(s) in the .vsix`);
+  console.error(
+    `check-vsix-contents: FAILED — ${unexpected.length} unexpected file(s) in the .vsix`,
+  );
   for (const file of unexpected.slice(0, 40)) {
     console.error(`  - ${file}`);
   }

@@ -6,7 +6,9 @@ import {
 } from "../../src/chat-participant/session.js";
 
 function responseTurn(sessionId?: string): unknown {
-  return { result: { metadata: sessionId === undefined ? {} : { [NIMBUS_SESSION_META_KEY]: sessionId } } };
+  return {
+    result: { metadata: sessionId === undefined ? {} : { [NIMBUS_SESSION_META_KEY]: sessionId } },
+  };
 }
 
 describe("readPriorSessionId", () => {
