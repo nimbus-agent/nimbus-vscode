@@ -18,7 +18,7 @@ Extracted from the Nimbus monorepo (`packages/vscode-extension`) on 2026-06-22 s
 - `src/vscode-shim.ts` — the seam over the `vscode` API (stubbed in tests via `test/unit/vscode-stub.ts`)
 - `test/unit/` — Vitest unit tests; `vscode` is aliased to the stub in `vitest.config.ts`
 - `esbuild.mjs` — build
-- `scripts/` — Node ESM maintenance helpers: `clean.mjs`, `check-bundle.mjs` (guards the no-runtime-dep bundling invariant). See `scripts/README.md`.
+- `scripts/` — Node ESM maintenance helpers: `clean.mjs`, `check-bundle.mjs` (guards the no-runtime-dep bundling invariant), `check-vsix-contents.mjs` (guards what the `.vsix` ships), `check-settings-docs.mjs` (guards settings-doc drift). See `scripts/README.md`.
 - `docs/` — contributor/maintainer reference: `architecture.md`, `development.md`, `settings.md`, `releasing.md`. See `docs/README.md`.
 - `.github/workflows/ci.yml` — typecheck + lint + test + build + check-bundle on PR/push
 - `.github/workflows/publish.yml` — on a `v*` tag: Marketplace + Open VSX + GitHub Release
@@ -33,6 +33,8 @@ bun run test          # vitest run
 bun run build         # esbuild bundles
 bun run watch         # esbuild bundles, rebuild on save
 bun run check-bundle  # assert vscode is the bundle's only external (run after build)
+bun run check-vsix-contents  # assert the .vsix ships only allowlisted files (run after build)
+bun run check-settings-docs  # assert every nimbus.* setting is documented
 bun run package       # .vsix via vsce (--no-dependencies; esbuild already inlined deps)
 ```
 

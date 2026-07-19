@@ -87,6 +87,9 @@ jobs:
       - name: Verify bundle invariant (vscode is the only external)
         run: bun run check-bundle
 
+      - name: Verify .vsix ships only the allowlisted files
+        run: bun run check-vsix-contents
+
       - name: Package .vsix
         run: |
           mkdir -p dist-vsix

@@ -892,7 +892,51 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     await cmd(f, "nimbus.askAboutSelection")();
     expect(askStream).toHaveBeenCalledTimes(1);
-    expect((askStream.mock.calls[0] as unknown[])[0]).toBe("Explain this:\n\nconst x = 1;");
+    expect((askStream.mock.calls[0] as unknown[])[0]).toBe(
+      "Explain this:\n\nFile: untitled (plaintext)\n```plaintext\nconst x = 1;\n```",
+    );
+  });
+
+  test("nimbus.askAboutSelection redacts the absolute file path", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      activeEditor: {
+        text: "const x = 1",
+        selectionText: "const x = 1",
+        fileName: "C:\\Users\\alice\\proj\\src\\a.ts",
+        languageId: "typescript",
+      },
+      inputBoxAnswers: ["Explain this:"],
+      openClient: makeFakeClient({ askStream } as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutSelection")();
+    const prompt = (askStream.mock.calls[0] as unknown[])[0] as string;
+    expect(prompt).toContain("File: a.ts (typescript)");
+    expect(prompt).not.toContain("alice");
+  });
+
+  test("nimbus.askAboutSelection clamps an oversized selection and warns", async () => {
+    const askStream = doneAskStream();
+    const huge = "x".repeat(60_000); // exceeds QUICK_ASK_MAX_CONTEXT_CHARS (50_000)
+    const f = makeFixture({
+      activeEditor: {
+        text: huge,
+        selectionText: huge,
+        fileName: "/p/big.ts",
+        languageId: "typescript",
+      },
+      inputBoxAnswers: ["Explain this:"],
+      openClient: makeFakeClient({ askStream } as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.askAboutSelection")();
+    const prompt = (askStream.mock.calls[0] as unknown[])[0] as string;
+    expect(prompt).toContain("(truncated)");
+    expect(prompt).not.toContain("x".repeat(50_001));
+    expect(f.deps.window.showWarningMessage).toHaveBeenCalled();
   });
 
   test("nimbus.askAboutSelection errors when there is no selection", async () => {

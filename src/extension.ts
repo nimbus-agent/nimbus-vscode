@@ -521,7 +521,25 @@ export function activateWithDeps(
     if (prefix === undefined) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;
-    await ctl.start(`${prefix.trim()}\n\n${trimmed}`);
+    // Clamp and redact on the same terms as quick-ask and the chat participant:
+    // an unbounded selection (a minified bundle, a pasted log) must not go to the
+    // Gateway verbatim, and the absolute path would leak the OS username and
+    // directory layout into the agent context and the egress ledger.
+    const { code, truncated } = clampContext(trimmed, QUICK_ASK_MAX_CONTEXT_CHARS);
+    if (truncated) {
+      void deps.window.showWarningMessage(
+        `Nimbus: context truncated to ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`,
+      );
+    }
+    await ctl.start(
+      buildQuickAskPrompt({
+        question: prefix,
+        code,
+        filePath: redactPath(editor.document.fileName),
+        languageId: editor.document.languageId,
+        truncated,
+      }),
+    );
   });
 
   const runSearch = (

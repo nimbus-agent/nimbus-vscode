@@ -526,6 +526,7 @@
     "test": "bunx vitest run",
     "test:coverage": "bunx vitest run --coverage",
     "check-bundle": "node scripts/check-bundle.mjs",
+    "check-vsix-contents": "node scripts/check-vsix-contents.mjs",
     "check-settings-docs": "node scripts/check-settings-docs.mjs",
     "package": "bunx vsce package --no-dependencies",
     "clean": "node scripts/clean.mjs"

@@ -63,3 +63,6 @@ jobs:
 
       - name: Check bundle invariant
         run: bun run check-bundle
+
+      - name: Check .vsix contents
+        run: bun run check-vsix-contents
