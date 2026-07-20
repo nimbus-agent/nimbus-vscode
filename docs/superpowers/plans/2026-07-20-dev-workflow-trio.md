@@ -255,6 +255,7 @@ Create `test/unit/scm-diff.test.ts`:
 import { describe, expect, test } from "vitest";
 
 import {
+  hasHunks,
   isDeprioritizedPath,
   isSecretPath,
   orderFiles,
@@ -322,6 +323,16 @@ describe("orderFiles", () => {
   });
 });
 
+describe("hasHunks", () => {
+  test("is true for a normal text diff", () => {
+    expect(hasHunks(fakeDiff("a.ts", 1, 10))).toBe(true);
+  });
+  test("is false for a binary diff and a pure rename", () => {
+    expect(hasHunks("diff --git a/a.png b/a.png\nBinary files differ\n")).toBe(false);
+    expect(hasHunks("diff --git a/a.ts b/b.ts\nrename from a.ts\nrename to b.ts\n")).toBe(false);
+  });
+});
+
 describe("truncateAtHunkBoundary", () => {
   test("returns the whole diff when it already fits", () => {
     const d = fakeDiff("a.ts", 2, 10);
@@ -385,6 +396,29 @@ describe("selectWithinBudget", () => {
     expect(r.files).toEqual([]);
     expect(r.omitted).toEqual([{ path: "big.ts", reason: "too-large" }]);
   });
+  test("omits a small binary file as non-textual, not as too-large", () => {
+    const binary = "diff --git a/a.png b/a.png\nBinary files a/a.png and b/a.png differ\n";
+    const r = selectWithinBudget([{ path: "a.png", diff: binary }], 10_000);
+    expect(r.files).toEqual([]);
+    expect(r.omitted).toEqual([{ path: "a.png", reason: "non-textual" }]);
+  });
+  test("omits a pure rename as non-textual", () => {
+    const rename = "diff --git a/a.ts b/b.ts\nsimilarity index 100%\nrename from a.ts\nrename to b.ts\n";
+    const r = selectWithinBudget([{ path: "b.ts", diff: rename }], 10_000);
+    expect(r.omitted).toEqual([{ path: "b.ts", reason: "non-textual" }]);
+  });
+  test("a non-textual file does not consume the first-file truncation fallback", () => {
+    const binary = "diff --git a/a.png b/a.png\nBinary files a/a.png and b/a.png differ\n";
+    const r = selectWithinBudget(
+      [
+        { path: "a.png", diff: binary },
+        { path: "big.ts", diff: fakeDiff("big.ts", 4, 200) },
+      ],
+      600,
+    );
+    expect(r.files.map((f) => f.path)).toEqual(["big.ts"]);
+    expect(r.files[0]?.truncated?.total).toBe(4);
+  });
   test("never emits a partial hunk", () => {
     const r = selectWithinBudget([{ path: "big.ts", diff: fakeDiff("big.ts", 5, 200) }], 700);
     const text = r.files[0]?.diff ?? "";
@@ -438,7 +472,7 @@ export const SCM_MAX_DIFF_CHARS = QUICK_ASK_MAX_CONTEXT_CHARS;
 // a predictable number of round-trips. Overflow is reported, never silent.
 export const SCM_MAX_FILES = 100;
 
-export type OmitReason = "secret" | "too-large" | "file-cap";
+export type OmitReason = "secret" | "too-large" | "file-cap" | "non-textual";
 
 export interface OmittedFile {
   path: string;
@@ -537,6 +571,14 @@ function splitHunks(diff: string): { header: string; hunks: string[] } {
   return { header: header.join(""), hunks };
 }
 
+// A diff with no `@@` hunks carries no reviewable text: a binary file, a pure
+// rename, or a mode change. Sending it wastes budget and tells the agent
+// nothing, so these are omitted with their own reason rather than being
+// misreported as "too large".
+export function hasHunks(diff: string): boolean {
+  return splitHunks(diff).hunks.length > 0;
+}
+
 // Keep the header plus as many whole hunks as fit. Returns undefined when the
 // header plus the first hunk already exceed the budget, or when there are no
 // hunks at all (a binary file) — the caller drops the file rather than sending
@@ -569,6 +611,12 @@ export function selectWithinBudget(
   const omitted: OmittedFile[] = [];
   let used = 0;
   for (const entry of entries) {
+    // Checked before the budget: a binary file's diff is a one-liner that would
+    // otherwise sail under the budget and be sent as a contentless block.
+    if (!hasHunks(entry.diff)) {
+      omitted.push({ path: entry.path, reason: "non-textual" });
+      continue;
+    }
     if (used + entry.diff.length <= budget) {
       files.push({ path: entry.path, diff: entry.diff });
       used += entry.diff.length;
@@ -785,6 +833,10 @@ describe("composeInputBoxValue", () => {
   test("append trims trailing whitespace on the existing text first", () => {
     expect(composeInputBoxValue("wip\n\n", "feat: a", "append")).toBe("wip\n\nfeat: a");
   });
+  test("append is a no-op when the draft is already present", () => {
+    expect(composeInputBoxValue("feat: a", "feat: a", "append")).toBe("feat: a");
+    expect(composeInputBoxValue("wip\n\nfeat: a", "feat: a", "append")).toBe("wip\n\nfeat: a");
+  });
 });
 ```
 
@@ -874,7 +926,11 @@ export function composeInputBoxValue(
 ): string {
   if (mode === "replace") return drafted;
   const base = existing.replace(/\s+$/, "");
-  return base.length === 0 ? drafted : `${base}\n\n${drafted}`;
+  if (base.length === 0) return drafted;
+  // Running the command twice and appending the same draft again is never what
+  // anyone wants, so an append that would duplicate is a no-op.
+  if (base.includes(drafted)) return base;
+  return `${base}\n\n${drafted}`;
 }
 ```
 
@@ -923,6 +979,7 @@ const coverage = (over: Partial<ReviewCoverage> = {}): ReviewCoverage => ({
   reviewed: ["src/a.ts"],
   omittedTooLarge: [],
   skippedSecret: [],
+  nonTextual: [],
   untracked: [],
   ...over,
 });
@@ -961,6 +1018,12 @@ describe("buildReviewDocument", () => {
     expect(doc).toContain("Not reviewed — too large");
     expect(doc).toContain("big.ts");
   });
+  test("names binary and non-textual changes distinctly from too-large ones", () => {
+    const doc = buildReviewDocument(coverage({ nonTextual: ["logo.png"] }), "f");
+    expect(doc).toContain("Not reviewed — binary or non-textual changes");
+    expect(doc).toContain("logo.png");
+    expect(doc).not.toContain("too large");
+  });
   test("omits each not-reviewed section entirely when it is empty", () => {
     const doc = buildReviewDocument(coverage(), "f");
     expect(doc).not.toContain("Not reviewed");
@@ -988,6 +1051,8 @@ export interface ReviewCoverage {
   reviewed: readonly string[];
   omittedTooLarge: readonly string[];
   skippedSecret: readonly string[];
+  // Binary files, pure renames, mode changes — nothing textual to review.
+  nonTextual: readonly string[];
   // Content is never sent; named here so the user knows they were not reviewed.
   untracked: readonly string[];
 }
@@ -1021,6 +1086,7 @@ export function buildReviewDocument(coverage: ReviewCoverage, findings: string):
     `**Reviewed (${coverage.reviewed.length} file${coverage.reviewed.length === 1 ? "" : "s"}):** ${reviewed}`,
     section("Not reviewed — too large", coverage.omittedTooLarge),
     section("Not reviewed — possible secrets", coverage.skippedSecret),
+    section("Not reviewed — binary or non-textual changes", coverage.nonTextual),
     section("Not reviewed — untracked", coverage.untracked),
     "",
     "---",
@@ -1074,6 +1140,7 @@ import {
   buildTestsPrompt,
   deriveTestFileName,
   extractCode,
+  isWholeFileRewrite,
   spliceSelection,
 } from "../../src/scm/generate.js";
 
@@ -1098,6 +1165,14 @@ describe("deriveTestFileName", () => {
   });
   test("handles an extensionless file", () => {
     expect(deriveTestFileName("scripts/build")).toBe("build.test");
+  });
+  test("degrades gracefully for an unsaved buffer (fileName is 'Untitled-1')", () => {
+    // VS Code reports a bare label, not a path, for untitled documents. No
+    // throw, no path leak, just an extensionless name the user renames on Save.
+    expect(deriveTestFileName("Untitled-1")).toBe("Untitled-1.test");
+  });
+  test("handles a dotfile with no extension", () => {
+    expect(deriveTestFileName(".gitignore")).toBe(".gitignore.test");
   });
 });
 
@@ -1131,6 +1206,32 @@ describe("spliceSelection", () => {
   });
   test("clamps out-of-range offsets rather than producing undefined slices", () => {
     expect(spliceSelection("abc", -5, 99, "X")).toBe("X");
+  });
+});
+
+describe("isWholeFileRewrite", () => {
+  const full = "import { thing } from './somewhere-else';\nconst selected = 1;\nexport default selected;\n";
+  const start = full.indexOf("const selected");
+  const end = start + "const selected = 1;".length;
+
+  test("is false for an honest selection-only rewrite", () => {
+    expect(isWholeFileRewrite("// doc\nconst selected = 1;", full, start, end)).toBe(false);
+  });
+  test("is true when the reply echoes a line from before the selection", () => {
+    const whole = "import { thing } from './somewhere-else';\n// doc\nconst selected = 1;";
+    expect(isWholeFileRewrite(whole, full, start, end)).toBe(true);
+  });
+  test("is true when the reply echoes a line from after the selection", () => {
+    const whole = "// doc\nconst selected = 1;\nexport default selected;";
+    expect(isWholeFileRewrite(whole, full, start, end)).toBe(true);
+  });
+  test("ignores short lines that recur everywhere", () => {
+    const braces = "function f() {\n}\nconst selected = 1;\n}\n";
+    const s = braces.indexOf("const selected");
+    expect(isWholeFileRewrite("// doc\nconst selected = 1;\n}", braces, s, s + 19)).toBe(false);
+  });
+  test("is false when the selection is the whole document", () => {
+    expect(isWholeFileRewrite("// doc\n".concat(full), full, 0, full.length)).toBe(false);
   });
 });
 
@@ -1209,6 +1310,32 @@ export function spliceSelection(
   const lo = Math.max(0, Math.min(start, full.length));
   const hi = Math.max(lo, Math.min(end, full.length));
   return full.slice(0, lo) + replacement + full.slice(hi);
+}
+
+// Agents asked to annotate a selection sometimes return the WHOLE file instead
+// — helpfully, in their view. Splicing a whole-file reply into a selection's
+// offsets duplicates everything around it and produces a nonsense diff.
+//
+// The signal is crisp and needs no guessing: if the reply repeats a non-empty
+// line that lives OUTSIDE the selection, it is not a selection rewrite. The
+// caller then diffs whole-file instead of splicing — which is exactly what the
+// user wants when the agent returned a whole file.
+export function isWholeFileRewrite(
+  rewritten: string,
+  fullText: string,
+  start: number,
+  end: number,
+): boolean {
+  const outside = [fullText.slice(0, start), fullText.slice(end)];
+  for (const region of outside) {
+    for (const line of region.split("\n")) {
+      const trimmed = line.trim();
+      // Short lines ("}", ")") recur everywhere and would false-positive.
+      if (trimmed.length < 12) continue;
+      if (rewritten.includes(trimmed)) return true;
+    }
+  }
+  return false;
 }
 
 interface GeneratePromptInput {
@@ -1589,7 +1716,9 @@ export interface ScmCommandDeps {
   selectionOffsets(): { start: number; end: number } | undefined;
   openReadonly(title: string, content: string): Promise<void>;
   openUntitled(opts: { fileName: string; content: string }): Promise<void>;
-  openDiff(opts: { title: string; left: string; right: string; languageId: string }): Promise<void>;
+  // fileName is the redacted basename (e.g. "a.ts"); the opener puts it in both
+  // virtual URIs so VS Code infers the language from the extension natively.
+  openDiff(opts: { title: string; left: string; right: string; fileName: string }): Promise<void>;
   log: Logger;
 }
 
@@ -1598,6 +1727,7 @@ export interface CollectedDiff {
   reviewed: string[];
   omittedTooLarge: string[];
   skippedSecret: string[];
+  nonTextual: string[];
   /** True when git reported no changed files at all for this scope. */
   empty: boolean;
 }
@@ -1611,7 +1741,14 @@ export async function collectDiff(
 ): Promise<CollectedDiff> {
   const changed = await repo.changedFiles(scope);
   if (changed.length === 0) {
-    return { block: "", reviewed: [], omittedTooLarge: [], skippedSecret: [], empty: true };
+    return {
+      block: "",
+      reviewed: [],
+      omittedTooLarge: [],
+      skippedSecret: [],
+      nonTextual: [],
+      empty: true,
+    };
   }
   const { ordered, omitted } = orderFiles(changed, { skipSecrets });
   const entries: Array<{ path: string; diff: string }> = [];
@@ -1620,11 +1757,15 @@ export async function collectDiff(
   }
   const selection = selectWithinBudget(entries, SCM_MAX_DIFF_CHARS);
   const all: OmittedFile[] = [...omitted, ...selection.omitted];
+  const withReason = (...reasons: OmittedFile["reason"][]): string[] =>
+    all.filter((o) => reasons.includes(o.reason)).map((o) => o.path);
   return {
     block: renderDiffBlock(selection.files),
     reviewed: selection.files.map((f) => f.path),
-    omittedTooLarge: all.filter((o) => o.reason !== "secret").map((o) => o.path),
-    skippedSecret: all.filter((o) => o.reason === "secret").map((o) => o.path),
+    // The file cap is a size-driven omission too, so it shares the bucket.
+    omittedTooLarge: withReason("too-large", "file-cap"),
+    skippedSecret: withReason("secret"),
+    nonTextual: withReason("non-textual"),
     empty: false,
   };
 }
@@ -1709,11 +1850,15 @@ export function createScmCommands(deps: ScmCommandDeps): {
           return;
         }
         if (collected.reviewed.length === 0) {
-          void deps.window.showErrorMessage(
+          // Say which reason actually applied — "too large" for a staged PNG
+          // would be a lie the user cannot act on.
+          const reason =
             collected.skippedSecret.length > 0
-              ? "Nimbus: every staged file was skipped as possibly secret-bearing."
-              : "Nimbus: the staged diff is too large to summarise.",
-          );
+              ? "every staged file was skipped as possibly secret-bearing"
+              : collected.nonTextual.length > 0 && collected.omittedTooLarge.length === 0
+                ? "the staged changes are binary or non-textual"
+                : "the staged diff is too large to summarise";
+          void deps.window.showErrorMessage(`Nimbus: ${reason}.`);
           return;
         }
         warnOmissions(collected, collected.reviewed.length + collected.omittedTooLarge.length);
@@ -1839,6 +1984,23 @@ describe("reviewChanges", () => {
     expect(h.opened[0]?.content).toContain("src/brand-new.ts");
   });
 
+  test("names binary changes as non-textual, not as too-large", async () => {
+    const binary = "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n";
+    const h = harness({}, [
+      fakeRepo({
+        files: [
+          { path: "src/a.ts", status: "modified" },
+          { path: "logo.png", status: "modified" },
+        ],
+        diffs: { "src/a.ts": "@@ -1 +1 @@\n+a\n", "logo.png": binary },
+      }),
+    ]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.opened[0]?.content).toContain("Not reviewed — binary or non-textual changes");
+    expect(h.opened[0]?.content).toContain("logo.png");
+    expect(h.invoked[0]).not.toContain("logo.png");
+  });
+
   test("names secret-skipped files in the header", async () => {
     const h = harness({}, [
       fakeRepo({
@@ -1946,6 +2108,7 @@ Replace the `reviewChanges` stub body with:
           reviewed: collected.reviewed,
           omittedTooLarge: collected.omittedTooLarge,
           skippedSecret: collected.skippedSecret,
+          nonTextual: collected.nonTextual,
           untracked: await repo.untrackedPaths(),
         };
         await deps.openReadonly("Nimbus review.md", buildReviewDocument(coverage, reply));
@@ -2066,7 +2229,7 @@ describe("generateTests", () => {
 
 describe("generateDocstrings", () => {
   test("diffs the original against the annotated whole file", async () => {
-    const diffs: Array<{ title: string; left: string; right: string; languageId: string }> = [];
+    const diffs: Array<{ title: string; left: string; right: string; fileName: string }> = [];
     const h = harness({
       ...editorDeps({ text: "def f(): pass\n", languageId: "python", fileName: "/p/a.py" }),
       client: () => ({ agentInvoke: async () => ({ reply: "```python\ndef f():\n    \"\"\"Doc.\"\"\"\n    pass\n```" }) }),
@@ -2077,8 +2240,32 @@ describe("generateDocstrings", () => {
     await createScmCommands(h.deps).generateDocstrings();
     expect(diffs[0]?.left).toBe("def f(): pass\n");
     expect(diffs[0]?.right).toContain('"""Doc."""');
-    expect(diffs[0]?.languageId).toBe("python");
+    // The basename carries the extension, which is how the opener gets
+    // highlighting — and it must never carry the directory.
+    expect(diffs[0]?.fileName).toBe("a.py");
     expect(diffs[0]?.title).toContain("a.py");
+    expect(diffs[0]?.title).not.toContain("/p/");
+  });
+
+  test("diffs whole-file instead of splicing when the reply echoes the whole file", async () => {
+    const full = "import { thing } from './somewhere-else';\nconst selected = 1;\nexport default selected;\n";
+    const diffs: Array<{ left: string; right: string }> = [];
+    const start = full.indexOf("const selected");
+    const h = harness({
+      ...editorDeps({ text: full, selectionText: "const selected = 1;" }),
+      selectionOffsets: () => ({ start, end: start + "const selected = 1;".length }),
+      client: () => ({
+        // The agent ignored the instruction and returned the entire file.
+        agentInvoke: async () => ({ reply: `\`\`\`ts\n// doc\n${full}\`\`\`` }),
+      }),
+      openDiff: async (o) => {
+        diffs.push({ left: o.left, right: o.right });
+      },
+    });
+    await createScmCommands(h.deps).generateDocstrings();
+    // Spliced, this would have duplicated the import and the export line.
+    expect(diffs[0]?.right.match(/somewhere-else/g)).toHaveLength(1);
+    expect(diffs[0]?.right).toContain("// doc");
   });
 
   test("splices a selection rewrite back into the full document", async () => {
@@ -2130,6 +2317,7 @@ import {
   buildTestsPrompt,
   deriveTestFileName,
   extractCode,
+  isWholeFileRewrite,
   spliceSelection,
 } from "./generate.js";
 ```
@@ -2235,15 +2423,24 @@ Inside `createScmCommands`, above the returned object, add:
           await deps.openReadonly("Nimbus docstrings.md", rewritten);
           return;
         }
+        // A whole-file reply to a selection prompt must not be spliced — that
+        // would duplicate everything around the selection. Diff whole-file
+        // instead, which is what the reply actually is.
+        const spliceable =
+          offsets !== undefined &&
+          !isWholeFileRewrite(rewritten, ctx.fullText, offsets.start, offsets.end);
+        if (offsets !== undefined && !spliceable) {
+          deps.log.debug("scm: docstrings reply looks whole-file; diffing without splicing");
+        }
         const right =
-          offsets === undefined
-            ? rewritten
-            : spliceSelection(ctx.fullText, offsets.start, offsets.end, rewritten);
+          offsets !== undefined && spliceable
+            ? spliceSelection(ctx.fullText, offsets.start, offsets.end, rewritten)
+            : rewritten;
         await deps.openDiff({
           title: `${redactPath(ctx.fileName)} ↔ Nimbus docstrings`,
           left: ctx.fullText,
           right,
-          languageId: ctx.languageId,
+          fileName: redactPath(ctx.fileName),
         });
       } catch (e) {
         deps.log.error(`nimbus.generateDocstrings failed: ${errMsg(e)}`);
@@ -2401,9 +2598,13 @@ function createUntitledOpener(): (opts: {
 // Opens a side-by-side diff between two in-memory texts via a virtual
 // read-only scheme, so the extension never applies an edit itself — any merge
 // is the user's own action in the diff editor. Injectable as deps.openDiff.
+//
+// Both virtual URIs end in the source's basename, so VS Code infers the
+// language from the extension natively — no setTextDocumentLanguage call, and
+// no language-change events fired at other extensions.
 function createDiffOpener(
   ctx: ExtensionContextLike,
-): (opts: { title: string; left: string; right: string; languageId: string }) => Promise<void> {
+): (opts: { title: string; left: string; right: string; fileName: string }) => Promise<void> {
   const scheme = "nimbus-diff";
   const MAX_DOCS = 20;
   const docs = new Map<string, string>();
@@ -2412,7 +2613,7 @@ function createDiffOpener(
   const provider: vscode.TextDocumentContentProvider = {
     provideTextDocumentContent: (uri) => docs.get(uri.path) ?? "",
   };
-  return async ({ title, left, right, languageId }) => {
+  return async ({ title, left, right, fileName }) => {
     if (!registered) {
       ctx.subscriptions.push(
         vscode.workspace.registerTextDocumentContentProvider(scheme, provider),
@@ -2420,8 +2621,9 @@ function createDiffOpener(
       registered = true;
     }
     seq += 1;
-    const leftPath = `/${seq}/original`;
-    const rightPath = `/${seq}/nimbus`;
+    // The trailing basename is what drives syntax highlighting.
+    const leftPath = `/${seq}/original/${fileName}`;
+    const rightPath = `/${seq}/nimbus/${fileName}`;
     docs.set(leftPath, left);
     docs.set(rightPath, right);
     while (docs.size > MAX_DOCS) {
@@ -2431,11 +2633,6 @@ function createDiffOpener(
     }
     const leftUri = vscode.Uri.parse(`${scheme}:${leftPath}`);
     const rightUri = vscode.Uri.parse(`${scheme}:${rightPath}`);
-    // languageId drives highlighting on both sides of the diff.
-    for (const uri of [leftUri, rightUri]) {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      await vscode.languages.setTextDocumentLanguage(doc, languageId);
-    }
     await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, title);
   };
 }
@@ -2452,7 +2649,7 @@ In `src/extension.ts`, add to the `ActivateDeps` interface:
     title: string;
     left: string;
     right: string;
-    languageId: string;
+    fileName: string;
   }) => Promise<void>;
   selectionOffsets?: () => { start: number; end: number } | undefined;
 ```
@@ -2636,5 +2833,7 @@ Squash-merge so Release Please sees a single `feat(scm):` commit. Resolve CodeRa
 **Spec coverage.** Every spec section maps to a task: seam + repo handling → Task 1; clamping, secret-skip, hunk truncation, the setting → Task 2; commit style/sanitize/clobber → Tasks 3 and 6; review scope + coverage header → Tasks 4 and 7; test filenames, code extraction, selection splice, diff view → Tasks 5 and 8; contributions, adapters, registration → Task 9; docs + the Layer 2 gate → Task 10. The spec's `SCM_MAX_FILES` cap, the stale-repo guard, and the "untracked counted but never sent" rule each have a named test.
 
 **One deliberate deviation**, recorded under Global Constraints: selection offsets ride a deps accessor instead of a widened `TextEditorLike`, to avoid churning a dozen existing test fakes for no behavioural gain.
+
+**Review-driven additions** (beyond the spec, all with tests): a distinct `"non-textual"` omission reason so binary files and renames are never reported as "too large"; `isWholeFileRewrite` so a whole-file reply to a selection prompt is diffed rather than spliced; a duplicate-append guard on the SCM input box; and language inference from the virtual URI's extension instead of `setTextDocumentLanguage`.
 
 **Type consistency.** `DiffScope`, `ChangedFile`, `GitRepositoryLike`, `GitApiLike`, `OmittedFile`, `SelectedFile`, `DiffSelection`, `ReviewCoverage`, `CollectedDiff`, `ScmClientLike`, and `ScmCommandDeps` are each defined once and referenced with the same member names throughout. `collectDiff` returns the exact field names (`block`, `reviewed`, `omittedTooLarge`, `skippedSecret`, `empty`) that Tasks 6–7 consume and that `ReviewCoverage` maps onto.
