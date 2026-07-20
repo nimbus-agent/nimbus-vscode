@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.5.0...v0.5.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* redact and clamp ask-about-selection, and stop shipping repo internals ([#31](https://github.com/nimbus-agent/nimbus-vscode/issues/31)) ([935c7e0](https://github.com/nimbus-agent/nimbus-vscode/commit/935c7e0eb299975e2fbff8fc0ccc102bb7770fed))
+
 ## [0.5.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.4.0...v0.5.0) (2026-07-18)
 
 
