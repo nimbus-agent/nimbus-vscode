@@ -21,9 +21,10 @@ Local-first AI agent for the editor. Ask and search against your private [Nimbus
 
 ## Verifying a release
 
-Every release attaches a signed `.vsix` to the GitHub Release with a build
-provenance attestation. To verify the file you downloaded was built by this
-repository's publish workflow:
+Starting with the next release after v0.5.0, every release attaches a build
+provenance attestation to the `.vsix` on the GitHub Release — this is an
+attestation, not a signature on the file itself. To verify a `.vsix` from one
+of those releases was built by this repository's publish workflow:
 
 ```bash
 gh attestation verify nimbus-<version>.vsix --repo nimbus-agent/nimbus-vscode
