@@ -2533,7 +2533,7 @@ and append to the existing `editor/context` array:
 { "command": "nimbus.generateDocstrings", "when": "editorTextFocus", "group": "nimbus@6" }
 ```
 
-Match the `group` naming already used by the neighbouring `editor/context` entries; if they use a different prefix, follow theirs.
+The existing entries are `nimbus@1`–`nimbus@4` (`askAboutSelection`, `searchSelection`, `quickAsk`, `findRelated`), so `nimbus@5`/`nimbus@6` continue the sequence. Note both use `editorTextFocus`, not `editorHasSelection` — these commands fall back to whole-file context, so they must be available with no selection.
 
 - [ ] **Step 7: Add a registration smoke test**
 
