@@ -23,6 +23,8 @@ jobs:
     environment: release
     permissions:
       contents: read
+      id-token: write
+      attestations: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -99,6 +101,14 @@ jobs:
         run: |
           mkdir -p dist-vsix
           bunx vsce package --no-dependencies --out dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
+
+      # Verifiable for anyone who downloads the .vsix from the GitHub Release.
+      # The Marketplace does its own repository signing and does not surface
+      # this attestation; we do not claim it covers a Marketplace download.
+      - name: Attest .vsix build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
 
       - name: Verify required publish secrets are present
         env:
