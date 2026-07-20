@@ -19,6 +19,21 @@ Local-first AI agent for the editor. Ask and search against your private [Nimbus
 - **Open VSX** (Cursor, VSCodium): `ext install nimbus-agent.nimbus-vscode`
 - **Manual:** download the `.vsix` from the [latest release](https://github.com/nimbus-agent/nimbus-vscode/releases) and run `code --install-extension nimbus-<ver>.vsix`.
 
+## Verifying a release
+
+Every release attaches a signed `.vsix` to the GitHub Release with a build
+provenance attestation. To verify the file you downloaded was built by this
+repository's publish workflow:
+
+```bash
+gh attestation verify nimbus-<version>.vsix --repo nimbus-agent/nimbus-vscode
+```
+
+This covers the `.vsix` attached to the **GitHub Release**. The Visual Studio
+Marketplace performs its own repository signing, which VS Code verifies at
+install time; that is a separate mechanism and this attestation is not
+surfaced through it.
+
 ## Quickstart
 
 Run **`Nimbus: Ask`** from the command palette, or right-click a selection in the editor and choose *Ask About Selection* / *Search Selection*. The extension connects to your local Nimbus Gateway automatically (enable `nimbus.autoStartGateway` to have it start the Gateway for you).
