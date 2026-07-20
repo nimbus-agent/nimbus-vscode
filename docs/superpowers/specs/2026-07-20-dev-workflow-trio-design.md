@@ -12,10 +12,11 @@ built-in git extension:
 
 1. **Generate commit message** — reads the *staged* diff, drafts a message in the
    repo's own commit style, writes it into the Source Control input box.
-2. **Review my changes** — reads the *working* diff, returns findings in a
-   read-only markdown tab.
+2. **Review my changes** — reads all local changes against `HEAD` (staged *and*
+   unstaged), returns findings in a read-only markdown tab.
 3. **Generate tests / docstrings** — from the current selection or file, returns
-   a saveable test buffer or a docstring-annotated rewrite.
+   a saveable test buffer, or a docstring-annotated rewrite shown as a
+   side-by-side diff against the original.
 
 These are the surfaces developers touch every day, and they are where a
 local-first agent is most obviously better than a cloud one: the diff never
@@ -30,12 +31,14 @@ never reaches past the typed `@nimbus-dev/client`.
 
 - `Nimbus: Generate Commit Message` — staged diff → SCM input box, matching the
   repo's existing commit style, never clobbering typed text without consent.
-- `Nimbus: Review Changes` — working diff → a consistently-shaped markdown
-  findings tab.
+- `Nimbus: Review Changes` — all local tracked changes vs `HEAD` → a
+  consistently-shaped markdown findings tab, with untracked files counted and
+  named in the header but never sent.
 - `Nimbus: Generate Tests` — selection/file → a **named untitled buffer**
   (`quick-ask.ts` → `quick-ask.test.ts`) opened beside the source, ready to save.
-- `Nimbus: Generate Docstrings` — selection/file → the code rewritten with doc
-  comments, in a read-only tab.
+- `Nimbus: Generate Docstrings` — selection/file → a **side-by-side diff**
+  (original ↔ annotated) so additions are reviewable and mergeable with the
+  editor's own controls.
 - A narrow, unit-testable git seam: all decision logic pure, `vscode` touched
   only in a thin adapter.
 - Path discipline and size clamping on everything sent to the agent.
@@ -46,7 +49,16 @@ never reaches past the typed `@nimbus-dev/client`.
 
 - **Auto-applying** generated code as a `WorkspaceEdit` — that is the Phase 3
   "quick-ask code-editing actions" item. MVP produces suggestions: an unsaved
-  untitled buffer or a read-only tab. Nothing on disk is modified.
+  untitled buffer, or a diff view whose right-hand side is a virtual document.
+  Nothing on disk is modified by the extension; every write is the user's own
+  editor action.
+- **Test-file *location* heuristics** (`src/foo.ts` → `test/foo.test.ts`). MVP
+  derives the file *name* and opens it untitled beside the source; because the
+  buffer is untitled, Save already opens a location picker, so a wrong directory
+  guess costs two clicks. Revisit if that proves annoying in practice.
+- **A `nimbus.scm.reviewScope` setting.** Review defaults to all local tracked
+  changes vs `HEAD`, which is what "my changes" means to nearly everyone. A knob
+  can follow if the default is actually contested.
 - **Diagnostics / squiggles** for review findings (see Decision 3 and Risks).
 - **A payload pre-flight preview.** The Phase 2 "Preview what leaves" item is the
   right home for that, across all surfaces. These three commands become its
@@ -63,9 +75,13 @@ never reaches past the typed `@nimbus-dev/client`.
 | 1 | Scope | **One spec, three commands, one PR.** They differ only in prompt-building and output surface; the git seam is shared and would otherwise be designed once and stretched twice. The plan still sequences them as independently reviewable tasks. |
 | 2 | Git access | **Built-in git extension API only** (`extensions.getExtension("vscode.git")` → `getAPI(1)`). It is the only way to write the SCM input box, needs no process spawning, and gives diffs, repo list, and `log()`. No `child_process`, no second notion of "what is a repo". |
 | 3 | Review output | **Read-only markdown tab** via the existing `openReadonlyJson` opener. Diff-hunk-line → file-line mapping is error-prone, and a hallucinated line number becomes a squiggle on innocent code. Diagnostics are a follow-up, next to the Phase 3 "Ask Nimbus about this problem" item, and only once a validated findings schema exists. |
-| 4 | Tests/docs differentiation | **File-shaped output.** The `@nimbus` participant already has `/test` and Quick Ask presets already cover "write tests for this". The distinct value is output you can *save*: a named untitled `*.test.*` buffer beside the source. Prose-about-code would be a redundant fourth path. |
+| 4 | Tests/docs differentiation | **File-shaped output.** The `@nimbus` participant already has `/test` and Quick Ask presets already cover "write tests for this". The distinct value is output you can *act on*: a named untitled `*.test.*` buffer for tests, a side-by-side diff for docstrings. Prose-about-code would be a redundant fourth path. |
 | 5 | Privacy | **Clamp + path discipline, no per-call modal.** Repo-relative diff paths are kept verbatim (they are load-bearing for a useful review and leak no username or layout); `repo.rootPath` is never sent; any path *we* add to a prompt goes through `redactPath`. Likely-secret files are skipped by default. |
-| 6 | Clamping | **Whole-file granularity.** A diff cut mid-hunk yields confidently wrong reviews. Files are dropped whole and the omission is reported to the user. |
+| 6 | Clamping | **Whole-file granularity.** A diff cut mid-hunk yields confidently wrong reviews. Files are dropped whole and the omission is reported to the user. The one oversized-single-file fallback truncates at a **hunk boundary**, never mid-hunk, so what is sent is always a syntactically valid diff. |
+| 9 | Diff acquisition | **Per-file, not one mega-diff.** The seam asks the git API for the changed *file list* and then each file's diff. This removes unified-diff *parsing* from the design entirely — classification and clamping operate on real paths from git rather than on paths recovered from `diff --git` headers. |
+| 10 | Review scope | **All local tracked changes vs `HEAD`** — staged and unstaged. "Review my changes" returning "nothing to review" because the user staged their work first would be a bad first experience. Untracked files are counted and named in the header, but their content is never sent. |
+| 11 | Style-example hygiene | **Filter the log.** Merge commits, release-bot commits, and dependency-bump commits are excluded before the ~10 examples are chosen, so the agent learns the *human* commit style rather than the automation's. |
+| 12 | In-flight repo loss | **Re-validate before writing.** The selected repository is captured up front, and its continued presence is re-checked after the (uncancellable) `agentInvoke` returns, before anything is written to an input box. |
 | 7 | Commit style | **Learn from `repo.log()`** — feed the last ~10 subject lines as style examples so the draft matches the repo, whether or not it uses conventional commits. Zero config. Falls back to a conventional-commit instruction on an empty log. |
 | 8 | Clobber safety | Empty SCM input box → write directly. Non-empty → modal with **Replace / Append / Cancel**. The input box has no undo, so silent replacement would destroy typed work irrecoverably. |
 
@@ -81,7 +97,7 @@ relates to `real-participant.ts` (vscode glue).
 | --- | --- | --- |
 | `git-types.ts` | types only | `GitRepositoryLike`, `GitApiLike`, `ScmDeps` — the narrow structural interfaces the rest of the code programs against. |
 | `real-git.ts` | vscode glue | `getExtension("vscode.git")` → `activate()` → `getAPI(1)`, adapted to `GitApiLike`. Returns `undefined` when git is unavailable. Coverage-excluded, like `real-participant.ts`. |
-| `diff.ts` | pure | Split a unified diff into per-file entries; classify (secret / deprioritized / normal); select within a char budget at whole-file granularity; report what was omitted. |
+| `diff.ts` | pure | Classify changed files (secret / deprioritized / normal); order them; select within a char budget at whole-file granularity; hunk-boundary-truncate the single-oversized-file case; report what was omitted and why. |
 | `commit-message.ts` | pure | Build the commit prompt (style examples + selected diff); sanitize the agent reply into a commit message. |
 | `review.ts` | pure | Build the review prompt (shape instruction + selected diff); wrap the reply into the findings document. |
 | `generate.ts` | pure | Build tests/docstrings prompts; derive the target test filename from a source path; extract the code block from a reply. |
@@ -92,10 +108,19 @@ relates to `real-participant.ts` (vscode glue).
 `GitApiLike` is deliberately minimal — only what the three commands need:
 
 ```ts
+export type DiffScope = "staged" | "all";      // index-vs-HEAD | worktree-vs-HEAD
+
+export interface ChangedFile {
+  readonly path: string;                        // repo-relative, from git
+  readonly status: string;                      // added / modified / deleted / …
+}
+
 export interface GitRepositoryLike {
   readonly rootPath: string;                    // never sent to the agent
-  diff(cached: boolean): Promise<string>;       // staged (true) / working (false)
-  log(opts: { maxEntries: number }): Promise<Array<{ message: string }>>;
+  changedFiles(scope: DiffScope): Promise<readonly ChangedFile[]>;
+  fileDiff(scope: DiffScope, path: string): Promise<string>;
+  untrackedPaths(): Promise<readonly string[]>; // counted/named, never sent
+  log(maxEntries: number): Promise<readonly string[]>;  // commit messages
   readonly inputBox: { value: string };
 }
 
@@ -104,20 +129,32 @@ export interface GitApiLike {
 }
 ```
 
-Wiring mirrors the existing injectable-dep pattern: `ActivateDeps` gains
-`git?: () => Promise<GitApiLike | undefined>` and
+`real-git.ts` maps this onto the git extension's `diffIndexWithHEAD()` /
+`diffWithHEAD()` (file lists) and their single-path overloads (per-file diffs),
+plus `state.untrackedChanges` and `log({ maxEntries })`. Keeping those overload
+shapes inside the adapter is deliberate: the rest of the codebase programs
+against the four verbs above, not against VS Code's git API shape.
+
+Per-file acquisition costs one call per changed file. That is bounded by
+`SCM_MAX_FILES = 100`: beyond it, the extra files are reported as omitted rather
+than fetched, so a 2 000-file branch cannot fan out into 2 000 calls.
+
+Wiring mirrors the existing injectable-dep pattern: `ActivateDeps` gains `git?: () => Promise<GitApiLike | undefined>`,
 `openUntitled?: (opts: { fileName: string; content: string }) => Promise<void>`,
-each defaulting to a real implementation and each replaced by a fake in tests.
+and `openDiff?: (opts: { title: string; left: string; right: string;
+languageId: string }) => Promise<void>`, each defaulting to a real
+implementation and each replaced by a fake in tests.
 `activateWithDeps` keeps ownership of user interaction (quick picks, modals,
 progress, error toasts); the pure modules take data in and return data out.
 
 ### Data flow (per command)
 
 ```
-command → resolve git api → select repo → read diff → parse + classify + clamp
+command → resolve git api → select repo → list changed files
+        → classify + order + budget-select → fetch each selected file's diff
         → build prompt (paths redacted where we add them)
         → withProgress(agentInvoke, { stream: false, agent? })
-        → extractReply → sanitize/format → output surface
+        → extractReply → sanitize/format → re-validate repo → output surface
 ```
 
 `extractReply`, `clampContext`, `redactPath`, and `QUICK_ASK_MAX_CONTEXT_CHARS`
@@ -130,27 +167,43 @@ are reused from `quick-ask.ts` rather than reimplemented.
 Contributed to the SCM title bar (`scm/title`, `when: scmProvider == git`) with a
 sparkle icon, and to the command palette.
 
-- Diff source: `repo.diff(true)` (staged). Empty → error toast "Nimbus: nothing
-  staged to describe." and stop. We deliberately do **not** silently fall back to
-  the working tree — the message must describe what will actually be committed.
-- Style: `repo.log({ maxEntries: 10 })` subject lines (first line of each
-  message) are included as examples. Empty log → conventional-commit instruction.
+- Diff source: scope `"staged"`. Empty → error toast "Nimbus: nothing staged to
+  describe." and stop. We deliberately do **not** silently fall back to the
+  working tree — the message must describe what will actually be committed.
+- Style: `repo.log(30)` subject lines (first line of each message), **filtered**
+  before the first 10 survivors are used as examples. Excluded: merges
+  (`^Merge (branch|pull request|remote|tag)\b`), release automation
+  (`^chore\(release\):`, `^chore: release`, `^Release v?\d`), and dependency
+  bumps (`^(Bump|build\(deps\):|chore\(deps\):)`). Without this the examples in a
+  bot-heavy repo are mostly automation, and the agent dutifully imitates it.
+  No survivors → conventional-commit instruction.
 - Sanitizing: strip surrounding code fences and conversational preamble
   ("Here's a commit message:"), trim trailing whitespace. No length enforcement —
   the prompt asks for a ≤72-char subject and the style examples reinforce it;
   truncating a message mid-word would be worse than a long one.
-- Output: `repo.inputBox.value`. Empty → write. Non-empty → modal
-  **Replace / Append / Cancel**; Append joins with a blank line.
+- Output: `repo.inputBox.value` on the **captured** repository. Empty → write.
+  Non-empty → modal **Replace / Append / Cancel**; Append joins with a blank
+  line.
+- **Stale-repo guard.** `agentInvoke` is uncancellable and can run for a while;
+  the user may close the folder meanwhile. Before writing, the captured repo is
+  re-checked against `api.repositories()` by `rootPath`. If it is gone, the draft
+  is not silently dropped — it opens in a read-only tab with a toast explaining
+  the repository closed, so the generated message is still recoverable.
 
 ### 2. Review changes
 
-- Diff source: `repo.diff(false)` (working tree, unstaged). Empty → info toast
-  "Nimbus: no working-tree changes to review."
+- Diff source: scope `"all"` — every tracked file differing from `HEAD`, staged
+  or not. Empty → info toast "Nimbus: no local changes to review."
 - The prompt asks for a fixed shape: a one-paragraph summary, then findings
   grouped by file, each tagged with a severity. We do **not** parse the reply —
   the shape instruction exists so the tab reads the same every time.
 - Output: `openReadonlyJson("Nimbus review.md", markdown)`, prefixed with a
-  header naming the repo (basename only) and the files reviewed/omitted.
+  **coverage header** that states exactly what was and was not reviewed:
+  the repo basename, the files reviewed, and — each only when non-empty —
+  the files omitted for size, the files skipped as secret-bearing, and the
+  **untracked** files (named, content never sent). A user must never be able to
+  read this tab and wrongly conclude their brand-new file was reviewed; the
+  header is the mechanism, and it is asserted in tests.
 
 ### 3. Generate tests / docstrings
 
@@ -172,8 +225,23 @@ matching Quick Ask's existing rule.
   right name and language. The buffer is unsaved; closing it discards. If a real
   file already exists at that name, VS Code's own save-overwrite confirmation is
   the guard — we do not write to disk ourselves.
-- **Generate Docstrings** → the reply's code block in a read-only tab
-  (`Nimbus docstrings.md`), for the user to diff or copy. No edit is applied.
+- **Generate Docstrings** → a **side-by-side diff**: the original document on the
+  left, the annotated version on the right, opened with the `vscode.diff`
+  command and titled `<basename> ↔ Nimbus docstrings`. Reading annotated code out
+  of a markdown tab and hand-merging it is tedious and error-prone; a diff shows
+  exactly what was added and lets the editor's own controls do the merging.
+  - The right-hand side is a **virtual read-only document**, served by the same
+    content-provider machinery that already backs `openReadonlyJson`
+    (generalized out of `createReadonlyJsonOpener`). The extension never applies
+    an edit — any change to the real file is the user's own action in the diff
+    editor, which keeps the Phase 3 auto-apply boundary intact.
+  - When the scope is a **selection**, the right-hand document is the full
+    original text with the selected range replaced by the rewrite, so the diff
+    shows only the annotated region rather than a whole-file mismatch. This needs
+    selection offsets, so `TextEditorLike` in the shim gains
+    `document.offsetAt(position)` and `selection.start` / `selection.end`
+    (structurally satisfied by the real `vscode.TextEditor`). Splicing itself is
+    a pure function and is unit-tested.
 - Both extract the fenced code block from the reply when present, falling back to
   the whole reply when the agent returned bare code.
 
@@ -196,8 +264,9 @@ shared, already justified.
 
 Selection algorithm (`diff.ts`), deterministic and unit-tested:
 
-1. Split the raw diff on `diff --git ` boundaries into per-file entries, keeping
-   each entry's repo-relative path.
+1. Start from the changed-file list git reports (repo-relative paths), capped at
+   `SCM_MAX_FILES = 100`. No unified-diff parsing is involved — paths come from
+   git, not from `diff --git` headers.
 2. Drop **secret-bearing** files when `nimbus.scm.skipSecretFiles` is true
    (default): `.env*`, `*.pem`, `*.key`, `id_rsa*`, `*.p12`, `*.pfx`. A staged
    `.env` reaching a cloud LLM is the one unrecoverable mistake available here.
@@ -208,11 +277,16 @@ Selection algorithm (`diff.ts`), deterministic and unit-tested:
 4. Greedily take whole files in order — normal first, then deprioritized —
    while the running total fits the budget.
 5. **Fallback:** if not even the first file fits, include that one file truncated
-   to the budget with an explicit `(truncated)` marker in its header. A dead
-   command is worse than an honestly-labelled partial one; this is the single
-   documented exception to whole-file granularity.
-6. Return the selected text plus counts, so the caller can warn: "Nimbus: 3 of 11
-   files omitted — diff too large." Secret-skips are reported separately, so a
+   **at the last complete hunk (`@@ … @@`) boundary that fits**, with an explicit
+   `(truncated — N of M hunks)` marker in its header. A raw character slice would
+   cut mid-hunk and hand the agent malformed diff syntax, which produces
+   confident nonsense; cutting at a hunk boundary keeps what is sent a valid
+   diff. If even the first hunk exceeds the budget, the file is dropped and
+   reported — we do not send a broken hunk. This is the single documented
+   exception to whole-file granularity.
+6. Return the selected text plus per-reason omission lists, so the caller can
+   warn ("Nimbus: 3 of 11 files omitted — diff too large") and so the review
+   coverage header can name them. Secret-skips are reported separately, so a
    skipped `.env` is visible rather than silent.
 
 Path discipline:
@@ -253,21 +327,27 @@ Agent selection reuses the existing `nimbus.askAgent`.
 Vitest, `vscode` aliased to the stub, following `participant.test.ts` and
 `chat-controller.test.ts`:
 
-- `scm-diff.test.ts` — splitting, secret-skip on/off, lockfile deprioritization,
-  budget selection, the single-oversized-file truncation fallback, omission
-  counts, CRLF and binary-file entries, a diff with no `diff --git` header.
-- `scm-commit-message.test.ts` — prompt includes style examples; empty-log
-  fallback; sanitizing (fences, preamble, trailing whitespace); append vs replace
-  composition.
-- `scm-review.test.ts` — prompt shape instruction; document header with
-  reviewed/omitted counts.
+- `scm-diff.test.ts` — secret-skip on/off, lockfile deprioritization, budget
+  selection, the `SCM_MAX_FILES` cap, hunk-boundary truncation (including the
+  first-hunk-too-big drop), per-reason omission lists, CRLF diffs, and binary
+  files (no hunks at all).
+- `scm-commit-message.test.ts` — prompt includes style examples; **merge / release-bot
+  / dependency-bump commits are filtered out** and a log of nothing but those
+  falls back to the conventional-commit instruction; sanitizing (fences,
+  preamble, trailing whitespace); append vs replace composition.
+- `scm-review.test.ts` — prompt shape instruction; and the coverage header,
+  asserting that size-omitted, secret-skipped, and untracked files each appear
+  when present and that the section is absent when empty.
 - `scm-generate.test.ts` — filename derivation table incl. dotted names and
-  extensionless files; fenced-block extraction and the bare-code fallback.
+  extensionless files; fenced-block extraction and the bare-code fallback;
+  **selection splicing** (start, middle, end of file; empty selection).
 - `scm-repo-select.test.ts` — zero / one / many repositories.
 - `scm-commands.test.ts` — the four handlers end-to-end against a fake
   `GitApiLike`, a fake client, and the existing window stub: disconnected, git
   disabled, no repo, empty diff, clobber modal each branch, agent throw, empty
-  reply, and the happy path asserting exactly what was passed to `agentInvoke`.
+  reply, **the stale-repo guard (repository disappears mid-invoke → read-only
+  fallback, no write)**, and the happy path asserting exactly what was passed to
+  `agentInvoke`.
 
 `real-git.ts` is coverage-excluded in `vitest.config.ts`, consistent with the
 other vscode-glue adapters.
@@ -285,9 +365,15 @@ other vscode-glue adapters.
 - **One-shot with no cancel.** A large diff on a slow model leaves a progress
   notification the user cannot abort. This is the known `agentInvoke` limitation
   tracked in Phase 4; when abort ships, all three commands gain Stop for free.
-- **`repo.diff()` excludes untracked files.** "Review my changes" will not see a
-  brand-new unstaged file. Documented in the command's output header rather than
-  worked around, since surfacing untracked content is a separate privacy call.
+- **Untracked files are still not reviewed.** Their content is deliberately never
+  sent — reading files git does not track is a privacy call this feature should
+  not make unilaterally. The mitigation is honesty, not coverage: they are
+  counted and named in the review header, and that assertion is a test.
+- **Per-file diff fetching is N calls.** Bounded by `SCM_MAX_FILES = 100`, but a
+  100-file review is still 100 round-trips to the git extension before the agent
+  call starts. If that proves slow in Layer 2 verification, the fallback is to
+  fetch the mega-diff for the whole repo and split it — the parsing we avoided —
+  so this is a reversible bet, not a one-way door.
 
 ## Documentation updates
 
