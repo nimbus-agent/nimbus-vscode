@@ -133,12 +133,16 @@ an in-flight generation), **Search** (Quick Pick over the local index),
 to ranked neighbors), **Quick Ask** (one-shot editor quick-ask over
 `agentInvoke`, reply in a read-only tab); a native `@nimbus` **Chat participant**
 in VS Code's built-in Chat view (`/explain`, `/fix`, `/test` slash commands,
-`#file`/selection context, streaming answers, local-index citations); a Nimbus
-sidebar with Audit, Sessions, Index, Agents, and an **Egress** ledger viewer
-(with Verify-ledger and Prove-window commands) plus an **egress status-bar
-badge**; a **connection troubleshooter** (state-aware modal, no RPC); a **Get
-Started walkthrough** (first-run onboarding via the VS Code Walkthroughs API, no
-RPC); plus connection + HITL plumbing.
+`#file`/selection context, streaming answers, local-index citations); a
+**dev-workflow trio** over VS Code's built-in git extension — `Generate Commit
+Message` (staged diff → SCM input box), `Review Changes` (all local changes →
+findings tab), and `Generate Tests` / `Generate Docstrings` (selection → test
+buffer / docstring diff), output always a suggestion; a Nimbus sidebar with
+Audit, Sessions, Index, Agents, and an **Egress** ledger viewer (with
+Verify-ledger and Prove-window commands) plus an **egress status-bar badge**; a
+**connection troubleshooter** (state-aware modal, no RPC); a **Get Started
+walkthrough** (first-run onboarding via the VS Code Walkthroughs API, no RPC);
+plus connection + HITL plumbing.
 
 Workflow / share surfaces are **not** implemented — they are blocked upstream,
 not deferred by choice: no published `@nimbus-dev/client` exposes those RPCs
