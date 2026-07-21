@@ -77,6 +77,14 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
   ]
   ```
 
+### `nimbus.scm.skipSecretFiles`
+
+- **Type:** boolean · **Default:** `true`
+- Exclude likely-secret files — `.env*`, `*.pem`, `*.key`, `id_rsa*`, `*.p12`,
+  `*.pfx` — from the diffs that **Generate Commit Message** and **Review
+  Changes** send to the agent. Skipped files are reported, never dropped
+  silently. Turn this off only if you genuinely need those files reviewed.
+
 ### `nimbus.egress.showStatusBarBadge`
 
 `boolean` (default `true`). Shows a second status-bar item while connected: the egress ledger row count plus a `$(check)` that means *the ledger head was read successfully* — not a cryptographic verification. Click it to open the Egress view; run **Verify Egress Ledger** for the offline chain check. Set to `false` to hide the badge. Poll cadence follows [`nimbus.statusBarPollMs`](#nimbusstatusbarpollms).

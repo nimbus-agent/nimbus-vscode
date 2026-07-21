@@ -494,6 +494,11 @@
             }
           }
         },
+        "nimbus.scm.skipSecretFiles": {
+          "type": "boolean",
+          "default": true,
+          "description": "Exclude likely-secret files (.env*, *.pem, *.key, id_rsa*, *.p12, *.pfx) from diffs sent to the agent by the Generate Commit Message and Review Changes commands."
+        },
         "nimbus.egress.showStatusBarBadge": {
           "type": "boolean",
           "default": true,
