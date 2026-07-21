@@ -12,6 +12,7 @@ export interface Settings {
   askAgent(): string;
   agents(): unknown;
   quickAskPresets(): unknown;
+  scmSkipSecretFiles(): boolean;
   showEgressStatusBarBadge(): boolean;
   hitlAlwaysModal(): boolean;
   logLevel(): LogLevel;
@@ -28,6 +29,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     askAgent: () => cfg().get<string>("askAgent", ""),
     agents: () => cfg().get<unknown>("agents", []),
     quickAskPresets: () => cfg().get<unknown>("quickAsk.presets", []),
+    scmSkipSecretFiles: () => cfg().get<boolean>("scm.skipSecretFiles", true),
     showEgressStatusBarBadge: () => cfg().get<boolean>("egress.showStatusBarBadge", true),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
     logLevel: () => {

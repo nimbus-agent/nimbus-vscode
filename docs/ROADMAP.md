@@ -43,6 +43,7 @@ rough T-shirt size (S / M / L).
 | **Find related** — pivot from a selection or Index item to ranked local neighbors (self-excluded) | `searchRanked` |
 | **Quick Ask** — one-shot editor quick-ask (preset actions + custom), reply in a read-only tab | `agentInvoke` |
 | **`@nimbus` Chat participant** — native participant in VS Code's built-in Chat view, with slash commands (`/explain`, `/fix`, `/test`), `#file`/selection context, streaming answers, and local-index citations | `askStream`, `searchRanked` |
+| **Dev-workflow trio** — Generate commit message (staged diff → SCM input box), Review changes (all local changes vs `HEAD` → findings tab), Generate tests / docstrings (untitled test buffer / docstring diff) | `agentInvoke` + SCM API |
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
@@ -63,12 +64,12 @@ The features that move the extension from good to **great** — the ones that le
 into what Copilot-style tools cannot do (local-first, agent-based, egress-audited)
 or that meet developers where they already work. All still on existing RPCs.
 
-The **native VS Code Chat participant** has shipped — see **Already shipped**
-above; the remaining Phase 2 items below are still open.
+The **native VS Code Chat participant** and the **Dev-workflow trio** have
+shipped — see **Already shipped** above; the remaining Phase 2 items below are
+still open.
 
 | Feature | Value | Client RPC | Effort |
 | --- | --- | --- | --- |
-| **Dev-workflow trio** — Generate commit message (staged diff), "Review my changes" (working diff), Generate tests / docstrings | The features touched every single day | `agentInvoke` + SCM API | M |
 | **"Preview what leaves" pre-flight** — before an agent action, show the exact context that will be sent, with redacted paths | The privacy moat made visible; extends the `redactPath` work | local + `egressList` | M |
 | **Context-grounded Ask** — `@`-mention / attach files, search results, or index items into a question | Answers cite *your* local knowledge, not the model's guess | `searchRanked` / `queryItems` + `askStream` | M |
 
@@ -83,7 +84,7 @@ story. Still no SDK change required.
 | **Raw SQL query panel** (power users) | Ad-hoc queries over the local index | `querySql` | M |
 | **Session browser depth** — search / rename / pin / export transcript | Manage long histories | `getSessionTranscript` | M |
 | **Index browsing depth** — filter / paginate | Navigate a large index | `queryItems` | M |
-| Quick-ask **code-editing actions** — apply the reply as a `WorkspaceEdit` with diff + undo | Turn answers into edits, safely | `agentInvoke` | M |
+| Quick-ask **code-editing actions** — offer the reply as a diff the user applies themselves (the pattern Generate Docstrings already uses); the extension never applies a `WorkspaceEdit` | Turn answers into edits without ever taking the edit out of the user's hands | `agentInvoke` | M |
 | **"Ask Nimbus about this problem"** code action on a diagnostic | Editor-native debugging from a squiggle | `agentInvoke` | M |
 | **Multi-agent compare** — ask N agents, diff their answers; per-action agent picker | Exploit the agent model; pick the best take | `agentInvoke` (fan-out) | M |
 | **Live egress feed** panel + **HITL history/notification center** + "what has Nimbus sent about this file/session?" | A complete, glanceable trust surface | `egressList` / `subscribeHitl` | M |
