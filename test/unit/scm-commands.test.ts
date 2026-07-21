@@ -257,3 +257,105 @@ describe("generateCommitMessage", () => {
     expect(h.warns.some((w) => w.includes("omitted"))).toBe(true);
   });
 });
+
+describe("reviewChanges", () => {
+  test("opens findings in a read-only tab", async () => {
+    const h = harness({ client: () => ({ agentInvoke: async () => ({ reply: "Looks fine." }) }) });
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.opened[0]?.title).toBe("Nimbus review.md");
+    expect(h.opened[0]?.content).toContain("Looks fine.");
+  });
+
+  test("reviews staged and unstaged changes together", async () => {
+    const scopes: string[] = [];
+    const repo = fakeRepo();
+    const watched: GitRepositoryLike = {
+      ...repo,
+      changedFiles: async (scope) => {
+        scopes.push(scope);
+        return [{ path: "src/a.ts", status: "modified" }];
+      },
+    };
+    const h = harness({}, [watched]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(scopes).toEqual(["all"]);
+  });
+
+  test("names untracked files in the header so they are not mistaken for reviewed", async () => {
+    const h = harness({}, [fakeRepo({ untracked: ["src/brand-new.ts"] })]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.opened[0]?.content).toContain("Not reviewed — untracked");
+    expect(h.opened[0]?.content).toContain("src/brand-new.ts");
+  });
+
+  test("names binary changes as non-textual, not as too-large", async () => {
+    const binary =
+      "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n";
+    const h = harness({}, [
+      fakeRepo({
+        files: [
+          { path: "src/a.ts", status: "modified" },
+          { path: "logo.png", status: "modified" },
+        ],
+        diffs: { "src/a.ts": "@@ -1 +1 @@\n+a\n", "logo.png": binary },
+      }),
+    ]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.opened[0]?.content).toContain("Not reviewed — binary or non-textual changes");
+    expect(h.opened[0]?.content).toContain("logo.png");
+    expect(h.invoked[0]).not.toContain("logo.png");
+  });
+
+  test("names secret-skipped files in the header", async () => {
+    const h = harness({}, [
+      fakeRepo({
+        files: [
+          { path: "src/a.ts", status: "modified" },
+          { path: ".env", status: "modified" },
+        ],
+        diffs: { "src/a.ts": "@@ -1 +1 @@\n+a\n", ".env": "@@ -1 +1 @@\n+K=1\n" },
+      }),
+    ]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.opened[0]?.content).toContain("Not reviewed — possible secrets");
+    expect(h.opened[0]?.content).toContain(".env");
+  });
+
+  test("never sends untracked file names to the agent", async () => {
+    const h = harness({}, [fakeRepo({ untracked: ["src/brand-new.ts"] })]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.invoked[0]).not.toContain("brand-new");
+  });
+
+  test("shows the repo basename, never the absolute root", async () => {
+    const h = harness({}, [fakeRepo({ rootPath: "/home/alice/secret-client/proj" })]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.opened[0]?.content).toContain("proj");
+    expect(h.opened[0]?.content).not.toContain("/home/alice");
+  });
+
+  test("reports when there is nothing to review", async () => {
+    const h = harness({}, [fakeRepo({ files: [] })]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.infos.some((i) => i.includes("no local changes"))).toBe(true);
+    expect(h.opened).toEqual([]);
+  });
+
+  test("errors when disconnected", async () => {
+    const h = harness({ client: () => undefined });
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.errors[0]).toContain("not connected");
+  });
+
+  test("reports an agent failure without throwing", async () => {
+    const h = harness({
+      client: () => ({
+        agentInvoke: async () => {
+          throw new Error("boom");
+        },
+      }),
+    });
+    await expect(createScmCommands(h.deps).reviewChanges()).resolves.toBeUndefined();
+    expect(h.errors[0]).toContain("boom");
+  });
+});

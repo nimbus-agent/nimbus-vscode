@@ -18,6 +18,7 @@ import {
 } from "./diff.js";
 import type { DiffScope, GitRepositoryLike } from "./git-types.js";
 import { classifyRepositories, findRepoByRoot, repoLabel } from "./repo-select.js";
+import { buildReviewDocument, buildReviewPrompt, type ReviewCoverage } from "./review.js";
 
 export interface ScmClientLike {
   agentInvoke(input: string, opts: { stream: boolean; agent?: string }): Promise<unknown>;
@@ -233,7 +234,47 @@ export function createScmCommands(deps: ScmCommandDeps): {
     },
 
     async reviewChanges(): Promise<void> {
-      return undefined; // Task 7
+      const repo = await resolveRepo();
+      if (repo === undefined) return;
+      const client = requireClient();
+      if (client === undefined) return;
+      try {
+        // Scope "all": staged and unstaged together. "Review my changes"
+        // returning nothing because the user staged their work first would be a
+        // bad first experience.
+        const collected = await collectDiff(repo, "all", deps.skipSecretFiles());
+        if (collected.empty) {
+          void deps.window.showInformationMessage("Nimbus: no local changes to review.", {});
+          return;
+        }
+        if (collected.reviewed.length === 0) {
+          void deps.window.showErrorMessage(
+            "Nimbus: nothing reviewable — every changed file was skipped or too large.",
+          );
+          return;
+        }
+        warnOmissions(collected, collected.reviewed.length + collected.omittedTooLarge.length);
+        const reply = await invoke(
+          client,
+          buildReviewPrompt(collected.block),
+          "Nimbus: reviewing changes…",
+        );
+        if (reply === undefined) return;
+        // Untracked content is never sent — only counted and named here, so the
+        // reader cannot mistake a brand-new file for a reviewed one.
+        const coverage: ReviewCoverage = {
+          repoLabel: repoLabel(repo),
+          reviewed: collected.reviewed,
+          omittedTooLarge: collected.omittedTooLarge,
+          skippedSecret: collected.skippedSecret,
+          nonTextual: collected.nonTextual,
+          untracked: await repo.untrackedPaths(),
+        };
+        await deps.openReadonly("Nimbus review.md", buildReviewDocument(coverage, reply));
+      } catch (e) {
+        deps.log.error(`nimbus.reviewChanges failed: ${errMsg(e)}`);
+        void deps.window.showErrorMessage(`Nimbus review failed: ${errMsg(e)}`);
+      }
     },
 
     async generateTests(): Promise<void> {
