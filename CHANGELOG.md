@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.5.1...v0.6.0) (2026-07-21)
+
+
+### Features
+
+* **scm:** dev-workflow trio — commit message, review changes, generate tests/docs ([#38](https://github.com/nimbus-agent/nimbus-vscode/issues/38)) ([1376474](https://github.com/nimbus-agent/nimbus-vscode/commit/1376474fafcf33fd7d92f182d0d9bfc005bd8aad))
+
 ## [0.5.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.5.0...v0.5.1) (2026-07-20)
 
 
