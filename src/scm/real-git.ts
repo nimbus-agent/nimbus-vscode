@@ -6,8 +6,10 @@ import { relativeOrBasename } from "./paths.js";
 // Thin vscode-git glue — mirrors real-participant.ts. Excluded from coverage;
 // the pure modules carry the logic and the tests.
 //
-// The git extension's API is not typed on our side, so every access is guarded
-// and any shape mismatch degrades to "git unavailable" rather than throwing.
+// The git extension's API is not typed on our side. Resolving the API itself is
+// guarded here and degrades to "git unavailable" rather than throwing; a shape
+// mismatch discovered later, on a per-repository call, is not caught here —
+// commands.ts catches it, at the per-command level.
 
 interface RawChange {
   uri: { fsPath: string };
