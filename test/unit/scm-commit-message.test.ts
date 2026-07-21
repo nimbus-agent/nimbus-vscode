@@ -85,6 +85,17 @@ describe("sanitizeCommitMessage", () => {
     expect(sanitizeCommitMessage("Here's a commit message:\n\nfeat: a")).toBe("feat: a");
     expect(sanitizeCommitMessage("Here is the commit message:\nfix: b")).toBe("fix: b");
   });
+  test("strips a conversational preamble followed by a plain fence", () => {
+    expect(sanitizeCommitMessage("Here's a commit message:\n\n```\nfeat: a\n```")).toBe("feat: a");
+  });
+  test("strips a conversational preamble followed by a language-tagged fence", () => {
+    expect(sanitizeCommitMessage("Here's a commit message:\n\n```text\nfeat: a\n```")).toBe(
+      "feat: a",
+    );
+  });
+  test("strips a fence followed by trailing commentary", () => {
+    expect(sanitizeCommitMessage("```\nfeat: a\n```\nHope that helps")).toBe("feat: a");
+  });
   test("keeps a body intact", () => {
     expect(sanitizeCommitMessage("feat: a\n\nWhy this matters.")).toBe(
       "feat: a\n\nWhy this matters.",

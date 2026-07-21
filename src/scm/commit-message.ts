@@ -52,14 +52,27 @@ export function buildCommitPrompt(input: {
   ].join("\n");
 }
 
-// Agents like to wrap the answer in a fence and introduce it. Strip both, then
-// trim trailing whitespace per line. Deliberately no length enforcement:
-// truncating a message mid-word is worse than a long one.
+// Agents like to wrap the answer in a fence and introduce it — sometimes both
+// at once ("Here's a commit message:\n\n```\n...\n```"), sometimes with
+// commentary trailing the closing fence. Strip a preamble and a fence
+// repeatedly (order-insensitive, bounded) until nothing more comes off, then
+// trim trailing whitespace per line. A fenced block that isn't anchored to
+// the end of the reply drops anything after its closing fence — same as
+// `extractCode` elsewhere in this codebase, on the same assumption that a
+// fenced reply's fence is the message and anything past it is commentary, not
+// content. Deliberately no length enforcement: truncating a message mid-word
+// is worse than a long one.
 export function sanitizeCommitMessage(reply: string): string {
   let text = reply.trim();
-  const fenced = /^```[^\n]*\n([\s\S]*?)\n?```$/.exec(text);
-  if (fenced?.[1] !== undefined) text = fenced[1];
-  text = text.replace(/^(here(''|'|)s|here is)[^\n:]*:\s*\n+/i, "");
+  const preambleRe = /^(here(''|'|)s|here is)[^\n:]*:\s*\n+/i;
+  const fenceRe = /^```[^\n]*\n([\s\S]*?)\n?```/;
+  for (let i = 0; i < 5; i++) {
+    const before = text;
+    text = text.replace(preambleRe, "");
+    const fenced = fenceRe.exec(text);
+    if (fenced?.[1] !== undefined) text = fenced[1];
+    if (text === before) break;
+  }
   return text
     .split("\n")
     .map((line) => line.replace(/\s+$/, ""))
