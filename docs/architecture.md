@@ -106,8 +106,11 @@ dependency-injection shape used elsewhere in the extension.
 
 [`real-git.ts`](../src/scm/real-git.ts) is the **only** file that touches the
 git extension's actual API (`vscode.extensions.getExtension("vscode.git")`) —
-untyped on our side, so every access is guarded and any shape mismatch
-degrades to "git unavailable" rather than throwing. It mirrors
+untyped on our side. Resolving the API itself (`getExtension`/`activate`/
+`getAPI`) is guarded and degrades to "git unavailable" rather than throwing;
+a shape mismatch discovered later, per-repository call (e.g. a `RawChange`
+missing `.uri.fsPath`) is not caught here — `commands.ts` catches it, at the
+per-command level, alongside its other failure modes. It mirrors
 `chat-participant/real-participant.ts` and is excluded from coverage for the
 same reason: the pure modules carry the logic and the tests.
 

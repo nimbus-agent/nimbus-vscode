@@ -31,6 +31,12 @@ interface RawGitApi {
 
 function adaptRepository(raw: RawRepository): GitRepositoryLike {
   const root = raw.rootUri.fsPath;
+  // `path` here doubles as both the agent-safe display path AND the key
+  // `fileDiff` below queries git with. When relativeOrBasename falls back to
+  // a bare basename (root mismatch — see paths.ts), that basename is what
+  // gets passed to `diffIndexWithHEAD`/`diffWithHEAD` too, which git will not
+  // resolve to the real file. In practice this yields an empty diff, so the
+  // file is reported (harmlessly) as non-textual rather than by its real path.
   const listing = async (scope: DiffScope): Promise<readonly ChangedFile[]> => {
     const changes = scope === "staged" ? await raw.diffIndexWithHEAD() : await raw.diffWithHEAD();
     return changes.map((c) => ({

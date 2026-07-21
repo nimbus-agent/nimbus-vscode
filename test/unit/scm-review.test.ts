@@ -64,4 +64,40 @@ describe("buildReviewDocument", () => {
     const doc = buildReviewDocument(coverage(), "FINDINGS-MARKER");
     expect(doc.indexOf("nimbus-vscode")).toBeLessThan(doc.indexOf("FINDINGS-MARKER"));
   });
+
+  test("shows the _nothing_ placeholder when zero files were reviewed", () => {
+    const doc = buildReviewDocument(coverage({ reviewed: [] }), "f");
+    expect(doc).toContain("**Reviewed (0 files):** _nothing_");
+  });
+
+  test("pluralizes the count for 2+ reviewed files", () => {
+    const doc = buildReviewDocument(coverage({ reviewed: ["src/a.ts", "src/b.ts"] }), "f");
+    expect(doc).toContain("Reviewed (2 files):");
+    expect(doc).toContain("`src/a.ts`");
+    expect(doc).toContain("`src/b.ts`");
+  });
+
+  test("renders several populated not-reviewed sections at once, each with its own files", () => {
+    const doc = buildReviewDocument(
+      coverage({
+        omittedTooLarge: ["big.ts"],
+        skippedSecret: [".env"],
+        nonTextual: ["logo.png"],
+        untracked: ["src/new.ts"],
+      }),
+      "f",
+    );
+    expect(doc).toContain("Not reviewed — too large");
+    expect(doc).toContain("big.ts");
+    expect(doc).toContain("Not reviewed — possible secrets");
+    expect(doc).toContain(".env");
+    expect(doc).toContain("Not reviewed — binary or non-textual changes");
+    expect(doc).toContain("logo.png");
+    expect(doc).toContain("Not reviewed — untracked");
+    expect(doc).toContain("src/new.ts");
+    // Order matches buildReviewDocument's own section order.
+    expect(doc.indexOf("too large")).toBeLessThan(doc.indexOf("possible secrets"));
+    expect(doc.indexOf("possible secrets")).toBeLessThan(doc.indexOf("binary or non-textual"));
+    expect(doc.indexOf("binary or non-textual")).toBeLessThan(doc.indexOf("untracked"));
+  });
 });

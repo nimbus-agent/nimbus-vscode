@@ -156,8 +156,16 @@ export function createScmCommands(deps: ScmCommandDeps): {
     return client;
   };
 
-  const warnOmissions = (collected: CollectedDiff, total: number): void => {
+  const warnOmissions = (collected: CollectedDiff): void => {
     if (collected.omittedTooLarge.length > 0) {
+      // Every changed file this command considered — not just reviewed +
+      // too-large — so the count is not an understatement of what was left
+      // out (a secret-skipped or non-textual file is still an omission).
+      const total =
+        collected.reviewed.length +
+        collected.omittedTooLarge.length +
+        collected.skippedSecret.length +
+        collected.nonTextual.length;
       void deps.window.showWarningMessage(
         `Nimbus: ${collected.omittedTooLarge.length} of ${total} files omitted — diff too large.`,
       );
@@ -215,6 +223,12 @@ export function createScmCommands(deps: ScmCommandDeps): {
         fileName: string;
         languageId: string;
         hasSelection: boolean;
+        // Captured here (t0), not by the caller after the agent call (t1):
+        // agentInvoke is uncancellable and can run for seconds, during which
+        // the user can move the cursor, change the selection, or switch
+        // files. Reading offsets afterwards would risk splicing a stale (or
+        // altogether different-document) range into this fullText.
+        selectionOffsets: { start: number; end: number } | undefined;
       }
     | undefined => {
     const editor = deps.window.activeTextEditor;
@@ -241,6 +255,7 @@ export function createScmCommands(deps: ScmCommandDeps): {
       fileName: editor.document.fileName,
       languageId: editor.document.languageId,
       hasSelection,
+      selectionOffsets: hasSelection ? deps.selectionOffsets() : undefined,
     };
   };
 
@@ -268,8 +283,20 @@ export function createScmCommands(deps: ScmCommandDeps): {
         void deps.window.showErrorMessage(`Nimbus: ${detail}.`);
         return;
       }
-      warnOmissions(collected, collected.reviewed.length + collected.omittedTooLarge.length);
-      const examples = filterStyleExamples(await repo.log(COMMIT_LOG_FETCH), COMMIT_STYLE_EXAMPLES);
+      warnOmissions(collected);
+      // A repo with no commits yet rejects `git log` (VS Code's git extension
+      // throws through it) rather than resolving []. That must still reach
+      // buildCommitPrompt's deliberate "no examples → Conventional Commits"
+      // fallback instead of dying here with a raw git error after the diff
+      // work above is already done.
+      let history: readonly string[];
+      try {
+        history = await repo.log(COMMIT_LOG_FETCH);
+      } catch (e) {
+        deps.log.debug(`scm: repo.log failed, falling back to no style examples: ${errMsg(e)}`);
+        history = [];
+      }
+      const examples = filterStyleExamples(history, COMMIT_STYLE_EXAMPLES);
       const prompt = buildCommitPrompt({ diffBlock: collected.block, examples });
       const reply = await invoke(client, prompt, "Nimbus: drafting commit message…");
       if (reply === undefined) return;
@@ -336,7 +363,7 @@ export function createScmCommands(deps: ScmCommandDeps): {
         void deps.window.showErrorMessage(`Nimbus: nothing reviewable — ${detail}.`);
         return;
       }
-      warnOmissions(collected, collected.reviewed.length + collected.omittedTooLarge.length);
+      warnOmissions(collected);
       const reply = await invoke(
         client,
         buildReviewPrompt(collected.block),
@@ -390,7 +417,7 @@ export function createScmCommands(deps: ScmCommandDeps): {
       const reply = await invoke(client, prompt, "Nimbus: generating docstrings…");
       if (reply === undefined) return;
       const rewritten = extractCode(reply);
-      const offsets = ctx.hasSelection ? deps.selectionOffsets() : undefined;
+      const offsets = ctx.selectionOffsets;
       // A selection rewrite is spliced back into the full document, so the
       // diff shows only the annotated region rather than a whole-file
       // mismatch. Without offsets we cannot splice honestly, so fall back to

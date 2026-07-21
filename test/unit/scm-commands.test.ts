@@ -158,6 +158,61 @@ describe("generateCommitMessage", () => {
     expect(b.inputBox.value).toBe("");
   });
 
+  test("aborts silently when the multi-repo quick pick is cancelled", async () => {
+    const a = fakeRepo({ rootPath: "/w/a" });
+    const b = fakeRepo({ rootPath: "/w/b" });
+    const h = harness(
+      { window: { showQuickPick: async () => undefined } as unknown as ScmCommandDeps["window"] },
+      [a, b],
+    );
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(a.inputBox.value).toBe("");
+    expect(b.inputBox.value).toBe("");
+    expect(h.errors).toEqual([]);
+    expect(h.invoked).toEqual([]);
+  });
+
+  test("falls back to the Conventional Commits style when repo.log() rejects (no commits yet)", async () => {
+    const repo = fakeRepo();
+    const watched: GitRepositoryLike = {
+      ...repo,
+      log: async () => {
+        throw new Error("fatal: your current branch does not have any commits yet");
+      },
+    };
+    const h = harness({}, [watched]);
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(h.errors).toEqual([]);
+    expect(h.invoked[0]).toContain("Conventional Commits");
+    expect(repo.inputBox.value).toBe("feat: add a");
+  });
+
+  test("counts every considered file in the omission denominator, not just reviewed + too-large", async () => {
+    const big = "@@ -1 +1 @@\n+".concat("x".repeat(60_000), "\n");
+    const binary =
+      "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n";
+    const h = harness({}, [
+      fakeRepo({
+        files: [
+          { path: "src/a.ts", status: "modified" },
+          { path: "src/big.ts", status: "modified" },
+          { path: ".env", status: "modified" },
+          { path: "logo.png", status: "modified" },
+        ],
+        diffs: {
+          "src/a.ts": "@@ -1 +1 @@\n+a\n",
+          "src/big.ts": big,
+          ".env": "@@ -1 +1 @@\n+K=1\n",
+          "logo.png": binary,
+        },
+      }),
+    ]);
+    await createScmCommands(h.deps).generateCommitMessage();
+    // 1 reviewed (a.ts) + 1 too-large (big.ts) + 1 secret (.env) + 1
+    // non-textual (logo.png) = 4 considered — not just reviewed + too-large.
+    expect(h.warns.some((w) => w.includes("1 of 4 files omitted"))).toBe(true);
+  });
+
   test("errors when disconnected, before reading any diff", async () => {
     let read = false;
     const repo = fakeRepo();
@@ -362,10 +417,20 @@ describe("reviewChanges", () => {
     expect(h.opened).toEqual([]);
   });
 
-  test("errors when disconnected", async () => {
-    const h = harness({ client: () => undefined });
+  test("errors when disconnected, before reading any diff", async () => {
+    let read = false;
+    const repo = fakeRepo();
+    const watched: GitRepositoryLike = {
+      ...repo,
+      changedFiles: async () => {
+        read = true;
+        return [];
+      },
+    };
+    const h = harness({ client: () => undefined }, [watched]);
     await createScmCommands(h.deps).reviewChanges();
     expect(h.errors[0]).toContain("not connected");
+    expect(read).toBe(false);
   });
 
   test("reports an agent failure without throwing", async () => {
@@ -493,6 +558,22 @@ describe("generateTests", () => {
     await createScmCommands(h.deps).generateTests();
     expect(h.errors[0]).toContain("not connected");
   });
+
+  test("clamps whole-file context over the limit and marks the prompt truncated", async () => {
+    const big = "x".repeat(60_000);
+    const h = harness({
+      ...editorDeps({ text: big }),
+      client: () => ({
+        agentInvoke: async (input: string) => {
+          h.invoked.push(input);
+          return { reply: "code" };
+        },
+      }),
+    });
+    await createScmCommands(h.deps).generateTests();
+    expect(h.invoked[0]).toContain("(truncated)");
+    expect(h.warns.some((w) => w.includes("truncated"))).toBe(true);
+  });
 });
 
 describe("generateDocstrings", () => {
@@ -545,6 +626,33 @@ describe("generateDocstrings", () => {
       ...editorDeps({ text: "AAA\nBBB\nCCC\n", selectionText: "BBB" }),
       selectionOffsets: () => ({ start: 4, end: 7 }),
       client: () => ({ agentInvoke: async () => ({ reply: "```ts\n// doc\nBBB\n```" }) }),
+      openDiff: async (o) => {
+        diffs.push({ left: o.left, right: o.right });
+      },
+    });
+    await createScmCommands(h.deps).generateDocstrings();
+    expect(diffs[0]?.left).toBe("AAA\nBBB\nCCC\n");
+    expect(diffs[0]?.right).toBe("AAA\n// doc\nBBB\nCCC\n");
+  });
+
+  test("captures selection offsets before the agent call, not after", async () => {
+    // agentInvoke is uncancellable and can run for seconds; if the user moves
+    // the cursor/selection meanwhile, a *post*-invoke read of selectionOffsets
+    // would return a stale/bogus range for a document that, at t0, held a
+    // real selection. The fixture below returns the real offsets only until
+    // agentInvoke resolves, then switches to a different (wrong) range —
+    // pinning that the splice uses the t0 value, not a t1 re-read.
+    const diffs: Array<{ left: string; right: string }> = [];
+    let invokeFinished = false;
+    const h = harness({
+      ...editorDeps({ text: "AAA\nBBB\nCCC\n", selectionText: "BBB" }),
+      selectionOffsets: () => (invokeFinished ? { start: 0, end: 3 } : { start: 4, end: 7 }),
+      client: () => ({
+        agentInvoke: async () => {
+          invokeFinished = true;
+          return { reply: "```ts\n// doc\nBBB\n```" };
+        },
+      }),
       openDiff: async (o) => {
         diffs.push({ left: o.left, right: o.right });
       },
