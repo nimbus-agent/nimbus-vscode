@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
-import { commands, env } from "vscode";
+import { commands, env, workspace as vscodeWorkspace } from "vscode";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
@@ -512,6 +512,42 @@ describe("activateWithDeps", () => {
     ]) {
       expect(f.commandHandlers.has(id)).toBe(true);
     }
+  });
+
+  test("nimbus.generateTests opens a fresh untitled document on each invocation", async () => {
+    // Regression guard: deriveTestFileName is deterministic, so running
+    // Generate Tests twice on the same source used to reuse the exact same
+    // `untitled:` URI — VS Code identifies untitled documents by URI, so the
+    // second call resolved to the SAME document and editor.edit() prepended
+    // onto whatever was already there. Exercises the REAL createUntitledOpener
+    // (deps.openUntitled is left uninjected by makeFixture), spying on the
+    // vscode stub's workspace.openTextDocument the same way other tests spy on
+    // `commands`/`env` to observe real glue.
+    const f = makeFixture({
+      activeEditor: {
+        text: "export const x = 1;",
+        empty: true,
+        fileName: "a.ts",
+        languageId: "typescript",
+      },
+      openClient: makeFakeClient({
+        agentInvoke: async () => ({ reply: "```ts\nexpect(1).toBe(1);\n```" }),
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const openTextDocument = vi.spyOn(vscodeWorkspace, "openTextDocument");
+    await cmd(f, "nimbus.generateTests")();
+    await cmd(f, "nimbus.generateTests")();
+    const untitledUris = openTextDocument.mock.calls
+      .map((c) => String(c[0]))
+      .filter((u) => u.startsWith("untitled:"));
+    expect(untitledUris).toHaveLength(2);
+    expect(untitledUris[0]).not.toBe(untitledUris[1]);
+    // The tab's displayed name (and hence its syntax highlighting) still comes
+    // from the derived test filename, unaffected by the per-call qualifier.
+    for (const uri of untitledUris) expect(uri.endsWith("/a.test.ts")).toBe(true);
+    openTextDocument.mockRestore();
   });
 
   test("registers the five sidebar tree views in the nimbus container", async () => {

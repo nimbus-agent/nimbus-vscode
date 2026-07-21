@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import { errMsg, type Logger } from "../logging.js";
 import type { ChangedFile, DiffScope, GitApiLike, GitRepositoryLike } from "./git-types.js";
+import { relativeOrBasename } from "./paths.js";
 
 // Thin vscode-git glue — mirrors real-participant.ts. Excluded from coverage;
 // the pure modules carry the logic and the tests.
@@ -28,19 +29,14 @@ interface RawGitApi {
   repositories: RawRepository[];
 }
 
-function relative(root: string, absolute: string): string {
-  const normalizedRoot = root.replace(/[\\/]+$/, "");
-  const rel = absolute.startsWith(normalizedRoot)
-    ? absolute.slice(normalizedRoot.length)
-    : absolute;
-  return rel.replace(/^[\\/]+/, "").replace(/\\/g, "/");
-}
-
 function adaptRepository(raw: RawRepository): GitRepositoryLike {
   const root = raw.rootUri.fsPath;
   const listing = async (scope: DiffScope): Promise<readonly ChangedFile[]> => {
     const changes = scope === "staged" ? await raw.diffIndexWithHEAD() : await raw.diffWithHEAD();
-    return changes.map((c) => ({ path: relative(root, c.uri.fsPath), status: String(c.status) }));
+    return changes.map((c) => ({
+      path: relativeOrBasename(root, c.uri.fsPath),
+      status: String(c.status),
+    }));
   };
   return {
     rootPath: root,
@@ -48,7 +44,7 @@ function adaptRepository(raw: RawRepository): GitRepositoryLike {
     fileDiff: async (scope, path) =>
       scope === "staged" ? raw.diffIndexWithHEAD(path) : raw.diffWithHEAD(path),
     untrackedPaths: async () =>
-      (raw.state.untrackedChanges ?? []).map((c) => relative(root, c.uri.fsPath)),
+      (raw.state.untrackedChanges ?? []).map((c) => relativeOrBasename(root, c.uri.fsPath)),
     log: async (maxEntries) => (await raw.log({ maxEntries })).map((c) => c.message),
     inputBox: raw.inputBox,
   };

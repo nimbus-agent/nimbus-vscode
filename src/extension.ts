@@ -1121,9 +1121,22 @@ function createReadonlyJsonOpener(
 // `untitled:` URI carries the file name (so the tab is named and syntax-
 // highlighted); the buffer is unsaved, so nothing touches disk until the user
 // saves and picks a location. Injectable as deps.openUntitled for tests.
+//
+// `deriveTestFileName` is deterministic, so running this command twice on the
+// same source file would otherwise reuse the exact same `untitled:` URI — VS
+// Code identifies untitled documents by URI, so the second call would resolve
+// to the SAME document and prepend onto whatever is already there (the first
+// output, or the user's own edits) instead of opening a fresh tab. A per-
+// invocation counter (mirroring createReadonlyJsonOpener/createDiffOpener
+// below) keeps every call's URI unique; the trailing basename is still exactly
+// `fileName`, so the tab's displayed name and syntax highlighting are unaffected.
 function createUntitledOpener(): (opts: { fileName: string; content: string }) => Promise<void> {
+  let seq = 0;
   return async ({ fileName, content }) => {
-    const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(`untitled:${fileName}`));
+    seq += 1;
+    const doc = await vscode.workspace.openTextDocument(
+      vscode.Uri.parse(`untitled:${seq}/${fileName}`),
+    );
     const editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
     await editor.edit((edit) => {
       edit.insert(new vscode.Position(0, 0), content);

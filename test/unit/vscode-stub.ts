@@ -29,7 +29,15 @@ export const window = {
     };
   },
   registerTreeDataProvider: (_viewId: string, _provider: unknown) => ({ dispose: () => undefined }),
-  showTextDocument: async (_doc: unknown, _opts?: unknown) => undefined,
+  showTextDocument: async (doc: unknown, _opts?: unknown) => ({
+    document: doc,
+    edit: async (
+      callback: (editBuilder: { insert: (pos: unknown, text: string) => void }) => void,
+    ) => {
+      callback({ insert: () => undefined });
+      return true;
+    },
+  }),
   showSaveDialog: async (_opts?: unknown) => ({ fsPath: "/tmp/egress-proof.json", scheme: "file" }),
   createStatusBarItem: () => ({
     text: "",
