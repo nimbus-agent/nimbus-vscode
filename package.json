@@ -178,6 +178,27 @@
         "command": "nimbus.openWalkthrough",
         "title": "Open Walkthrough",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.generateCommitMessage",
+        "title": "Generate Commit Message",
+        "category": "Nimbus",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "nimbus.reviewChanges",
+        "title": "Review Changes",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.generateTests",
+        "title": "Generate Tests",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.generateDocstrings",
+        "title": "Generate Docstrings",
+        "category": "Nimbus"
       }
     ],
     "chatParticipants": [
@@ -335,6 +356,23 @@
           "command": "nimbus.findRelated",
           "when": "editorHasSelection",
           "group": "nimbus@4"
+        },
+        {
+          "command": "nimbus.generateTests",
+          "when": "editorTextFocus",
+          "group": "nimbus@5"
+        },
+        {
+          "command": "nimbus.generateDocstrings",
+          "when": "editorTextFocus",
+          "group": "nimbus@6"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "nimbus.generateCommitMessage",
+          "when": "scmProvider == git",
+          "group": "navigation"
         }
       ]
     },

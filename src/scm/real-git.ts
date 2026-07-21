@@ -1,0 +1,75 @@
+import * as vscode from "vscode";
+import { errMsg, type Logger } from "../logging.js";
+import type { ChangedFile, DiffScope, GitApiLike, GitRepositoryLike } from "./git-types.js";
+
+// Thin vscode-git glue — mirrors real-participant.ts. Excluded from coverage;
+// the pure modules carry the logic and the tests.
+//
+// The git extension's API is not typed on our side, so every access is guarded
+// and any shape mismatch degrades to "git unavailable" rather than throwing.
+
+interface RawChange {
+  uri: { fsPath: string };
+  status: number;
+}
+
+interface RawRepository {
+  rootUri: { fsPath: string };
+  inputBox: { value: string };
+  state: { untrackedChanges?: RawChange[] };
+  diffIndexWithHEAD(): Promise<RawChange[]>;
+  diffIndexWithHEAD(path: string): Promise<string>;
+  diffWithHEAD(): Promise<RawChange[]>;
+  diffWithHEAD(path: string): Promise<string>;
+  log(opts: { maxEntries: number }): Promise<Array<{ message: string }>>;
+}
+
+interface RawGitApi {
+  repositories: RawRepository[];
+}
+
+function relative(root: string, absolute: string): string {
+  const normalizedRoot = root.replace(/[\\/]+$/, "");
+  const rel = absolute.startsWith(normalizedRoot)
+    ? absolute.slice(normalizedRoot.length)
+    : absolute;
+  return rel.replace(/^[\\/]+/, "").replace(/\\/g, "/");
+}
+
+function adaptRepository(raw: RawRepository): GitRepositoryLike {
+  const root = raw.rootUri.fsPath;
+  const listing = async (scope: DiffScope): Promise<readonly ChangedFile[]> => {
+    const changes = scope === "staged" ? await raw.diffIndexWithHEAD() : await raw.diffWithHEAD();
+    return changes.map((c) => ({ path: relative(root, c.uri.fsPath), status: String(c.status) }));
+  };
+  return {
+    rootPath: root,
+    changedFiles: listing,
+    fileDiff: async (scope, path) =>
+      scope === "staged" ? raw.diffIndexWithHEAD(path) : raw.diffWithHEAD(path),
+    untrackedPaths: async () =>
+      (raw.state.untrackedChanges ?? []).map((c) => relative(root, c.uri.fsPath)),
+    log: async (maxEntries) => (await raw.log({ maxEntries })).map((c) => c.message),
+    inputBox: raw.inputBox,
+  };
+}
+
+// Resolved lazily on first use: the git extension may activate after us.
+export function createRealGitApi(log: Logger): () => Promise<GitApiLike | undefined> {
+  return async () => {
+    try {
+      const ext = vscode.extensions.getExtension("vscode.git");
+      if (ext === undefined) return undefined;
+      const exports: unknown = ext.isActive ? ext.exports : await ext.activate();
+      if (typeof exports !== "object" || exports === null) return undefined;
+      const getApi = (exports as { getAPI?: (v: number) => unknown }).getAPI;
+      if (typeof getApi !== "function") return undefined;
+      const api = getApi.call(exports, 1) as RawGitApi | undefined;
+      if (api === undefined || !Array.isArray(api.repositories)) return undefined;
+      return { repositories: () => api.repositories.map(adaptRepository) };
+    } catch (e) {
+      log.warn(`scm: git extension unavailable: ${errMsg(e)}`);
+      return undefined;
+    }
+  };
+}

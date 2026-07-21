@@ -28,6 +28,9 @@ import {
   validateQuestion,
 } from "./quick-ask.js";
 import { type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
+import { createScmCommands } from "./scm/commands.js";
+import type { GitApiLike } from "./scm/git-types.js";
+import { createRealGitApi } from "./scm/real-git.js";
 import {
   buildPicks,
   normalizeInline,
@@ -97,6 +100,15 @@ export interface ActivateDeps {
   openSource?: (item: { url?: string }) => Promise<void>;
   saveJson?: (defaultName: string, content: string) => Promise<{ fsPath: string } | undefined>;
   searchDebounceMs?: number;
+  git?: () => Promise<GitApiLike | undefined>;
+  openUntitled?: (opts: { fileName: string; content: string }) => Promise<void>;
+  openDiff?: (opts: {
+    title: string;
+    left: string;
+    right: string;
+    fileName: string;
+  }) => Promise<void>;
+  selectionOffsets?: () => { start: number; end: number } | undefined;
 }
 
 export function activateWithDeps(
@@ -490,6 +502,36 @@ export function activateWithDeps(
   const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
   const openSource = deps.openSource ?? createSourceOpener();
   const saveJson = deps.saveJson ?? createProofSaver();
+  const openUntitled = deps.openUntitled ?? createUntitledOpener();
+  const openDiff = deps.openDiff ?? createDiffOpener(ctx);
+  // Computed here because it needs the real editor's Position→offset mapping;
+  // the shim's TextEditorLike deliberately stays narrow.
+  const selectionOffsets =
+    deps.selectionOffsets ??
+    ((): { start: number; end: number } | undefined => {
+      const editor = vscode.window.activeTextEditor;
+      if (editor === undefined || editor.selection.isEmpty) return undefined;
+      return {
+        start: editor.document.offsetAt(editor.selection.start),
+        end: editor.document.offsetAt(editor.selection.end),
+      };
+    });
+
+  const scm = createScmCommands({
+    git: deps.git ?? createRealGitApi(log),
+    client: () => {
+      const client = nimbus();
+      return client === undefined ? undefined : { agentInvoke: (i, o) => client.agentInvoke(i, o) };
+    },
+    window: deps.window,
+    agent: () => settings.askAgent(),
+    skipSecretFiles: () => settings.scmSkipSecretFiles(),
+    selectionOffsets,
+    openReadonly: openReadonlyJson,
+    openUntitled,
+    openDiff,
+    log,
+  });
 
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 
@@ -964,6 +1006,11 @@ export function activateWithDeps(
     chatPanelFactory.current()?.reveal();
   });
 
+  register("nimbus.generateCommitMessage", () => scm.generateCommitMessage());
+  register("nimbus.reviewChanges", () => scm.reviewChanges());
+  register("nimbus.generateTests", () => scm.generateTests());
+  register("nimbus.generateDocstrings", () => scm.generateDocstrings());
+
   void connection.start();
 
   log.info(`Nimbus extension activated; ${ctx.subscriptions.length} disposable(s) registered`);
@@ -1067,6 +1114,62 @@ function createReadonlyJsonOpener(
     }
     const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(`${scheme}:${path}`));
     await vscode.window.showTextDocument(doc, { preview: true });
+  };
+}
+
+// Opens an untitled document with the given name, beside the active editor. The
+// `untitled:` URI carries the file name (so the tab is named and syntax-
+// highlighted); the buffer is unsaved, so nothing touches disk until the user
+// saves and picks a location. Injectable as deps.openUntitled for tests.
+function createUntitledOpener(): (opts: { fileName: string; content: string }) => Promise<void> {
+  return async ({ fileName, content }) => {
+    const doc = await vscode.workspace.openTextDocument(vscode.Uri.parse(`untitled:${fileName}`));
+    const editor = await vscode.window.showTextDocument(doc, vscode.ViewColumn.Beside);
+    await editor.edit((edit) => {
+      edit.insert(new vscode.Position(0, 0), content);
+    });
+  };
+}
+
+// Opens a side-by-side diff between two in-memory texts via a virtual
+// read-only scheme, so the extension never applies an edit itself — any merge
+// is the user's own action in the diff editor. Injectable as deps.openDiff.
+//
+// Both virtual URIs end in the source's basename, so VS Code infers the
+// language from the extension natively — no setTextDocumentLanguage call, and
+// no language-change events fired at other extensions.
+function createDiffOpener(
+  ctx: ExtensionContextLike,
+): (opts: { title: string; left: string; right: string; fileName: string }) => Promise<void> {
+  const scheme = "nimbus-diff";
+  const MAX_DOCS = 20;
+  const docs = new Map<string, string>();
+  let seq = 0;
+  let registered = false;
+  const provider: vscode.TextDocumentContentProvider = {
+    provideTextDocumentContent: (uri) => docs.get(uri.path) ?? "",
+  };
+  return async ({ title, left, right, fileName }) => {
+    if (!registered) {
+      ctx.subscriptions.push(
+        vscode.workspace.registerTextDocumentContentProvider(scheme, provider),
+      );
+      registered = true;
+    }
+    seq += 1;
+    // The trailing basename is what drives syntax highlighting.
+    const leftPath = `/${seq}/original/${fileName}`;
+    const rightPath = `/${seq}/nimbus/${fileName}`;
+    docs.set(leftPath, left);
+    docs.set(rightPath, right);
+    while (docs.size > MAX_DOCS) {
+      const oldest = docs.keys().next().value;
+      if (oldest === undefined) break;
+      docs.delete(oldest);
+    }
+    const leftUri = vscode.Uri.parse(`${scheme}:${leftPath}`);
+    const rightUri = vscode.Uri.parse(`${scheme}:${rightPath}`);
+    await vscode.commands.executeCommand("vscode.diff", leftUri, rightUri, title);
   };
 }
 

@@ -500,6 +500,20 @@ describe("activateWithDeps", () => {
     expect(f.ctx.subscriptions.length).toBeGreaterThanOrEqual(16);
   });
 
+  test("registers the four SCM commands", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    for (const id of [
+      "nimbus.generateCommitMessage",
+      "nimbus.reviewChanges",
+      "nimbus.generateTests",
+      "nimbus.generateDocstrings",
+    ]) {
+      expect(f.commandHandlers.has(id)).toBe(true);
+    }
+  });
+
   test("registers the five sidebar tree views in the nimbus container", async () => {
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);
