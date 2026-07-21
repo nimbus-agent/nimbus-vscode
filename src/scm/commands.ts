@@ -89,6 +89,21 @@ export async function collectDiff(
   };
 }
 
+// Same shaped cascade needed by generateCommitMessage and reviewChanges when
+// every changed file was excluded from the diff: secret trumps non-textual (an
+// all-secret .env dump is not "binary"), and non-textual only wins over
+// too-large when nothing was *also* dropped for size — a diff that is both
+// huge and contains a binary file is more actionably reported as "too large".
+type NothingReviewableReason = "secret" | "non-textual" | "too-large";
+
+function selectNothingReviewableReason(collected: CollectedDiff): NothingReviewableReason {
+  if (collected.skippedSecret.length > 0) return "secret";
+  if (collected.nonTextual.length > 0 && collected.omittedTooLarge.length === 0) {
+    return "non-textual";
+  }
+  return "too-large";
+}
+
 export function createScmCommands(deps: ScmCommandDeps): {
   generateCommitMessage(): Promise<void>;
   reviewChanges(): Promise<void>;
@@ -141,6 +156,22 @@ export function createScmCommands(deps: ScmCommandDeps): {
     }
   };
 
+  // Runs a handler body under one shared try/catch so a throw anywhere inside
+  // it — including repo/client resolution, which call injected deps whose
+  // types don't forbid throwing — is reported the same way collectDiff and
+  // agentInvoke failures already are, instead of escaping as an unhandled
+  // rejection.
+  const contain =
+    (internalName: string, humanName: string, body: () => Promise<void>) =>
+    async (): Promise<void> => {
+      try {
+        await body();
+      } catch (e) {
+        deps.log.error(`nimbus.${internalName} failed: ${errMsg(e)}`);
+        void deps.window.showErrorMessage(`Nimbus ${humanName} failed: ${errMsg(e)}`);
+      }
+    };
+
   const invoke = async (
     client: ScmClientLike,
     prompt: string,
@@ -162,120 +193,116 @@ export function createScmCommands(deps: ScmCommandDeps): {
   };
 
   return {
-    async generateCommitMessage(): Promise<void> {
+    generateCommitMessage: contain("generateCommitMessage", "commit message", async () => {
       const repo = await resolveRepo();
       if (repo === undefined) return;
       const client = requireClient();
       if (client === undefined) return;
-      try {
-        const collected = await collectDiff(repo, "staged", deps.skipSecretFiles());
-        if (collected.empty) {
-          void deps.window.showErrorMessage("Nimbus: nothing staged to describe.");
-          return;
-        }
-        if (collected.reviewed.length === 0) {
-          // Say which reason actually applied — "too large" for a staged PNG
-          // would be a lie the user cannot act on.
-          const reason =
-            collected.skippedSecret.length > 0
-              ? "every staged file was skipped as possibly secret-bearing"
-              : collected.nonTextual.length > 0 && collected.omittedTooLarge.length === 0
-                ? "the staged changes are binary or non-textual"
-                : "the staged diff is too large to summarise";
-          void deps.window.showErrorMessage(`Nimbus: ${reason}.`);
-          return;
-        }
-        warnOmissions(collected, collected.reviewed.length + collected.omittedTooLarge.length);
-        const examples = filterStyleExamples(
-          await repo.log(COMMIT_LOG_FETCH),
-          COMMIT_STYLE_EXAMPLES,
-        );
-        const prompt = buildCommitPrompt({ diffBlock: collected.block, examples });
-        const reply = await invoke(client, prompt, "Nimbus: drafting commit message…");
-        if (reply === undefined) return;
-        const message = sanitizeCommitMessage(reply);
-        if (message.length === 0) {
-          void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
-          return;
-        }
-        // agentInvoke is uncancellable and can run a while; the folder may have
-        // closed meanwhile. Re-find the repo before writing, and never drop the
-        // draft on the floor if it is gone.
-        const api = await deps.git();
-        const live =
-          api === undefined ? undefined : findRepoByRoot(api.repositories(), repo.rootPath);
-        if (live === undefined) {
-          void deps.window.showWarningMessage(
-            "Nimbus: that repository closed while the message was being drafted — showing the draft instead.",
-          );
-          await deps.openReadonly("Nimbus commit message.md", message);
-          return;
-        }
-        if (live.inputBox.value.trim().length === 0) {
-          live.inputBox.value = message;
-          return;
-        }
-        const answer = await deps.window.showWarningMessage(
-          "The Source Control message box already has text.",
-          { modal: true },
-          "Replace",
-          "Append",
-        );
-        if (answer !== "Replace" && answer !== "Append") return;
-        live.inputBox.value = composeInputBoxValue(
-          live.inputBox.value,
-          message,
-          answer === "Replace" ? "replace" : "append",
-        );
-      } catch (e) {
-        deps.log.error(`nimbus.generateCommitMessage failed: ${errMsg(e)}`);
-        void deps.window.showErrorMessage(`Nimbus commit message failed: ${errMsg(e)}`);
+      const collected = await collectDiff(repo, "staged", deps.skipSecretFiles());
+      if (collected.empty) {
+        void deps.window.showErrorMessage("Nimbus: nothing staged to describe.");
+        return;
       }
-    },
+      if (collected.reviewed.length === 0) {
+        // Say which reason actually applied — "too large" for a staged PNG
+        // would be a lie the user cannot act on.
+        const reason = selectNothingReviewableReason(collected);
+        const detail =
+          reason === "secret"
+            ? "every staged file was skipped as possibly secret-bearing"
+            : reason === "non-textual"
+              ? "the staged changes are binary or non-textual"
+              : "the staged diff is too large to summarise";
+        void deps.window.showErrorMessage(`Nimbus: ${detail}.`);
+        return;
+      }
+      warnOmissions(collected, collected.reviewed.length + collected.omittedTooLarge.length);
+      const examples = filterStyleExamples(await repo.log(COMMIT_LOG_FETCH), COMMIT_STYLE_EXAMPLES);
+      const prompt = buildCommitPrompt({ diffBlock: collected.block, examples });
+      const reply = await invoke(client, prompt, "Nimbus: drafting commit message…");
+      if (reply === undefined) return;
+      const message = sanitizeCommitMessage(reply);
+      if (message.length === 0) {
+        void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
+        return;
+      }
+      // agentInvoke is uncancellable and can run a while; the folder may have
+      // closed meanwhile. Re-find the repo before writing, and never drop the
+      // draft on the floor if it is gone.
+      const api = await deps.git();
+      const live =
+        api === undefined ? undefined : findRepoByRoot(api.repositories(), repo.rootPath);
+      if (live === undefined) {
+        void deps.window.showWarningMessage(
+          "Nimbus: that repository closed while the message was being drafted — showing the draft instead.",
+        );
+        await deps.openReadonly("Nimbus commit message.md", message);
+        return;
+      }
+      if (live.inputBox.value.trim().length === 0) {
+        live.inputBox.value = message;
+        return;
+      }
+      const answer = await deps.window.showWarningMessage(
+        "The Source Control message box already has text.",
+        { modal: true },
+        "Replace",
+        "Append",
+      );
+      if (answer !== "Replace" && answer !== "Append") return;
+      live.inputBox.value = composeInputBoxValue(
+        live.inputBox.value,
+        message,
+        answer === "Replace" ? "replace" : "append",
+      );
+    }),
 
-    async reviewChanges(): Promise<void> {
+    reviewChanges: contain("reviewChanges", "review", async () => {
       const repo = await resolveRepo();
       if (repo === undefined) return;
       const client = requireClient();
       if (client === undefined) return;
-      try {
-        // Scope "all": staged and unstaged together. "Review my changes"
-        // returning nothing because the user staged their work first would be a
-        // bad first experience.
-        const collected = await collectDiff(repo, "all", deps.skipSecretFiles());
-        if (collected.empty) {
-          void deps.window.showInformationMessage("Nimbus: no local changes to review.", {});
-          return;
-        }
-        if (collected.reviewed.length === 0) {
-          void deps.window.showErrorMessage(
-            "Nimbus: nothing reviewable — every changed file was skipped or too large.",
-          );
-          return;
-        }
-        warnOmissions(collected, collected.reviewed.length + collected.omittedTooLarge.length);
-        const reply = await invoke(
-          client,
-          buildReviewPrompt(collected.block),
-          "Nimbus: reviewing changes…",
-        );
-        if (reply === undefined) return;
-        // Untracked content is never sent — only counted and named here, so the
-        // reader cannot mistake a brand-new file for a reviewed one.
-        const coverage: ReviewCoverage = {
-          repoLabel: repoLabel(repo),
-          reviewed: collected.reviewed,
-          omittedTooLarge: collected.omittedTooLarge,
-          skippedSecret: collected.skippedSecret,
-          nonTextual: collected.nonTextual,
-          untracked: await repo.untrackedPaths(),
-        };
-        await deps.openReadonly("Nimbus review.md", buildReviewDocument(coverage, reply));
-      } catch (e) {
-        deps.log.error(`nimbus.reviewChanges failed: ${errMsg(e)}`);
-        void deps.window.showErrorMessage(`Nimbus review failed: ${errMsg(e)}`);
+      // Scope "all": staged and unstaged together. "Review my changes"
+      // returning nothing because the user staged their work first would be a
+      // bad first experience.
+      const collected = await collectDiff(repo, "all", deps.skipSecretFiles());
+      if (collected.empty) {
+        void deps.window.showInformationMessage("Nimbus: no local changes to review.", {});
+        return;
       }
-    },
+      if (collected.reviewed.length === 0) {
+        // Say which reason actually applied — mirrors generateCommitMessage's
+        // cascade, phrased for review rather than for committing. This branch
+        // never renders the coverage header, so the reason is all the user sees.
+        const reason = selectNothingReviewableReason(collected);
+        const detail =
+          reason === "secret"
+            ? "every changed file was skipped as possibly secret-bearing"
+            : reason === "non-textual"
+              ? "every changed file is binary or non-textual"
+              : "the changed diff is too large to review";
+        void deps.window.showErrorMessage(`Nimbus: nothing reviewable — ${detail}.`);
+        return;
+      }
+      warnOmissions(collected, collected.reviewed.length + collected.omittedTooLarge.length);
+      const reply = await invoke(
+        client,
+        buildReviewPrompt(collected.block),
+        "Nimbus: reviewing changes…",
+      );
+      if (reply === undefined) return;
+      // Untracked content is never sent — only counted and named here, so the
+      // reader cannot mistake a brand-new file for a reviewed one.
+      const coverage: ReviewCoverage = {
+        repoLabel: repoLabel(repo),
+        reviewed: collected.reviewed,
+        omittedTooLarge: collected.omittedTooLarge,
+        skippedSecret: collected.skippedSecret,
+        nonTextual: collected.nonTextual,
+        untracked: await repo.untrackedPaths(),
+      };
+      await deps.openReadonly("Nimbus review.md", buildReviewDocument(coverage, reply));
+    }),
 
     async generateTests(): Promise<void> {
       return undefined; // Task 8

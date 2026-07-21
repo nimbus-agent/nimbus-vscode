@@ -242,6 +242,16 @@ describe("generateCommitMessage", () => {
     expect(h.infos.some((i) => i.includes("no reply"))).toBe(true);
   });
 
+  test("reports a git-extension failure without throwing", async () => {
+    const h = harness({
+      git: async () => {
+        throw new Error("git extension boom");
+      },
+    });
+    await expect(createScmCommands(h.deps).generateCommitMessage()).resolves.toBeUndefined();
+    expect(h.errors[0]).toContain("git extension boom");
+  });
+
   test("warns when files were omitted for size", async () => {
     const big = "@@ -1 +1 @@\n+".concat("x".repeat(60_000), "\n");
     const h = harness({}, [
@@ -357,5 +367,48 @@ describe("reviewChanges", () => {
     });
     await expect(createScmCommands(h.deps).reviewChanges()).resolves.toBeUndefined();
     expect(h.errors[0]).toContain("boom");
+  });
+
+  test("reports a git-extension failure without throwing", async () => {
+    const h = harness({
+      git: async () => {
+        throw new Error("git extension boom");
+      },
+    });
+    await expect(createScmCommands(h.deps).reviewChanges()).resolves.toBeUndefined();
+    expect(h.errors[0]).toContain("git extension boom");
+  });
+
+  test("reports a client-resolution failure without throwing", async () => {
+    const h = harness({
+      client: () => {
+        throw new Error("client boom");
+      },
+    });
+    await expect(createScmCommands(h.deps).reviewChanges()).resolves.toBeUndefined();
+    expect(h.errors[0]).toContain("client boom");
+  });
+
+  test("names the secret reason when every changed file was secret-skipped", async () => {
+    const h = harness({}, [
+      fakeRepo({ files: [{ path: ".env", status: "modified" }], diffs: { ".env": "@@\n+K=1\n" } }),
+    ]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.errors[0]).toContain("secret");
+    expect(h.opened).toEqual([]);
+  });
+
+  test("names the non-textual reason when every changed file is binary", async () => {
+    const binary =
+      "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n";
+    const h = harness({}, [
+      fakeRepo({
+        files: [{ path: "logo.png", status: "modified" }],
+        diffs: { "logo.png": binary },
+      }),
+    ]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.errors[0]).toContain("binary");
+    expect(h.opened).toEqual([]);
   });
 });
