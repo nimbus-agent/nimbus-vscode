@@ -86,6 +86,38 @@ code paths without a running editor. Keep `src/` and `test/` self-contained.
 | `src/status-bar/` | Connector-health status bar item and the egress badge. |
 | `src/logging.ts` | Output-channel logger. **Never** `console` in `src/` (Biome's `noConsole`). |
 | `src/settings.ts` | Typed accessors over `nimbus.*` configuration. |
+| `src/scm/` | Dev-workflow trio (Generate Commit Message, Review Changes, Generate Tests, Generate Docstrings): pure diff/commit-message/review/generate modules behind a `GitApiLike` seam, plus `commands.ts` and `real-git.ts` (see below). |
+
+## The `src/scm/` seam
+
+The dev-workflow trio follows the same seam discipline as rule 3 above, scoped
+to VS Code's *built-in* git extension instead of `vscode` itself.
+
+[`git-types.ts`](../src/scm/git-types.ts) defines the narrow structural
+interface the rest of `src/scm/` programs against — `GitApiLike` /
+`GitRepositoryLike`, four verbs (`changedFiles`, `fileDiff`, `untrackedPaths`,
+`log`) plus the SCM input box. `repo-select.ts`, `diff.ts`,
+`commit-message.ts`, `review.ts`, and `generate.ts` are pure functions over
+those types — repository selection, diff ordering/budgeting/truncation,
+commit-message prompting/sanitizing, review coverage, and test/docstring
+prompting/extraction. `commands.ts` wires the four commands over an injected
+`ScmCommandDeps` (a `git()` accessor, the client, `window`, settings), the same
+dependency-injection shape used elsewhere in the extension.
+
+[`real-git.ts`](../src/scm/real-git.ts) is the **only** file that touches the
+git extension's actual API (`vscode.extensions.getExtension("vscode.git")`) —
+untyped on our side, so every access is guarded and any shape mismatch
+degrades to "git unavailable" rather than throwing. It mirrors
+`chat-participant/real-participant.ts` and is excluded from coverage for the
+same reason: the pure modules carry the logic and the tests.
+
+Diffs are always fetched **per file**: `collectDiff` lists changed files via
+`changedFiles(scope)`, then calls `fileDiff(scope, path)` once per path. Paths
+always come from git's own listing, never by parsing a `diff --git` header out
+of a combined diff — there is no unified-diff parser anywhere in `src/scm/`.
+Output is always a suggestion (the SCM input box, an untitled buffer, a
+read-only tab, or a diff view); the extension never writes to disk and never
+applies a `WorkspaceEdit`.
 
 ## Conventions
 
