@@ -84,7 +84,7 @@ story. Still no SDK change required.
 | **Raw SQL query panel** (power users) | Ad-hoc queries over the local index | `querySql` | M |
 | **Session browser depth** — search / rename / pin / export transcript | Manage long histories | `getSessionTranscript` | M |
 | **Index browsing depth** — filter / paginate | Navigate a large index | `queryItems` | M |
-| Quick-ask **code-editing actions** — apply the reply as a `WorkspaceEdit` with diff + undo | Turn answers into edits, safely | `agentInvoke` | M |
+| Quick-ask **code-editing actions** — offer the reply as a diff the user applies themselves (the pattern Generate Docstrings already uses); the extension never applies a `WorkspaceEdit` | Turn answers into edits without ever taking the edit out of the user's hands | `agentInvoke` | M |
 | **"Ask Nimbus about this problem"** code action on a diagnostic | Editor-native debugging from a squiggle | `agentInvoke` | M |
 | **Multi-agent compare** — ask N agents, diff their answers; per-action agent picker | Exploit the agent model; pick the best take | `agentInvoke` (fan-out) | M |
 | **Live egress feed** panel + **HITL history/notification center** + "what has Nimbus sent about this file/session?" | A complete, glanceable trust surface | `egressList` / `subscribeHitl` | M |
