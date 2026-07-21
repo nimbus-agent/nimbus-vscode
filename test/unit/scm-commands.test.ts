@@ -59,6 +59,33 @@ function harness(
   const opened: Array<{ title: string; content: string }> = [];
   const modalAnswers: string[] = [];
   const api: GitApiLike = { repositories: () => repos };
+  // Recording message methods plus a bare (no active editor) default. Fixtures
+  // that only need to stub activeTextEditor (e.g. editorDeps) pass a partial
+  // `window` here, which is merged on top of this rather than replacing it —
+  // otherwise showErrorMessage/showWarningMessage/showInformationMessage stop
+  // recording into the errors/warns/infos arrays below.
+  const defaultWindow = {
+    showErrorMessage: async (msg: string) => {
+      errors.push(msg);
+      return undefined;
+    },
+    showWarningMessage: async (msg: string) => {
+      warns.push(msg);
+      return modalAnswers.shift();
+    },
+    showInformationMessage: async (msg: string) => {
+      infos.push(msg);
+      return undefined;
+    },
+    showQuickPick: async (items: readonly { label: string }[]) => items[0],
+    withProgress: async <R>(_o: unknown, task: () => Promise<R>) => task(),
+    activeTextEditor: undefined,
+  } as unknown as ScmCommandDeps["window"];
+  const { window: windowOverride, ...restOver } = over;
+  const window: ScmCommandDeps["window"] = {
+    ...defaultWindow,
+    ...windowOverride,
+  } as ScmCommandDeps["window"];
   const deps: ScmCommandDeps = {
     git: async () => api,
     client: () => ({
@@ -67,23 +94,7 @@ function harness(
         return { reply: "feat: add a" };
       },
     }),
-    window: {
-      showErrorMessage: async (msg: string) => {
-        errors.push(msg);
-        return undefined;
-      },
-      showWarningMessage: async (msg: string) => {
-        warns.push(msg);
-        return modalAnswers.shift();
-      },
-      showInformationMessage: async (msg: string) => {
-        infos.push(msg);
-        return undefined;
-      },
-      showQuickPick: async (items: readonly { label: string }[]) => items[0],
-      withProgress: async <R>(_o: unknown, task: () => Promise<R>) => task(),
-      activeTextEditor: undefined,
-    } as unknown as ScmCommandDeps["window"],
+    window,
     agent: () => "",
     skipSecretFiles: () => true,
     selectionOffsets: () => undefined,
@@ -93,7 +104,7 @@ function harness(
     openUntitled: async () => undefined,
     openDiff: async () => undefined,
     log: silentLog,
-    ...over,
+    ...restOver,
   };
   return { deps, errors, warns, infos, modalAnswers, invoked, opened };
 }
@@ -410,5 +421,152 @@ describe("reviewChanges", () => {
     await createScmCommands(h.deps).reviewChanges();
     expect(h.errors[0]).toContain("binary");
     expect(h.opened).toEqual([]);
+  });
+});
+
+interface FakeEditorOpts {
+  text?: string;
+  fileName?: string;
+  languageId?: string;
+  selectionText?: string;
+}
+
+// Only stubs activeTextEditor/selection — the message methods
+// (showErrorMessage/showWarningMessage/showInformationMessage/withProgress)
+// are left for harness()'s defaultWindow to supply, merged on top of this, so
+// they keep recording into h.errors/h.warns/h.infos.
+function editorDeps(opts: FakeEditorOpts = {}): Partial<ScmCommandDeps> {
+  const text = opts.text ?? "const a = 1;\nconst b = 2;\n";
+  const selectionText = opts.selectionText;
+  return {
+    window: {
+      activeTextEditor: {
+        document: {
+          getText: (range?: unknown) => (range === undefined ? text : (selectionText ?? "")),
+          fileName: opts.fileName ?? "/home/dev/proj/src/a.ts",
+          languageId: opts.languageId ?? "typescript",
+        },
+        selection: { isEmpty: selectionText === undefined },
+      },
+    } as unknown as ScmCommandDeps["window"],
+  };
+}
+
+describe("generateTests", () => {
+  test("opens an untitled buffer named for the source file", async () => {
+    const untitled: Array<{ fileName: string; content: string }> = [];
+    const h = harness({
+      ...editorDeps(),
+      client: () => ({ agentInvoke: async () => ({ reply: "```ts\ntest('a', () => {});\n```" }) }),
+      openUntitled: async (o) => {
+        untitled.push(o);
+      },
+    });
+    await createScmCommands(h.deps).generateTests();
+    expect(untitled[0]?.fileName).toBe("a.test.ts");
+    expect(untitled[0]?.content).toBe("test('a', () => {});");
+  });
+
+  test("redacts the absolute source path out of the prompt", async () => {
+    const h = harness({
+      ...editorDeps({ fileName: "/home/alice/secret-client/src/a.ts" }),
+      client: () => ({
+        agentInvoke: async (input: string) => {
+          h.invoked.push(input);
+          return { reply: "code" };
+        },
+      }),
+    });
+    await createScmCommands(h.deps).generateTests();
+    expect(h.invoked[0]).toContain("File: a.ts");
+    expect(h.invoked[0]).not.toContain("/home/alice");
+  });
+
+  test("errors with no active editor", async () => {
+    const h = harness();
+    await createScmCommands(h.deps).generateTests();
+    expect(h.errors[0]).toContain("open a file");
+  });
+
+  test("errors when disconnected", async () => {
+    const h = harness({ ...editorDeps(), client: () => undefined });
+    await createScmCommands(h.deps).generateTests();
+    expect(h.errors[0]).toContain("not connected");
+  });
+});
+
+describe("generateDocstrings", () => {
+  test("diffs the original against the annotated whole file", async () => {
+    const diffs: Array<{ title: string; left: string; right: string; fileName: string }> = [];
+    const h = harness({
+      ...editorDeps({ text: "def f(): pass\n", languageId: "python", fileName: "/p/a.py" }),
+      client: () => ({
+        agentInvoke: async () => ({ reply: '```python\ndef f():\n    """Doc."""\n    pass\n```' }),
+      }),
+      openDiff: async (o) => {
+        diffs.push(o);
+      },
+    });
+    await createScmCommands(h.deps).generateDocstrings();
+    expect(diffs[0]?.left).toBe("def f(): pass\n");
+    expect(diffs[0]?.right).toContain('"""Doc."""');
+    // The basename carries the extension, which is how the opener gets
+    // highlighting — and it must never carry the directory.
+    expect(diffs[0]?.fileName).toBe("a.py");
+    expect(diffs[0]?.title).toContain("a.py");
+    expect(diffs[0]?.title).not.toContain("/p/");
+  });
+
+  test("diffs whole-file instead of splicing when the reply echoes the whole file", async () => {
+    const full =
+      "import { thing } from './somewhere-else';\nconst selected = 1;\nexport default selected;\n";
+    const diffs: Array<{ left: string; right: string }> = [];
+    const start = full.indexOf("const selected");
+    const h = harness({
+      ...editorDeps({ text: full, selectionText: "const selected = 1;" }),
+      selectionOffsets: () => ({ start, end: start + "const selected = 1;".length }),
+      client: () => ({
+        // The agent ignored the instruction and returned the entire file.
+        agentInvoke: async () => ({ reply: `\`\`\`ts\n// doc\n${full}\`\`\`` }),
+      }),
+      openDiff: async (o) => {
+        diffs.push({ left: o.left, right: o.right });
+      },
+    });
+    await createScmCommands(h.deps).generateDocstrings();
+    // Spliced, this would have duplicated the import and the export line.
+    expect(diffs[0]?.right.match(/somewhere-else/g)).toHaveLength(1);
+    expect(diffs[0]?.right).toContain("// doc");
+  });
+
+  test("splices a selection rewrite back into the full document", async () => {
+    const diffs: Array<{ left: string; right: string }> = [];
+    const h = harness({
+      ...editorDeps({ text: "AAA\nBBB\nCCC\n", selectionText: "BBB" }),
+      selectionOffsets: () => ({ start: 4, end: 7 }),
+      client: () => ({ agentInvoke: async () => ({ reply: "```ts\n// doc\nBBB\n```" }) }),
+      openDiff: async (o) => {
+        diffs.push({ left: o.left, right: o.right });
+      },
+    });
+    await createScmCommands(h.deps).generateDocstrings();
+    expect(diffs[0]?.left).toBe("AAA\nBBB\nCCC\n");
+    expect(diffs[0]?.right).toBe("AAA\n// doc\nBBB\nCCC\n");
+  });
+
+  test("falls back to a read-only tab when selection offsets are unavailable", async () => {
+    const h = harness({
+      ...editorDeps({ text: "AAA\n", selectionText: "AAA" }),
+      selectionOffsets: () => undefined,
+      client: () => ({ agentInvoke: async () => ({ reply: "```ts\n// doc\nAAA\n```" }) }),
+    });
+    await createScmCommands(h.deps).generateDocstrings();
+    expect(h.opened[0]?.title).toBe("Nimbus docstrings.md");
+  });
+
+  test("errors with no active editor", async () => {
+    const h = harness();
+    await createScmCommands(h.deps).generateDocstrings();
+    expect(h.errors[0]).toContain("open a file");
   });
 });

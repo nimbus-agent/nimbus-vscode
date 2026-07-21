@@ -1,5 +1,10 @@
 import { errMsg, type Logger } from "../logging.js";
-import { extractReply } from "../quick-ask.js";
+import {
+  clampContext,
+  extractReply,
+  QUICK_ASK_MAX_CONTEXT_CHARS,
+  redactPath,
+} from "../quick-ask.js";
 import { PROGRESS_LOCATION_NOTIFICATION, type WindowApi } from "../vscode-shim.js";
 import {
   buildCommitPrompt,
@@ -16,6 +21,14 @@ import {
   SCM_MAX_DIFF_CHARS,
   selectWithinBudget,
 } from "./diff.js";
+import {
+  buildDocstringsPrompt,
+  buildTestsPrompt,
+  deriveTestFileName,
+  extractCode,
+  isWholeFileRewrite,
+  spliceSelection,
+} from "./generate.js";
 import type { DiffScope, GitRepositoryLike } from "./git-types.js";
 import { classifyRepositories, findRepoByRoot, repoLabel } from "./repo-select.js";
 import { buildReviewDocument, buildReviewPrompt, type ReviewCoverage } from "./review.js";
@@ -192,6 +205,45 @@ export function createScmCommands(deps: ScmCommandDeps): {
     return reply;
   };
 
+  // Selection when there is one, whole file otherwise — the same rule Quick Ask
+  // uses. Paths we add are always redacted to a basename.
+  const readEditorContext = ():
+    | {
+        code: string;
+        truncated: boolean;
+        fullText: string;
+        fileName: string;
+        languageId: string;
+        hasSelection: boolean;
+      }
+    | undefined => {
+    const editor = deps.window.activeTextEditor;
+    if (editor === undefined) {
+      void deps.window.showErrorMessage("Nimbus: open a file first.");
+      return undefined;
+    }
+    const selectionText = editor.selection.isEmpty ? "" : editor.document.getText(editor.selection);
+    const hasSelection = selectionText.trim().length > 0;
+    const fullText = editor.document.getText();
+    const { code, truncated } = clampContext(
+      hasSelection ? selectionText : fullText,
+      QUICK_ASK_MAX_CONTEXT_CHARS,
+    );
+    if (truncated) {
+      void deps.window.showWarningMessage(
+        `Nimbus: context truncated to ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`,
+      );
+    }
+    return {
+      code,
+      truncated,
+      fullText,
+      fileName: editor.document.fileName,
+      languageId: editor.document.languageId,
+      hasSelection,
+    };
+  };
+
   return {
     generateCommitMessage: contain("generateCommitMessage", "commit message", async () => {
       const repo = await resolveRepo();
@@ -304,12 +356,68 @@ export function createScmCommands(deps: ScmCommandDeps): {
       await deps.openReadonly("Nimbus review.md", buildReviewDocument(coverage, reply));
     }),
 
-    async generateTests(): Promise<void> {
-      return undefined; // Task 8
-    },
+    generateTests: contain("generateTests", "generate tests", async () => {
+      const ctx = readEditorContext();
+      if (ctx === undefined) return;
+      const client = requireClient();
+      if (client === undefined) return;
+      const prompt = buildTestsPrompt({
+        code: ctx.code,
+        filePath: redactPath(ctx.fileName),
+        languageId: ctx.languageId,
+        ...(ctx.truncated ? { truncated: true } : {}),
+      });
+      const reply = await invoke(client, prompt, "Nimbus: generating tests…");
+      if (reply === undefined) return;
+      // Untitled: nothing touches disk, and Save presents a location picker.
+      await deps.openUntitled({
+        fileName: deriveTestFileName(ctx.fileName),
+        content: extractCode(reply),
+      });
+    }),
 
-    async generateDocstrings(): Promise<void> {
-      return undefined; // Task 8
-    },
+    generateDocstrings: contain("generateDocstrings", "generate docstrings", async () => {
+      const ctx = readEditorContext();
+      if (ctx === undefined) return;
+      const client = requireClient();
+      if (client === undefined) return;
+      const prompt = buildDocstringsPrompt({
+        code: ctx.code,
+        filePath: redactPath(ctx.fileName),
+        languageId: ctx.languageId,
+        ...(ctx.truncated ? { truncated: true } : {}),
+      });
+      const reply = await invoke(client, prompt, "Nimbus: generating docstrings…");
+      if (reply === undefined) return;
+      const rewritten = extractCode(reply);
+      const offsets = ctx.hasSelection ? deps.selectionOffsets() : undefined;
+      // A selection rewrite is spliced back into the full document, so the
+      // diff shows only the annotated region rather than a whole-file
+      // mismatch. Without offsets we cannot splice honestly, so fall back to
+      // a read-only tab rather than showing a misleading diff.
+      if (ctx.hasSelection && offsets === undefined) {
+        await deps.openReadonly("Nimbus docstrings.md", rewritten);
+        return;
+      }
+      // A whole-file reply to a selection prompt must not be spliced — that
+      // would duplicate everything around the selection. Diff whole-file
+      // instead, which is what the reply actually is.
+      const spliceable =
+        offsets !== undefined &&
+        !isWholeFileRewrite(rewritten, ctx.fullText, offsets.start, offsets.end);
+      if (offsets !== undefined && !spliceable) {
+        deps.log.debug("scm: docstrings reply looks whole-file; diffing without splicing");
+      }
+      const right =
+        offsets !== undefined && spliceable
+          ? spliceSelection(ctx.fullText, offsets.start, offsets.end, rewritten)
+          : rewritten;
+      await deps.openDiff({
+        title: `${redactPath(ctx.fileName)} ↔ Nimbus docstrings`,
+        left: ctx.fullText,
+        right,
+        fileName: redactPath(ctx.fileName),
+      });
+    }),
   };
 }
