@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.6.0...v0.6.1) (2026-07-22)
+
+
+### Bug Fixes
+
+* Index view shows item types and sorts by time ([#40](https://github.com/nimbus-agent/nimbus-vscode/issues/40)) ([f881e8c](https://github.com/nimbus-agent/nimbus-vscode/commit/f881e8c5a2c8c15b9be6f388397d13c9e4375581))
+
 ## [0.6.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.5.1...v0.6.0) (2026-07-21)
 
 
