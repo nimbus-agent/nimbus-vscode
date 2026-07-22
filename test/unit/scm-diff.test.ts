@@ -112,8 +112,7 @@ describe("truncateAtHunkBoundary", () => {
   test("keeps only whole hunks that fit, never a partial one", () => {
     const d = fakeDiff("a.ts", 3, 100);
     const r = truncateAtHunkBoundary(d, 300);
-    expect(r).toBeDefined();
-    if (r === undefined) return;
+    if (r === undefined) throw new Error("expected a hunk-truncated result");
     expect(r.keptHunks).toBeLessThan(3);
     expect(r.totalHunks).toBe(3);
     // Every retained hunk is complete: the text ends on a newline and contains

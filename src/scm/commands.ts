@@ -120,14 +120,20 @@ function selectNothingReviewableReason(collected: CollectedDiff): NothingReviewa
 // Phrased per command — the cascade is shared, the wording is not. Records
 // rather than ternaries so a new NothingReviewableReason fails the typecheck
 // here instead of silently falling into the "too large" branch.
+//
+// "secret" deliberately says "one or more" rather than "every": it wins whenever
+// skippedSecret is non-empty, even when nonTextual or omittedTooLarge also hold
+// files, so an "every file" claim would be false in the mixed case. The other
+// two are exact — "non-textual" is only reached with the other buckets empty,
+// and the "too-large" wording describes the diff rather than every file.
 const COMMIT_NOTHING_REVIEWABLE_DETAIL: Record<NothingReviewableReason, string> = {
-  secret: "every staged file was skipped as possibly secret-bearing",
+  secret: "one or more staged files were skipped as possibly secret-bearing",
   "non-textual": "the staged changes are binary or non-textual",
   "too-large": "the staged diff is too large to summarise",
 };
 
 const REVIEW_NOTHING_REVIEWABLE_DETAIL: Record<NothingReviewableReason, string> = {
-  secret: "every changed file was skipped as possibly secret-bearing",
+  secret: "one or more changed files were skipped as possibly secret-bearing",
   "non-textual": "every changed file is binary or non-textual",
   "too-large": "the changed diff is too large to review",
 };
