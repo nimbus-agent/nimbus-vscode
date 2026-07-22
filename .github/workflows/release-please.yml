@@ -2,8 +2,9 @@ name: release-please
 
 # On every push to main, Release Please reads Conventional Commits and maintains
 # a "release PR" (version bump + CHANGELOG). Merging that PR creates the vX.Y.Z
-# tag + GitHub Release. The tag is pushed as RELEASE_PLEASE_PAT so publish.yml
-# (on: push tags v*) fires — a tag from the default GITHUB_TOKEN would not.
+# tag + GitHub Release. The tag is pushed with a Release Bot App token so
+# publish.yml (on: push tags v*) fires — a tag from the default GITHUB_TOKEN
+# would not.
 on:
   push:
     branches: [main]
@@ -27,8 +28,25 @@ jobs:
         with:
           egress-policy: audit
 
+      # Mint from the "Nimbus Release Bot" GitHub App, retiring the last consumer
+      # of the org-wide RELEASE_PLEASE_PAT (the monorepo, nimbus-client and
+      # nimbus-sdk already mint this way). An App token — unlike github.token —
+      # still triggers publish.yml when it pushes the release tag, which is the
+      # whole reason a PAT was used here.
+      - name: Mint release-bot token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: nimbus-agent
+          repositories: nimbus-vscode
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           config-file: .release-please-config.json
           manifest-file: .release-please-manifest.json
-          token: ${{ secrets.RELEASE_PLEASE_PAT || github.token }}
+          token: ${{ steps.app-token.outputs.token }}
