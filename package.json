@@ -575,12 +575,12 @@
     "clean": "node scripts/clean.mjs"
   },
   "dependencies": {
-    "@nimbus-dev/client": "^0.6.0",
     "dompurify": "^3.4.8",
     "marked": "^18.0.5"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
+    "@nimbus-dev/client": "^0.6.0",
     "@types/node": "^26.0.0",
     "@types/vscode": "^1.95.0",
     "@vitest/coverage-v8": "^4.1.9",
