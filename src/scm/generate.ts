@@ -26,10 +26,15 @@ export function deriveTestFileName(sourcePath: string): string {
 // Agents wrap code in a fence and often add prose around it. Take the first
 // fenced block; if there is none, assume the whole reply is bare code.
 export function extractCode(reply: string): string {
-  const fenced = /```[^\n]*\n([\s\S]*?)```/.exec(reply);
-  const inner = fenced?.[1];
-  if (inner === undefined) return reply.trim();
-  return inner.replace(/\n$/, "");
+  // Scanned rather than matched with /```[^\n]*\n([\s\S]*?)```/: the lazy inner
+  // group between two fences backtracks super-linearly on a reply carrying many
+  // stray backticks. Same semantics — first fence, its line terminator, then the
+  // next fence — in linear time.
+  const open = reply.indexOf("```");
+  const afterOpen = open === -1 ? -1 : reply.indexOf("\n", open + 3);
+  const close = afterOpen === -1 ? -1 : reply.indexOf("```", afterOpen + 1);
+  if (close === -1) return reply.trim();
+  return reply.slice(afterOpen + 1, close).replace(/\n$/, "");
 }
 
 // Rebuild a whole document with the selected range replaced, so the docstrings

@@ -51,19 +51,17 @@ export function parseRankedItem(raw: unknown): RankedResult | undefined {
   }
   const duplicates = rec["duplicates"];
   if (Array.isArray(duplicates)) {
-    // Count only non-empty strings, and never the item's own url — a
-    // conservative guard so the badge reflects *other* copies even if the
-    // Gateway includes the primary in the array. (`url` is undefined-safe:
-    // when absent, no entry equals it, so nothing is over-filtered.)
+    // Contract confirmed (#19, Gateway v0.24.0): entries are SERVICE NAMES
+    // ("github", "gitlab") — not canonical URLs and not index primary keys.
+    // Both producers (the hybrid ranker and the local index) append the
+    // `service` of each *additional* row that collides on canonical_url; the
+    // primary item's own service is never appended. So self-inclusion does not
+    // occur, and counting every non-empty entry already yields the number of
+    // OTHER locations — the badge is exact, not advisory.
     //
-    // The client types this as a bare `readonly string[]` with no documented
-    // contract, so whether entries are canonical URLs or index primary keys —
-    // and whether the item itself is included — is still unconfirmed against a
-    // live Gateway. Tracked in issue #19. The guard is therefore best-effort in
-    // BOTH directions, and the badge is advisory until #19 settles the shape:
-    // if entries are primary keys the filter never matches, so a self-entry
-    // would be counted (over-count); if entries are URLs, a genuine duplicate
-    // sharing this item's canonical URL is filtered out (under-count).
+    // The `d !== url` guard consequently never fires against a real payload (a
+    // service name never equals a URL). It is kept as a cheap safety net should
+    // the contract ever grow self-entries, and is covered by its own test.
     const count = duplicates.filter(
       (d): d is string => typeof d === "string" && d.length > 0 && d !== url,
     ).length;

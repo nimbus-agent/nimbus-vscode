@@ -75,7 +75,7 @@ export function sanitizeCommitMessage(reply: string): string {
   }
   return text
     .split("\n")
-    .map((line) => line.replace(/\s+$/, ""))
+    .map((line) => line.trimEnd())
     .join("\n")
     .trim();
 }
@@ -86,7 +86,7 @@ export function composeInputBoxValue(
   mode: "replace" | "append",
 ): string {
   if (mode === "replace") return drafted;
-  const base = existing.replace(/\s+$/, "");
+  const base = existing.trimEnd();
   if (base.length === 0) return drafted;
   // Running the command twice and appending the same draft again is never what
   // anyone wants, so an append that would duplicate is a no-op.
