@@ -22,7 +22,8 @@ export function buildReviewPrompt(diffBlock: string): string {
 
 function section(title: string, paths: readonly string[]): string {
   if (paths.length === 0) return "";
-  return `\n**${title}:** ${paths.map((p) => `\`${p}\``).join(", ")}\n`;
+  const quoted = paths.map((p) => `\`${p}\``).join(", ");
+  return `\n**${title}:** ${quoted}\n`;
 }
 
 // The reply is never parsed — the shape instruction above exists so the tab

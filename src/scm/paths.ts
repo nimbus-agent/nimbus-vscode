@@ -16,6 +16,18 @@ function isDriveLetterRoot(root: string): boolean {
   return /^[A-Za-z]:/.test(root);
 }
 
+// Scanned rather than matched with `/[\\/]+$/`: an end-anchored quantifier
+// backtracks super-linearly on a long run of separators. This is linear.
+function trimTrailingSeparators(path: string): string {
+  let end = path.length;
+  while (end > 0) {
+    const ch = path[end - 1];
+    if (ch !== "/" && ch !== "\\") break;
+    end--;
+  }
+  return path.slice(0, end);
+}
+
 // Repo-relative path for a changed file, for display and for the prompt sent
 // to the agent. NEVER falls back to the raw absolute path: on any mismatch —
 // a prefix that isn't actually an ancestor (a sibling directory sharing a
@@ -25,7 +37,7 @@ function isDriveLetterRoot(root: string): boolean {
 // after the root" and "no case-insensitive compare" both fail closed to the
 // basename rather than open to the full path.
 export function relativeOrBasename(root: string, absolute: string): string {
-  const normalizedRoot = root.replace(/[\\/]+$/, "");
+  const normalizedRoot = trimTrailingSeparators(root);
   const driveLetterRoot = isDriveLetterRoot(normalizedRoot);
   const rootForCompare = driveLetterRoot ? normalizedRoot.toLowerCase() : normalizedRoot;
   const absoluteForCompare = driveLetterRoot ? absolute.toLowerCase() : absolute;
@@ -37,5 +49,5 @@ export function relativeOrBasename(root: string, absolute: string): string {
   return absolute
     .slice(normalizedRoot.length)
     .replace(/^[\\/]+/, "")
-    .replace(/\\/g, "/");
+    .replaceAll("\\", "/");
 }

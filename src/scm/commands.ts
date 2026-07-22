@@ -117,6 +117,21 @@ function selectNothingReviewableReason(collected: CollectedDiff): NothingReviewa
   return "too-large";
 }
 
+// Phrased per command — the cascade is shared, the wording is not. Records
+// rather than ternaries so a new NothingReviewableReason fails the typecheck
+// here instead of silently falling into the "too large" branch.
+const COMMIT_NOTHING_REVIEWABLE_DETAIL: Record<NothingReviewableReason, string> = {
+  secret: "every staged file was skipped as possibly secret-bearing",
+  "non-textual": "the staged changes are binary or non-textual",
+  "too-large": "the staged diff is too large to summarise",
+};
+
+const REVIEW_NOTHING_REVIEWABLE_DETAIL: Record<NothingReviewableReason, string> = {
+  secret: "every changed file was skipped as possibly secret-bearing",
+  "non-textual": "every changed file is binary or non-textual",
+  "too-large": "the changed diff is too large to review",
+};
+
 export function createScmCommands(deps: ScmCommandDeps): {
   generateCommitMessage(): Promise<void>;
   reviewChanges(): Promise<void>;
@@ -273,13 +288,7 @@ export function createScmCommands(deps: ScmCommandDeps): {
       if (collected.reviewed.length === 0) {
         // Say which reason actually applied — "too large" for a staged PNG
         // would be a lie the user cannot act on.
-        const reason = selectNothingReviewableReason(collected);
-        const detail =
-          reason === "secret"
-            ? "every staged file was skipped as possibly secret-bearing"
-            : reason === "non-textual"
-              ? "the staged changes are binary or non-textual"
-              : "the staged diff is too large to summarise";
+        const detail = COMMIT_NOTHING_REVIEWABLE_DETAIL[selectNothingReviewableReason(collected)];
         void deps.window.showErrorMessage(`Nimbus: ${detail}.`);
         return;
       }
@@ -353,13 +362,7 @@ export function createScmCommands(deps: ScmCommandDeps): {
         // Say which reason actually applied — mirrors generateCommitMessage's
         // cascade, phrased for review rather than for committing. This branch
         // never renders the coverage header, so the reason is all the user sees.
-        const reason = selectNothingReviewableReason(collected);
-        const detail =
-          reason === "secret"
-            ? "every changed file was skipped as possibly secret-bearing"
-            : reason === "non-textual"
-              ? "every changed file is binary or non-textual"
-              : "the changed diff is too large to review";
+        const detail = REVIEW_NOTHING_REVIEWABLE_DETAIL[selectNothingReviewableReason(collected)];
         void deps.window.showErrorMessage(`Nimbus: nothing reviewable — ${detail}.`);
         return;
       }

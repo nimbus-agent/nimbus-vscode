@@ -1,8 +1,7 @@
-import { QUICK_ASK_MAX_CONTEXT_CHARS } from "../quick-ask.js";
 import type { ChangedFile } from "./git-types.js";
 
 // One budget, shared with quick-ask: the justification for 50k is the same.
-export const SCM_MAX_DIFF_CHARS = QUICK_ASK_MAX_CONTEXT_CHARS;
+export { QUICK_ASK_MAX_CONTEXT_CHARS as SCM_MAX_DIFF_CHARS } from "../quick-ask.js";
 
 // Per-file diff fetching costs one call per file; this bounds a huge branch to
 // a predictable number of round-trips. Overflow is reported, never silent.
