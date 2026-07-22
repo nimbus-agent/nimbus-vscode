@@ -36,10 +36,45 @@ describe("parseIndexRow", () => {
     expect(parseIndexRow({ id: "i", createdAt: 5 })?.updatedMs).toBe(5);
   });
 
-  test("name falls back to id; unknown itemType is dropped", () => {
+  test("name falls back to id; an unknown itemType is preserved, not dropped", () => {
     const item = parseIndexRow({ id: "i2", itemType: "wormhole" });
     expect(item?.name).toBe("i2");
-    expect(item?.itemType).toBeUndefined();
+    // Was: expect(item?.itemType).toBeUndefined() — that assertion encoded the
+    // bug. The vocabulary is open; dropping an unrecognised type is data loss.
+    expect(item?.itemType).toBe("wormhole");
+  });
+
+  test("keeps an ops item type", () => {
+    const item = parseIndexRow({
+      id: "run-1",
+      service: "github",
+      itemType: "ci_run",
+      name: "nightly build",
+      modifiedAt: 1_700_000_000_000,
+    });
+    expect(item?.itemType).toBe("ci_run");
+    expect(item?.updatedMs).toBe(1_700_000_000_000);
+  });
+
+  test("keeps an item type this extension build does not know", () => {
+    const item = parseIndexRow({
+      id: "x1",
+      service: "x",
+      itemType: "dora_metric",
+      name: "n",
+    });
+    expect(item?.itemType).toBe("dora_metric");
+  });
+
+  test("prefers the composite indexPrimaryKey for identity when present", () => {
+    const item = parseIndexRow({
+      id: "run-1",
+      indexPrimaryKey: "github:run-1",
+      service: "github",
+      itemType: "ci_run",
+      name: "nightly build",
+    });
+    expect(item?.id).toBe("github:run-1");
   });
 
   test("returns undefined without a usable id or for a non-object", () => {
@@ -70,13 +105,22 @@ describe("groupByService", () => {
 });
 
 describe("iconForItemType", () => {
-  test("maps each enum value and defaults to file", () => {
+  test("maps the emitted types and falls back without claiming a type", () => {
     expect(iconForItemType("email")).toBe("mail");
     expect(iconForItemType("event")).toBe("calendar");
     expect(iconForItemType("photo")).toBe("device-camera");
-    expect(iconForItemType("task")).toBe("checklist");
     expect(iconForItemType("folder")).toBe("folder");
-    expect(iconForItemType(undefined)).toBe("file");
+    expect(iconForItemType("ci_run")).toBe("play-circle");
+    expect(iconForItemType("pr")).toBe("git-pull-request");
+  });
+
+  test("falls back without claiming the item is a file", () => {
+    expect(iconForItemType("ci_run")).toBe("play-circle");
+    expect(iconForItemType("totally_new_type")).toBe("symbol-misc");
+    expect(iconForItemType(undefined)).toBe("symbol-misc");
+    // The fallback must never be a real item type's icon.
+    expect(iconForItemType("totally_new_type")).not.toBe("file");
+    expect(iconForItemType("totally_new_type")).not.toBe("folder");
   });
 });
 
