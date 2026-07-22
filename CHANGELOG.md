@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.2](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.6.1...v0.6.2) (2026-07-22)
+
+
+### Bug Fixes
+
+* clear the SonarCloud board (11) + close [#37](https://github.com/nimbus-agent/nimbus-vscode/issues/37) and [#19](https://github.com/nimbus-agent/nimbus-vscode/issues/19) ([#43](https://github.com/nimbus-agent/nimbus-vscode/issues/43)) ([2a1d20f](https://github.com/nimbus-agent/nimbus-vscode/commit/2a1d20f6cf890bf89150aec720c59fa69a7d0cb1))
+
 ## [0.6.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.6.0...v0.6.1) (2026-07-22)
 
 
