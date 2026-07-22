@@ -1,8 +1,12 @@
+import type { NimbusItem } from "@nimbus-dev/client";
 import { asFiniteNumber, asNonEmptyString, asRecord } from "./parse-helpers.js";
 import type { SidebarItem } from "./tree-view.js";
 
-// The closed itemType enum mirrored from NimbusItem (we do not import the SDK).
-export type IndexItemType = "file" | "folder" | "email" | "event" | "photo" | "task";
+// Sourced from the SDK contract via the client — do NOT re-declare it here. A
+// private mirror of this vocabulary is what made this view render no types for
+// its entire life: the gateway emits dozens of itemTypes, the mirror listed six,
+// and everything else was silently dropped.
+export type IndexItemType = NimbusItem["itemType"];
 
 // View-model projected from a NimbusItem row. Field names mirror NimbusItem so
 // the defensive parse reads the real keys; we own this type.
@@ -20,22 +24,24 @@ export interface ServiceGroup {
   items: IndexItem[];
 }
 
-const ITEM_TYPES: ReadonlySet<string> = new Set<string>([
-  "file",
-  "folder",
-  "email",
-  "event",
-  "photo",
-  "task",
-]);
-
-const ITEM_TYPE_ICONS: Record<IndexItemType, string> = {
+// Covers the types a live index actually contains plus the common ops types.
+// Deliberately NOT all of the SDK's emitted types — unmapped types take the
+// fallback in iconForItemType. Every id here is a real VS Code codicon
+// (https://microsoft.github.io/vscode-codicons/dist/codicon.html).
+const ITEM_TYPE_ICONS: Readonly<Record<string, string>> = {
   file: "file",
   folder: "folder",
   email: "mail",
+  ci_run: "play-circle",
+  pr: "git-pull-request",
+  issue: "issues",
+  web_clip: "link",
+  deployment: "rocket",
+  incident: "flame",
+  message: "comment",
+  page: "book",
   event: "calendar",
   photo: "device-camera",
-  task: "checklist",
 };
 
 // Brand-cased display names for known gateway service ids. Anything not listed
@@ -70,7 +76,9 @@ const SERVICE_ICONS: Record<string, string> = {
 export function parseIndexRow(raw: unknown): IndexItem | undefined {
   const rec = asRecord(raw);
   if (rec === undefined) return undefined;
-  const id = asNonEmptyString(rec["id"]);
+  // Prefer the gateway's composite key (`service:external_id`) when present, so
+  // rows from different services cannot collide on a shared bare id.
+  const id = asNonEmptyString(rec["indexPrimaryKey"]) ?? asNonEmptyString(rec["id"]);
   if (id === undefined) return undefined;
 
   const item: IndexItem = {
@@ -78,10 +86,10 @@ export function parseIndexRow(raw: unknown): IndexItem | undefined {
     name: asNonEmptyString(rec["name"]) ?? id,
     service: asNonEmptyString(rec["service"]) ?? "",
   };
-  const itemType = rec["itemType"];
-  if (typeof itemType === "string" && ITEM_TYPES.has(itemType)) {
-    item.itemType = itemType as IndexItemType;
-  }
+  // The enum is open and the client has already validated the row, so accept
+  // any non-empty string rather than gate on a private allow-list.
+  const itemType = asNonEmptyString(rec["itemType"]);
+  if (itemType !== undefined) item.itemType = itemType;
   const url = asNonEmptyString(rec["url"]);
   if (url !== undefined) item.url = url;
   const updatedMs =
@@ -111,8 +119,18 @@ export function groupByService(items: IndexItem[]): ServiceGroup[] {
   return groups;
 }
 
-export function iconForItemType(itemType: IndexItem["itemType"]): string {
-  return itemType === undefined ? "file" : ITEM_TYPE_ICONS[itemType];
+/**
+ * Icon for an item type, falling back for anything unmapped.
+ *
+ * The fallback is `symbol-misc` and must never be `file` or `folder` — those
+ * are real item types, so reusing them would assert a type the row does not
+ * have. The previous implementation returned "file" for an absent type, which
+ * did exactly that. The `?? "symbol-misc"` is load-bearing: indexing a
+ * `Record<string, string>` yields `string | undefined` under
+ * noUncheckedIndexedAccess, unlike the old total `Record<IndexItemType, string>`.
+ */
+export function iconForItemType(itemType: string | undefined): string {
+  return (itemType !== undefined ? ITEM_TYPE_ICONS[itemType] : undefined) ?? "symbol-misc";
 }
 
 // "local_files" -> "Local Files": the display fallback for services without an
