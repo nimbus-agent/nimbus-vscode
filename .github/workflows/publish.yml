@@ -127,12 +127,16 @@ jobs:
       - name: Publish to VS Code Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: bunx vsce publish --pat "$VSCE_PAT" --no-dependencies --packagePath dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
+        # No --pat flag: vsce reads VSCE_PAT from the environment. Process argv
+        # is world-readable via /proc/<pid>/cmdline, so passing it on the
+        # command line exposes the token to anything co-resident on the runner.
+        run: bunx vsce publish --no-dependencies --packagePath dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
 
       - name: Publish to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
-        run: bunx ovsx publish -p "$OVSX_PAT" dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
+        # No -p flag: ovsx reads OVSX_PAT from the environment, same reason.
+        run: bunx ovsx publish dist-vsix/nimbus-${{ steps.version.outputs.version }}.vsix
 
       - name: Upload .vsix artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
