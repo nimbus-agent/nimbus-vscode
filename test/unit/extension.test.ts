@@ -41,6 +41,11 @@ function makeFakeClient(overrides: Partial<ClientLike> = {}): () => Promise<Clie
     askStream: () => ({}),
     cancelStream: async () => ({ ok: true }),
     getSessionTranscript: async () => ({ sessionId: "", turns: [], hasMore: false }),
+    gatewayPing: async () => ({
+      version: "0.0.0-test",
+      uptime: 60_000,
+      agentLimits: { maxAgentDepth: 1, maxToolCallsPerSession: 1 },
+    }),
   } as unknown as ClientLike;
   const merged = { ...base, ...overrides } as ClientLike;
   return async () => merged;

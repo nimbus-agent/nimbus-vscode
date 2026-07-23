@@ -24,20 +24,45 @@ const EDIT_SETTING: TroubleshootAction = {
   args: ["nimbus.socketPath"],
 };
 
+// Outcome of a live gateway.ping attempt, taken while the socket reports
+// connected. Distinguishes "socket up, gateway responsive" from "socket up,
+// gateway wedged" — a state the ConnectionState alone cannot see.
+export type PingOutcome =
+  | { ok: true; version: string; uptime: number }
+  | { ok: false; error: string };
+
 // Pure diagnosis: maps a ConnectionState to a user-facing report + fix actions.
 // `platform` is injected so permission-denied guidance can differ (Unix socket
 // modes vs Windows named-pipe access) without touching process in this module.
+// `ping` is optional so non-connected states (and older callers) skip it.
 export function buildTroubleshooter(
   state: ConnectionState,
-  opts: { autoStartGateway: boolean; platform: NodeJS.Platform },
+  opts: { autoStartGateway: boolean; platform: NodeJS.Platform; ping?: PingOutcome },
 ): TroubleshootReport {
   switch (state.kind) {
-    case "connected":
+    case "connected": {
+      const ping = opts.ping;
+      if (ping !== undefined && !ping.ok) {
+        return {
+          level: "warn",
+          message: `Socket ${state.socketPath} is connected, but the Gateway is not responding to ping: ${ping.error}.`,
+          actions: [RECONNECT, OPEN_LOGS],
+        };
+      }
+      if (ping !== undefined) {
+        const min = Math.round(ping.uptime / 60_000);
+        return {
+          level: "info",
+          message: `Connected to the Gateway at ${state.socketPath} — v${ping.version}, up ${min} min.`,
+          actions: [OPEN_LOGS],
+        };
+      }
       return {
         level: "info",
         message: `Connected to the Gateway at ${state.socketPath}.`,
         actions: [OPEN_LOGS],
       };
+    }
     case "disconnected":
       if (opts.autoStartGateway) {
         return {

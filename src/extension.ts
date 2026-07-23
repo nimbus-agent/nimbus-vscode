@@ -14,7 +14,7 @@ import { registerNimbusChatParticipant } from "./chat-participant/real-participa
 import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js";
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
-import { buildTroubleshooter } from "./connection/troubleshooter.js";
+import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
@@ -843,9 +843,21 @@ export function activateWithDeps(
   });
 
   register("nimbus.troubleshootConnection", async () => {
-    const report = buildTroubleshooter(connection.current(), {
+    const state = connection.current();
+    let ping: PingOutcome | undefined;
+    const pingClient = nimbus();
+    if (state.kind === "connected" && pingClient !== undefined) {
+      try {
+        const p = await pingClient.gatewayPing();
+        ping = { ok: true, version: p.version, uptime: p.uptime };
+      } catch (e) {
+        ping = { ok: false, error: errMsg(e) };
+      }
+    }
+    const report = buildTroubleshooter(state, {
       autoStartGateway: settings.autoStartGateway(),
       platform: process.platform,
+      ...(ping !== undefined ? { ping } : {}),
     });
     const labels = report.actions.map((a) => a.label);
     const opts = { modal: true };

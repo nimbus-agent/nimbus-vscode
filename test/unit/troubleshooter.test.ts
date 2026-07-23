@@ -74,4 +74,30 @@ describe("buildTroubleshooter", () => {
       "nimbus.openLogs",
     ]);
   });
+
+  test("connected + ping ok reports gateway version and uptime", () => {
+    const r = buildTroubleshooter(
+      { kind: "connected", socketPath: "/run/n.sock" },
+      { ...unix, ping: { ok: true, version: "0.24.0", uptime: 5 * 60_000 } },
+    );
+    expect(r.level).toBe("info");
+    expect(r.message).toContain("v0.24.0");
+    expect(r.message).toContain("5 min");
+  });
+
+  test("connected + ping failure warns: socket up, gateway unresponsive", () => {
+    const r = buildTroubleshooter(
+      { kind: "connected", socketPath: "/run/n.sock" },
+      { ...unix, ping: { ok: false, error: "timeout" } },
+    );
+    expect(r.level).toBe("warn");
+    expect(r.message).toContain("not responding");
+    expect(r.message).toContain("timeout");
+    expect(r.actions.map((a) => a.command)).toContain("nimbus.reconnect");
+  });
+
+  test("connected without ping input keeps the legacy message", () => {
+    const r = buildTroubleshooter({ kind: "connected", socketPath: "/run/n.sock" }, unix);
+    expect(r.message).toBe("Connected to the Gateway at /run/n.sock.");
+  });
 });
