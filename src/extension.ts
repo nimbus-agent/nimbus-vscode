@@ -52,11 +52,11 @@ import { createQuickActions } from "./sidebar/quick-actions.js";
 import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
+import { summarizeConnectorHealth } from "./status-bar/connector-health.js";
 import {
   createEgressStatusBarController,
   type EgressBadgeInputs,
 } from "./status-bar/egress-status-bar-item.js";
-import { summarizeConnectorHealth } from "./status-bar/connector-health.js";
 import { createStatusBarController, type StatusBarInputs } from "./status-bar/status-bar-item.js";
 import type {
   CommandsApi,
