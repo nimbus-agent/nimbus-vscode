@@ -1,6 +1,14 @@
 import type {
   AskStreamHandle,
   AskStreamOptions,
+  CatchupBrief,
+  CatchupParams,
+  DoraMetricsResult,
+  ExpertBrief,
+  ExpertParams,
+  ImpactBrief,
+  ImpactParams,
+  MetricsDoraParams,
   RankedSearchItem,
   RankedSearchParams,
 } from "@nimbus-dev/client";
@@ -17,7 +25,10 @@ export interface AttachedFile {
   code: string;
 }
 
-export type ParticipantCommand = "explain" | "fix" | "test";
+// Stage 2b: the ops vocabulary. The Copilot three (explain/fix/test) were
+// retired to quick-ask presets — a local-first client does not compete on
+// model quality; it competes on private cross-service context.
+export type ParticipantCommand = "incident" | "deploys" | "owns" | "blast";
 
 export interface ParticipantRequest {
   prompt: string; // user free text (may be empty for a bare slash command)
@@ -52,6 +63,10 @@ export interface CancellationLike {
 export interface ParticipantClientLike {
   askStream(input: string, opts?: AskStreamOptions): AskStreamHandle;
   searchRanked(params?: RankedSearchParams): Promise<RankedSearchItem[]>;
+  agentsExpert(p: ExpertParams, o?: { timeoutMs?: number }): Promise<ExpertBrief>;
+  agentsImpact(p: ImpactParams, o?: { timeoutMs?: number }): Promise<ImpactBrief>;
+  agentsCatchup(p?: CatchupParams, o?: { timeoutMs?: number }): Promise<CatchupBrief>;
+  metricsDora(params: MetricsDoraParams): Promise<DoraMetricsResult>;
 }
 
 export interface ParticipantDeps {

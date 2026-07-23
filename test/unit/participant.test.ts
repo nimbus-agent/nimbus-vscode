@@ -62,6 +62,18 @@ function fakeClient(over: Partial<ParticipantClientLike> = {}): ParticipantClien
   return {
     askStream: () => streamOf([{ type: "done", reply: "hi", sessionId: "sess" }]),
     searchRanked: async () => [],
+    agentsExpert: async () => {
+      throw new Error("agentsExpert not faked");
+    },
+    agentsImpact: async () => {
+      throw new Error("agentsImpact not faked");
+    },
+    agentsCatchup: async () => {
+      throw new Error("agentsCatchup not faked");
+    },
+    metricsDora: async () => {
+      throw new Error("metricsDora not faked");
+    },
     ...over,
   };
 }
