@@ -9,6 +9,6 @@ export function summarizeConnectorHealth(statuses: readonly ConnectorSyncStatus[
   const names = statuses
     .filter((s) => s.enabled && (s.status === "error" || s.status === "backoff"))
     .map((s) => s.serviceId)
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   return { count: names.length, names };
 }
