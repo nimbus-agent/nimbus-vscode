@@ -67,6 +67,7 @@ export interface ParticipantClientLike {
   agentsImpact(p: ImpactParams, o?: { timeoutMs?: number }): Promise<ImpactBrief>;
   agentsCatchup(p?: CatchupParams, o?: { timeoutMs?: number }): Promise<CatchupBrief>;
   metricsDora(params: MetricsDoraParams): Promise<DoraMetricsResult>;
+  egressHead(): Promise<{ head: string; count: number }>;
 }
 
 export interface ParticipantDeps {

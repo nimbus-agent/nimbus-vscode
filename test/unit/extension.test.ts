@@ -1948,7 +1948,7 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     await cmd(f, "nimbus.proveEgressWindow")();
     expect(f.saveJsonCalls).toHaveLength(1);
-    expect(f.saveJsonCalls[0]?.defaultName).toMatch(/^egress-proof-\d+\.json$/);
+    expect(f.saveJsonCalls[0]?.defaultName).toMatch(/^egress-proof-\d+\.html$/);
     expect(f.infoMessages.some((m) => /proof saved/i.test(m))).toBe(true);
     const exec = f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>;
     expect(exec).toHaveBeenCalledWith(

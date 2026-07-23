@@ -97,6 +97,7 @@ function harness(
     window,
     agent: () => "",
     skipSecretFiles: () => true,
+    egressProofTrailer: () => false,
     selectionOffsets: () => undefined,
     openReadonly: async (title: string, content: string) => {
       opened.push({ title, content });
@@ -113,6 +114,60 @@ describe("generateCommitMessage", () => {
   test("writes the sanitized draft into an empty input box", async () => {
     const repo = fakeRepo();
     const h = harness({}, [repo]);
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(repo.inputBox.value).toBe("feat: add a");
+    expect(h.errors).toEqual([]);
+  });
+
+  test("appends the signed egress trailer when the setting is on", async () => {
+    const repo = fakeRepo();
+    const h = harness(
+      {
+        egressProofTrailer: () => true,
+        client: () => ({
+          agentInvoke: async () => ({ reply: "feat: add a" }),
+          egressProveWindow: async () => ({
+            receipt: { digest: "d1", sigB64: "s1", pubkeyB64: "p1" },
+          }),
+        }),
+      },
+      [repo],
+    );
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(repo.inputBox.value).toBe("feat: add a\n\nNimbus-Egress-Proof: d1 sig=s1 pubkey=p1");
+  });
+
+  test("no trailer by default, even when the client could prove", async () => {
+    const repo = fakeRepo();
+    const h = harness(
+      {
+        client: () => ({
+          agentInvoke: async () => ({ reply: "feat: add a" }),
+          egressProveWindow: async () => ({
+            receipt: { digest: "d1", sigB64: "s1", pubkeyB64: "p1" },
+          }),
+        }),
+      },
+      [repo],
+    );
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(repo.inputBox.value).toBe("feat: add a");
+  });
+
+  test("a failing prove (or missing receipt) never blocks the message", async () => {
+    const repo = fakeRepo();
+    const h = harness(
+      {
+        egressProofTrailer: () => true,
+        client: () => ({
+          agentInvoke: async () => ({ reply: "feat: add a" }),
+          egressProveWindow: async () => {
+            throw new Error("no signing key");
+          },
+        }),
+      },
+      [repo],
+    );
     await createScmCommands(h.deps).generateCommitMessage();
     expect(repo.inputBox.value).toBe("feat: add a");
     expect(h.errors).toEqual([]);

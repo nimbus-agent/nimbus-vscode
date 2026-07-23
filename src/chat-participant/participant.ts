@@ -126,6 +126,45 @@ async function consumeStream(
   return state;
 }
 
+// Best-effort read of the egress-ledger row count; undefined (never a throw)
+// when the ledger is unreadable — the footer is an affordance, not a gate.
+async function readHeadCount(
+  client: ParticipantClientLike,
+  log: ParticipantDeps["log"],
+): Promise<number | undefined> {
+  try {
+    return (await client.egressHead()).count;
+  } catch (e) {
+    log.warn(`participant: egressHead (before) failed: ${errMsg(e)}`);
+    return undefined;
+  }
+}
+
+// The per-answer receipt: how many ledger rows this turn appended. Zero is the
+// headline claim — "nothing left this machine" — so it renders too. A negative
+// delta (a prune ran mid-turn) is treated as zero.
+async function emitEgressDelta(
+  client: ParticipantClientLike,
+  sink: ChatResponseSink,
+  log: ParticipantDeps["log"],
+  before: number | undefined,
+): Promise<void> {
+  if (before === undefined) return;
+  let after: number;
+  try {
+    after = (await client.egressHead()).count;
+  } catch (e) {
+    log.warn(`participant: egressHead (after) failed: ${errMsg(e)}`);
+    return;
+  }
+  const delta = Math.max(0, after - before);
+  const text =
+    delta === 0
+      ? "\n\n---\n_Egress: no rows appended — nothing left this machine during this answer._"
+      : `\n\n---\n_Egress: ${delta} row${delta === 1 ? "" : "s"} appended to the local ledger during this answer._`;
+  sink.markdown(text);
+}
+
 export async function runParticipantTurn(
   req: ParticipantRequest,
   deps: ParticipantDeps,
@@ -144,7 +183,9 @@ export async function runParticipantTurn(
   // Ops commands are structured brief/metric calls, not prompt rewrites — they
   // route before the empty-prompt guard because a bare `/incident` is valid.
   if (req.command !== undefined) {
+    const headBefore = await readHeadCount(client, deps.log);
     await runOpsCommand(client, req, sink, deps.log);
+    await emitEgressDelta(client, sink, deps.log, headBefore);
     return {};
   }
 
@@ -155,6 +196,8 @@ export async function runParticipantTurn(
     );
     return {};
   }
+
+  const headBefore = await readHeadCount(client, deps.log);
 
   const ac = new AbortController();
   // Track the cancellation subscription so it is disposed on every exit path — a
@@ -200,5 +243,6 @@ export async function runParticipantTurn(
   }
 
   await citations;
+  if (!ac.signal.aborted) await emitEgressDelta(client, sink, deps.log, headBefore);
   return state.sessionId !== undefined ? { sessionId: state.sessionId } : {};
 }

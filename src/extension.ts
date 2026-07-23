@@ -541,11 +541,17 @@ export function activateWithDeps(
     git: deps.git ?? createRealGitApi(log),
     client: () => {
       const client = nimbus();
-      return client === undefined ? undefined : { agentInvoke: (i, o) => client.agentInvoke(i, o) };
+      return client === undefined
+        ? undefined
+        : {
+            agentInvoke: (i, o) => client.agentInvoke(i, o),
+            egressProveWindow: (p) => client.egressProveWindow(p),
+          };
     },
     window: deps.window,
     agent: () => settings.askAgent(),
     skipSecretFiles: () => settings.scmSkipSecretFiles(),
+    egressProofTrailer: () => settings.scmEgressProofTrailer(),
     selectionOffsets,
     openReadonly: openReadonlyJson,
     openUntitled,
@@ -1270,7 +1276,10 @@ function createProofSaver(): (
     // have no absolute base, so omit it and let the dialog pick its own default
     // rather than passing a relative path.
     const options: { filters: Record<string, string[]>; defaultUri?: vscode.Uri } = {
-      filters: { JSON: ["json"] },
+      // Keyed off the artifact's own extension: proofs are .html, raw exports .json.
+      filters: defaultName.endsWith(".html")
+        ? { HTML: ["html"], JSON: ["json"] }
+        : { JSON: ["json"] },
     };
     if (folder !== undefined) options.defaultUri = vscode.Uri.joinPath(folder, defaultName);
     const target = await vscode.window.showSaveDialog(options);

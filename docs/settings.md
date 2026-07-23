@@ -85,6 +85,16 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
   Changes** send to the agent. Skipped files are reported, never dropped
   silently. Turn this off only if you genuinely need those files reviewed.
 
+### `nimbus.scm.egressProofTrailer`
+
+- **Type:** boolean · **Default:** `false`
+- When on, **Generate Commit Message** appends a `Nimbus-Egress-Proof` trailer:
+  the digest of the last-24h egress window plus an Ed25519 signature and public
+  key from the gateway's signing keypair, so a reviewer can verify what left
+  this machine while the change was authored. Best-effort by design — a missing
+  signing key, an older gateway, or a prove failure skips the trailer (with a
+  log line) rather than blocking the message.
+
 ### `nimbus.egress.showStatusBarBadge`
 
 `boolean` (default `true`). Shows a second status-bar item while connected: the egress ledger row count plus a `$(check)` that means *the ledger head was read successfully* — not a cryptographic verification. Click it to open the Egress view; run **Verify Egress Ledger** for the offline chain check. Set to `false` to hide the badge. Poll cadence follows [`nimbus.statusBarPollMs`](#nimbusstatusbarpollms).

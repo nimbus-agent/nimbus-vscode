@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildCommitPrompt,
+  buildEgressTrailer,
   COMMIT_STYLE_EXAMPLES,
   composeInputBoxValue,
   filterStyleExamples,
@@ -129,5 +130,13 @@ describe("composeInputBoxValue", () => {
   test("append is a no-op when the draft is already present", () => {
     expect(composeInputBoxValue("feat: a", "feat: a", "append")).toBe("feat: a");
     expect(composeInputBoxValue("wip\n\nfeat: a", "feat: a", "append")).toBe("wip\n\nfeat: a");
+  });
+});
+
+describe("buildEgressTrailer", () => {
+  test("renders a single git trailer line carrying digest, signature, and pubkey", () => {
+    const line = buildEgressTrailer({ digest: "abc123", sigB64: "U0lH", pubkeyB64: "UEti" });
+    expect(line).toBe("Nimbus-Egress-Proof: abc123 sig=U0lH pubkey=UEti");
+    expect(line).not.toContain("\n");
   });
 });

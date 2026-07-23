@@ -90,9 +90,20 @@ describe("egressRowToItem", () => {
     expect(item.command?.arguments?.[0]).toMatchObject({ id: 7 });
   });
 
-  test("blocked rows get the error icon", () => {
-    const item = egressRowToItem(parseEgressRow(row({ resultStatus: "blocked" })) as never, 5_000);
+  test("blocked rows render as first-class proof of denial", () => {
+    const item = egressRowToItem(parseEgressRow(row({ resultStatus: "blocked" })) as never, 65_000);
     expect(item.iconId).toBe("error");
+    expect(item.label).toBe("⛔ gmail.send");
+    expect(item.description).toBe("blocked · 1m ago");
+    expect(item.tooltip).toContain("proof of denial");
+    expect(item.contextValue).toBe("nimbusEgressDenial");
+  });
+
+  test("authorized rows keep the plain rendering", () => {
+    const item = egressRowToItem(parseEgressRow(row()) as never, 65_000);
+    expect(item.label).toBe("gmail.send");
+    expect(item.description).toBe("1m ago");
+    expect(item.contextValue).toBeUndefined();
   });
 });
 
@@ -133,10 +144,44 @@ describe("egressWindowPresets", () => {
 });
 
 describe("buildProofDocument", () => {
-  test("names the file with the epoch-ms stamp and round-trips the result", () => {
-    const result = { rows: [{ id: 1 }], completeness: { tier: "authorized-actions" } };
+  const result = {
+    rows: [
+      {
+        id: 1,
+        timestamp: 1_700_000_000_000,
+        destination: "slack",
+        method: "message.post",
+        resultStatus: "authorized",
+        hitlStatus: "approved",
+      },
+    ],
+    completeness: { tier: "authorized-actions", outboundEgressEvents: 1 },
+    verify: { ok: true, verifiedRows: 42 },
+    receipt: { sigB64: "c2ln", pubkeyB64: "cGti", digest: "abc123" },
+  };
+
+  test("emits a self-contained .html artifact with tier, receipt, and verify guidance", () => {
     const doc = buildProofDocument(result, 1_700_000_000_000);
-    expect(doc.filename).toBe("egress-proof-1700000000000.json");
-    expect(JSON.parse(doc.content)).toEqual(result);
+    expect(doc.filename).toBe("egress-proof-1700000000000.html");
+    expect(doc.content).toContain("authorized-actions");
+    expect(doc.content).toContain("abc123");
+    expect(doc.content).toContain("nimbus egress verify");
+    // Self-contained: no external fetches of any kind.
+    expect(doc.content).not.toMatch(/(src|href)="https?:/);
+  });
+
+  test("embeds the raw result JSON, parseable back to the input", () => {
+    const doc = buildProofDocument(result, 1);
+    const m = doc.content.match(
+      /<script type="application\/json" id="nimbus-egress-proof">([\s\S]*?)<\/script>/,
+    );
+    expect(m).not.toBeNull();
+    expect(JSON.parse(m?.[1] ?? "")).toEqual(result);
+  });
+
+  test("a failed whole-ledger verify is called out loudly", () => {
+    const bad = { ...result, verify: { ok: false, verifiedRows: 3 } };
+    const doc = buildProofDocument(bad, 1);
+    expect(doc.content).toContain("FAILED");
   });
 });

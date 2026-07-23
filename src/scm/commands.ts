@@ -8,6 +8,7 @@ import {
 import { PROGRESS_LOCATION_NOTIFICATION, type WindowApi } from "../vscode-shim.js";
 import {
   buildCommitPrompt,
+  buildEgressTrailer,
   COMMIT_LOG_FETCH,
   COMMIT_STYLE_EXAMPLES,
   composeInputBoxValue,
@@ -35,6 +36,11 @@ import { buildReviewDocument, buildReviewPrompt, type ReviewCoverage } from "./r
 
 export interface ScmClientLike {
   agentInvoke(input: string, opts: { stream: boolean; agent?: string }): Promise<unknown>;
+  /** Optional: present when the connected client can prove an egress window. */
+  egressProveWindow?(params: {
+    since?: number;
+    sign?: boolean;
+  }): Promise<{ receipt?: { digest: string; sigB64: string; pubkeyB64: string } }>;
 }
 
 export interface ScmCommandDeps {
@@ -43,6 +49,8 @@ export interface ScmCommandDeps {
   window: WindowApi;
   agent(): string; // askAgent() setting; "" = omit
   skipSecretFiles(): boolean;
+  /** nimbus.scm.egressProofTrailer setting; default false. */
+  egressProofTrailer(): boolean;
   // Character offsets of the active selection, or undefined when there is no
   // editor or the selection is empty. Supplied by extension.ts glue.
   selectionOffsets(): { start: number; end: number } | undefined;
@@ -52,6 +60,33 @@ export interface ScmCommandDeps {
   // virtual URIs so VS Code infers the language from the extension natively.
   openDiff(opts: { title: string; left: string; right: string; fileName: string }): Promise<void>;
   log: Logger;
+}
+
+const EGRESS_TRAILER_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// Opt-in (nimbus.scm.egressProofTrailer): append a signed proof-of-egress
+// trailer covering the last 24h. Best-effort by contract — a missing signing
+// key, an older client, or a prove failure must never block the message.
+async function withEgressTrailer(
+  message: string,
+  client: ScmClientLike,
+  deps: ScmCommandDeps,
+): Promise<string> {
+  if (!deps.egressProofTrailer() || client.egressProveWindow === undefined) return message;
+  try {
+    const proof = await client.egressProveWindow({
+      since: Date.now() - EGRESS_TRAILER_WINDOW_MS,
+      sign: true,
+    });
+    if (proof.receipt === undefined) {
+      deps.log.warn("scm: egress trailer skipped — no signed receipt (signing key missing?)");
+      return message;
+    }
+    return `${message}\n\n${buildEgressTrailer(proof.receipt)}`;
+  } catch (e) {
+    deps.log.warn(`scm: egress trailer skipped: ${errMsg(e)}`);
+    return message;
+  }
 }
 
 export interface CollectedDiff {
@@ -315,11 +350,12 @@ export function createScmCommands(deps: ScmCommandDeps): {
       const prompt = buildCommitPrompt({ diffBlock: collected.block, examples });
       const reply = await invoke(client, prompt, "Nimbus: drafting commit message…");
       if (reply === undefined) return;
-      const message = sanitizeCommitMessage(reply);
+      let message = sanitizeCommitMessage(reply);
       if (message.length === 0) {
         void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
         return;
       }
+      message = await withEgressTrailer(message, client, deps);
       // agentInvoke is uncancellable and can run a while; the folder may have
       // closed meanwhile. Re-find the repo before writing, and never drop the
       // draft on the floor if it is gone.

@@ -637,6 +637,11 @@
           "default": true,
           "description": "Exclude likely-secret files (.env*, *.pem, *.key, id_rsa*, *.p12, *.pfx) from diffs sent to the agent by the Generate Commit Message and Review Changes commands."
         },
+        "nimbus.scm.egressProofTrailer": {
+          "type": "boolean",
+          "default": false,
+          "description": "Append a signed Nimbus-Egress-Proof trailer (digest + Ed25519 signature over the last 24h egress window) to messages drafted by Generate Commit Message. Skipped silently when no signing key is configured."
+        },
         "nimbus.egress.showStatusBarBadge": {
           "type": "boolean",
           "default": true,
