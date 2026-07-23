@@ -224,6 +224,62 @@
         ]
       }
     ],
+    "languageModelTools": [
+      {
+        "name": "nimbus_search",
+        "displayName": "Nimbus Index Search",
+        "modelDescription": "Ranked search over the user's PRIVATE LOCAL Nimbus index on this machine: PRs, CI runs, issues, incidents, deploys, docs, and messages indexed from the user's connected services. This data is local-only and invisible to cloud assistants. Use it when a question involves the user's recent work, an incident, a ticket, a pipeline, or any private context.",
+        "userDescription": "Ranked search over your private local Nimbus index.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "nimbusSearch",
+        "tags": [
+          "nimbus",
+          "search",
+          "local-first"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string",
+              "description": "Search terms — an item name, ticket key, service, error string, or topic."
+            },
+            "limit": {
+              "type": "number",
+              "description": "Max results. Default 8, clamped to 1-20."
+            }
+          },
+          "required": [
+            "query"
+          ]
+        }
+      },
+      {
+        "name": "nimbus_ask",
+        "displayName": "Ask Nimbus",
+        "modelDescription": "Ask the user's LOCAL Nimbus agent a one-shot question grounded in their PRIVATE local index (cross-service: code hosting, CI, incidents, chat, docs). Answers come from the user's own machine; nothing here is visible to cloud assistants. Prefer nimbus_search for lookups; use nimbus_ask when synthesis across the user's private context is needed.",
+        "userDescription": "One-shot answer from your local Nimbus agent, grounded in your private index.",
+        "canBeReferencedInPrompt": true,
+        "toolReferenceName": "nimbusAsk",
+        "tags": [
+          "nimbus",
+          "ask",
+          "local-first"
+        ],
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string",
+              "description": "The question to answer from the user's private local index."
+            }
+          },
+          "required": [
+            "question"
+          ]
+        }
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
