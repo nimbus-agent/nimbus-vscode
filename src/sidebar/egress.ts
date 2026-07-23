@@ -57,11 +57,19 @@ export function iconForResult(resultStatus: string): string {
 }
 
 export function egressRowToItem(row: EgressRow, now: number): SidebarItem {
+  // A blocked row is not noise — it is the ledger's proof that an action was
+  // stopped BEFORE dispatch (the fail-closed half of the egress story), so it
+  // renders as loudly as an authorized one renders quietly.
+  const blocked = row.resultStatus === "blocked";
+  const when = formatRelativeTime(now, row.timestamp);
   return {
-    label: `${row.destination}.${row.method}`,
-    description: formatRelativeTime(now, row.timestamp),
-    tooltip: `${row.destination}.${row.method} · ${row.resultStatus} · consent ${row.hitlStatus}`,
+    label: `${blocked ? "⛔ " : ""}${row.destination}.${row.method}`,
+    description: blocked ? `blocked · ${when}` : when,
+    tooltip: blocked
+      ? `${row.destination}.${row.method} · blocked · consent ${row.hitlStatus} — proof of denial: stopped before dispatch`
+      : `${row.destination}.${row.method} · ${row.resultStatus} · consent ${row.hitlStatus}`,
     iconId: iconForResult(row.resultStatus),
+    ...(blocked ? { contextValue: "nimbusEgressDenial" } : {}),
     command: {
       command: "nimbus.openEgressEntry",
       title: "Open Egress Entry",
@@ -134,9 +142,7 @@ export function buildProofDocument(
 ): { filename: string; content: string } {
   const rec = asRecord(result) ?? {};
   const rawRows = Array.isArray(rec["rows"]) ? rec["rows"] : [];
-  const rows = rawRows
-    .map(parseEgressRow)
-    .filter((r): r is EgressRow => r !== undefined);
+  const rows = rawRows.map(parseEgressRow).filter((r): r is EgressRow => r !== undefined);
   const completeness = asRecord(rec["completeness"]) ?? {};
   const verify = asRecord(rec["verify"]) ?? {};
   const receipt = asRecord(rec["receipt"]);

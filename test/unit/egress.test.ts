@@ -90,9 +90,20 @@ describe("egressRowToItem", () => {
     expect(item.command?.arguments?.[0]).toMatchObject({ id: 7 });
   });
 
-  test("blocked rows get the error icon", () => {
-    const item = egressRowToItem(parseEgressRow(row({ resultStatus: "blocked" })) as never, 5_000);
+  test("blocked rows render as first-class proof of denial", () => {
+    const item = egressRowToItem(parseEgressRow(row({ resultStatus: "blocked" })) as never, 65_000);
     expect(item.iconId).toBe("error");
+    expect(item.label).toBe("⛔ gmail.send");
+    expect(item.description).toBe("blocked · 1m ago");
+    expect(item.tooltip).toContain("proof of denial");
+    expect(item.contextValue).toBe("nimbusEgressDenial");
+  });
+
+  test("authorized rows keep the plain rendering", () => {
+    const item = egressRowToItem(parseEgressRow(row()) as never, 65_000);
+    expect(item.label).toBe("gmail.send");
+    expect(item.description).toBe("1m ago");
+    expect(item.contextValue).toBeUndefined();
   });
 });
 
