@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.6.2...v0.7.0) (2026-07-23)
+
+
+### Features
+
+* consume the Stage 1 client surface (client ^0.11.0) ([#45](https://github.com/nimbus-agent/nimbus-vscode/issues/45)) ([7717246](https://github.com/nimbus-agent/nimbus-vscode/commit/77172462975cf5febfbc742939748352fde1640f))
+* Restricted-Mode support, extensionKind, and native welcome views (Stage 2e-core) ([#46](https://github.com/nimbus-agent/nimbus-vscode/issues/46)) ([dd9731e](https://github.com/nimbus-agent/nimbus-vscode/commit/dd9731e5731d2df0c6297f3f28bad9b172b52ee5))
+
 ## [0.6.2](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.6.1...v0.6.2) (2026-07-22)
 
 
