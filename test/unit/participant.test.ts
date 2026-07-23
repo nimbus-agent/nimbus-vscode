@@ -74,6 +74,9 @@ function fakeClient(over: Partial<ParticipantClientLike> = {}): ParticipantClien
     metricsDora: async () => {
       throw new Error("metricsDora not faked");
     },
+    egressHead: async () => {
+      throw new Error("egressHead not faked");
+    },
     ...over,
   };
 }
@@ -398,5 +401,84 @@ describe("runParticipantTurn", () => {
     );
     expect(f.md.join(" ")).not.toMatch(/ran into a problem/);
     expect(result).toEqual({});
+  });
+});
+
+describe("egress delta footer", () => {
+  function headSeq(counts: number[]): () => Promise<{ head: string; count: number }> {
+    let i = 0;
+    return async () => {
+      const count = counts[Math.min(i, counts.length - 1)] ?? 0;
+      i += 1;
+      return { head: "h", count };
+    };
+  }
+
+  test("a free-form answer reports rows appended during the turn", async () => {
+    const f = fakeSink();
+    await runParticipantTurn(
+      req({ prompt: "q" }),
+      deps({ client: () => fakeClient({ egressHead: headSeq([5, 7]) }) }),
+      f.sink,
+      noCancel,
+    );
+    expect(f.md.join("")).toContain("2 rows appended");
+  });
+
+  test("a zero delta says nothing left the machine", async () => {
+    const f = fakeSink();
+    await runParticipantTurn(
+      req({ prompt: "q" }),
+      deps({ client: () => fakeClient({ egressHead: headSeq([5, 5]) }) }),
+      f.sink,
+      noCancel,
+    );
+    expect(f.md.join("")).toContain("nothing left this machine");
+  });
+
+  test("a failing egressHead suppresses the footer without breaking the answer", async () => {
+    const f = fakeSink();
+    await runParticipantTurn(
+      req({ prompt: "q" }),
+      deps({
+        client: () =>
+          fakeClient({
+            egressHead: async () => {
+              throw new Error("no ledger");
+            },
+          }),
+      }),
+      f.sink,
+      noCancel,
+    );
+    expect(f.md.join(" ")).toContain("hi"); // the answer still rendered
+    expect(f.md.join(" ")).not.toContain("Egress:");
+  });
+
+  test("ops commands get the footer too", async () => {
+    const f = fakeSink();
+    const agentsCatchup = vi.fn(async () => ({
+      agentVersion: 1 as const,
+      generatedAt: 1,
+      latencyMs: 1,
+      gaps: [],
+      kind: "catchup" as const,
+      query: { sinceMs: 86_400_000 },
+      selfPersonId: null,
+      involvement: {
+        ownedServices: [],
+        activeRepos: [],
+        incidentServices: [],
+        collaboratorPersonIds: [],
+      },
+      sections: [],
+    }));
+    await runParticipantTurn(
+      req({ prompt: "", command: "incident" }),
+      deps({ client: () => fakeClient({ agentsCatchup, egressHead: headSeq([1, 2]) }) }),
+      f.sink,
+      noCancel,
+    );
+    expect(f.md.join("")).toContain("1 row appended");
   });
 });

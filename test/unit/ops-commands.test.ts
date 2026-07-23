@@ -39,6 +39,9 @@ function client(over: Partial<ParticipantClientLike>): ParticipantClientLike {
     metricsDora: async () => {
       throw new Error("not faked");
     },
+    egressHead: async () => {
+      throw new Error("not faked");
+    },
     ...over,
   };
 }
