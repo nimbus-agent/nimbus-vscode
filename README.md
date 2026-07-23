@@ -59,6 +59,7 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/user-guide/install/> for
 | `nimbus.agents` | `[]` | Agents shown in the Agents sidebar view. |
 | `nimbus.quickAsk.presets` | `[]` | Quick Ask preset actions (empty = Explain/Fix/Review/Docstring). |
 | `nimbus.scm.skipSecretFiles` | `true` | Exclude likely-secret files (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `*.p12`, `*.pfx`) from diffs sent by Generate Commit Message / Review Changes. |
+| `nimbus.scm.egressProofTrailer` | `false` | Append a signed `Nimbus-Egress-Proof` trailer (last-24h window digest + Ed25519 signature) to drafted commit messages. |
 | `nimbus.egress.showStatusBarBadge` | `true` | Show the egress row-count badge (ledger-live ✓) in the status bar. |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |
 | `nimbus.logLevel` | `info` | Output-channel verbosity. |

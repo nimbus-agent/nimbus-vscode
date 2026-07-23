@@ -93,3 +93,15 @@ export function composeInputBoxValue(
   if (base.includes(drafted)) return base;
   return `${base}\n\n${drafted}`;
 }
+
+// The Nimbus-Egress-Proof git trailer: the signed receipt from
+// egress.proveWindow rendered on one line. The digest identifies the window;
+// sig/pubkey (Ed25519, base64) let anyone verify it against the exported proof
+// artifact without trusting this machine's word.
+export function buildEgressTrailer(receipt: {
+  digest: string;
+  sigB64: string;
+  pubkeyB64: string;
+}): string {
+  return `Nimbus-Egress-Proof: ${receipt.digest} sig=${receipt.sigB64} pubkey=${receipt.pubkeyB64}`;
+}

@@ -541,11 +541,17 @@ export function activateWithDeps(
     git: deps.git ?? createRealGitApi(log),
     client: () => {
       const client = nimbus();
-      return client === undefined ? undefined : { agentInvoke: (i, o) => client.agentInvoke(i, o) };
+      return client === undefined
+        ? undefined
+        : {
+            agentInvoke: (i, o) => client.agentInvoke(i, o),
+            egressProveWindow: (p) => client.egressProveWindow(p),
+          };
     },
     window: deps.window,
     agent: () => settings.askAgent(),
     skipSecretFiles: () => settings.scmSkipSecretFiles(),
+    egressProofTrailer: () => settings.scmEgressProofTrailer(),
     selectionOffsets,
     openReadonly: openReadonlyJson,
     openUntitled,
