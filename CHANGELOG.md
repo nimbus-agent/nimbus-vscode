@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.8.0...v0.9.0) (2026-07-23)
+
+
+### Features
+
+* egress receipts — delta footer, HTML proof, commit trailer, proof of denial (Stage 2c) ([#50](https://github.com/nimbus-agent/nimbus-vscode/issues/50)) ([7d6c715](https://github.com/nimbus-agent/nimbus-vscode/commit/7d6c715fb32da1606fe8a2e5324e990939edd3e7))
+
 ## [0.8.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.7.0...v0.8.0) (2026-07-23)
 
 
