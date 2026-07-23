@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { DEFAULT_QUICK_ASK_PRESETS, filePresetsFor, resolvePresets } from "../../src/quick-ask-presets.js";
+import {
+  DEFAULT_QUICK_ASK_PRESETS,
+  filePresetsFor,
+  resolvePresets,
+} from "../../src/quick-ask-presets.js";
 
 describe("resolvePresets", () => {
   test("empty array yields the built-in defaults", () => {
@@ -62,13 +66,18 @@ describe("filePresetsFor", () => {
       ["/w/.github/workflows/ci.yml", "yaml"],
     ] as const) {
       const presets = filePresetsFor(file, lang);
-      expect(presets.map((p) => p.label), file).toContain("Blast radius");
+      expect(
+        presets.map((p) => p.label),
+        file,
+      ).toContain("Blast radius");
     }
   });
 
   test("k8s yaml is recognized by path or by content hints, generic yaml is not", () => {
     expect(filePresetsFor("/w/k8s/deploy.yaml", "yaml").length).toBeGreaterThan(0);
-    expect(filePresetsFor("/w/values.yaml", "yaml", "kind: Deployment\napiVersion: apps/v1").length).toBeGreaterThan(0);
+    expect(
+      filePresetsFor("/w/values.yaml", "yaml", "kind: Deployment\napiVersion: apps/v1").length,
+    ).toBeGreaterThan(0);
     expect(filePresetsFor("/w/data.yaml", "yaml", "colors:\n - red")).toEqual([]);
   });
 

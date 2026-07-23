@@ -103,7 +103,10 @@ export async function runOpsCommand(
           return;
         }
         sink.markdown(
-          renderExperts(topic, await client.agentsExpert({ topicOrFile: topic, limit: EXPERT_LIMIT })),
+          renderExperts(
+            topic,
+            await client.agentsExpert({ topicOrFile: topic, limit: EXPERT_LIMIT }),
+          ),
         );
         return;
       }

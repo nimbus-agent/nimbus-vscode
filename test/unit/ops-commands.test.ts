@@ -70,7 +70,12 @@ describe("/blast", () => {
       ],
     }));
     const c = sinkCapture();
-    await runOpsCommand(client({ agentsImpact }), req({ command: "blast", prompt: "src/pay.ts" }), c.sink, noWarn);
+    await runOpsCommand(
+      client({ agentsImpact }),
+      req({ command: "blast", prompt: "src/pay.ts" }),
+      c.sink,
+      noWarn,
+    );
     expect(agentsImpact).toHaveBeenCalledWith({ fileOrPrUrl: "src/pay.ts" });
     expect(c.all()).toContain("billing-api");
     expect(c.all()).toContain("2 hop");
@@ -133,7 +138,12 @@ describe("/owns", () => {
       ],
     }));
     const c = sinkCapture();
-    await runOpsCommand(client({ agentsExpert }), req({ command: "owns", prompt: "billing" }), c.sink, noWarn);
+    await runOpsCommand(
+      client({ agentsExpert }),
+      req({ command: "owns", prompt: "billing" }),
+      c.sink,
+      noWarn,
+    );
     expect(agentsExpert).toHaveBeenCalledWith({ topicOrFile: "billing", limit: 5 });
     expect(c.all()).toContain("Dana K");
     expect(c.all()).toContain("high confidence");
@@ -223,12 +233,9 @@ describe("failure path", () => {
       throw new Error("agent timed out");
     });
     const c = sinkCapture();
-    await runOpsCommand(
-      client({ agentsImpact }),
-      req({ command: "blast", prompt: "x" }),
-      c.sink,
-      { warn: (m: string) => warnings.push(m) },
-    );
+    await runOpsCommand(client({ agentsImpact }), req({ command: "blast", prompt: "x" }), c.sink, {
+      warn: (m: string) => warnings.push(m),
+    });
     expect(c.all()).toContain("agent timed out");
     expect(warnings.length).toBe(1);
   });

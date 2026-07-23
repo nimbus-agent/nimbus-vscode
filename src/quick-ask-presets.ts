@@ -50,12 +50,14 @@ export function filePresetsFor(
   contentHead = "",
 ): QuickAskPreset[] {
   const base = fileName.replace(/\\/g, "/").toLowerCase();
-  const isTerraform = languageId === "terraform" || base.endsWith(".tf") || base.endsWith(".tfvars");
+  const isTerraform =
+    languageId === "terraform" || base.endsWith(".tf") || base.endsWith(".tfvars");
   const isDockerfile = languageId === "dockerfile" || /(^|\/)dockerfile[^/]*$/.test(base);
   const isWorkflow = /\.github\/workflows\/[^/]+\.ya?ml$/.test(base);
   const isK8sYaml =
     (languageId === "yaml" || base.endsWith(".yaml") || base.endsWith(".yml")) &&
-    (K8S_HINT_RE.test(contentHead) || /(^|\/)(k8s|kubernetes|helm|charts?|manifests?)\//.test(base));
+    (K8S_HINT_RE.test(contentHead) ||
+      /(^|\/)(k8s|kubernetes|helm|charts?|manifests?)\//.test(base));
   if (isTerraform || isDockerfile || isWorkflow || isK8sYaml) return [...OPS_PRESETS];
   return [];
 }
