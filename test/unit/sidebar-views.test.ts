@@ -60,14 +60,16 @@ describe("connectionPlaceholder", () => {
     }
   });
 
-  test("disconnected offers a reconnect command and surfaces the reason", () => {
+  test("disconnected renders an empty tree so the viewsWelcome content takes over", () => {
+    // Load-bearing: VS Code shows a view's viewsWelcome (the start/troubleshoot
+    // buttons, when "!nimbus.connected") only when the tree is EMPTY. A
+    // placeholder row here would permanently suppress it.
     const items = connectionPlaceholder({
       kind: "disconnected",
       socketPath: "/s",
       reason: "ECONNREFUSED",
     });
-    expect(items?.[0]?.command?.command).toBe("nimbus.reconnect");
-    expect(items?.[0]?.tooltip).toBe("ECONNREFUSED");
+    expect(items).toEqual([]);
   });
 
   test("permission-denied points at the logs", () => {
@@ -87,14 +89,14 @@ describe("createPlaceholderView", () => {
   });
 
   test("getTreeItem maps a row to a leaf TreeItem carrying its command", async () => {
-    const c = makeConnection({ kind: "disconnected", socketPath: "/s", reason: "down" });
+    const c = makeConnection({ kind: "permission-denied", socketPath: "/s" });
     const view = createPlaceholderView({ connection: c.connection, emptyLabel: "x" });
     const [row] = await view.getChildren();
     if (row === undefined) throw new Error("expected a placeholder row");
     const item = view.getTreeItem(row);
     expect(item.collapsibleState).toBe(0);
-    expect(item.label).toMatch(/reconnect/i);
-    expect(item.command?.command).toBe("nimbus.reconnect");
+    expect(item.label).toMatch(/permission denied/i);
+    expect(item.command?.command).toBe("nimbus.openLogs");
   });
 
   test("fires onDidChangeTreeData when the connection state changes", () => {

@@ -89,14 +89,11 @@ export function connectionPlaceholder(state: ConnectionState): SidebarItem[] | u
         },
       ];
     case "disconnected":
-      return [
-        {
-          label: "Not connected — click to reconnect",
-          tooltip: state.reason,
-          iconId: "debug-disconnect",
-          command: { command: "nimbus.reconnect", title: "Reconnect to Gateway" },
-        },
-      ];
+      // Empty (not a row): an empty tree is what lets VS Code render the
+      // viewsWelcome content for "!nimbus.connected", which carries the
+      // Start Gateway / Troubleshoot buttons. A placeholder row here would
+      // permanently suppress it.
+      return [];
   }
 }
 
