@@ -14,7 +14,7 @@ import { registerNimbusChatParticipant } from "./chat-participant/real-participa
 import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js";
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
-import { buildTroubleshooter } from "./connection/troubleshooter.js";
+import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
@@ -49,14 +49,15 @@ import { createEgressView } from "./sidebar/egress-view.js";
 import { buildAskPrompt, type IndexItem, parseIndexRow } from "./sidebar/index.js";
 import { createIndexView } from "./sidebar/index-view.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
-import { parseSessionRow, type SessionSummary } from "./sidebar/sessions.js";
+import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
+import { summarizeConnectorHealth } from "./status-bar/connector-health.js";
 import {
   createEgressStatusBarController,
   type EgressBadgeInputs,
 } from "./status-bar/egress-status-bar-item.js";
-import { createStatusBarController } from "./status-bar/status-bar-item.js";
+import { createStatusBarController, type StatusBarInputs } from "./status-bar/status-bar-item.js";
 import type {
   CommandsApi,
   DisposableLike,
@@ -66,12 +67,6 @@ import type {
   WorkspaceApi,
 } from "./vscode-shim.js";
 import { PROGRESS_LOCATION_NOTIFICATION } from "./vscode-shim.js";
-
-// Mirrors the Gateway's session.list query against the local session_memory
-// table (reachable through the public read-only querySql).
-const SESSIONS_SQL =
-  "SELECT session_id AS sessionId, MAX(created_at) AS lastWriteAt, COUNT(*) AS chunkCount " +
-  "FROM session_memory GROUP BY session_id ORDER BY lastWriteAt DESC LIMIT 200";
 
 // Newest-N indexed items pulled for the Index view. The Gateway returns them
 // already ordered; we cap to keep the tree responsive (cf. the search handler).
@@ -199,21 +194,52 @@ export function activateWithDeps(
     }
   };
 
-  let egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
-  ctx.subscriptions.push({ dispose: () => clearInterval(egressTimer) });
-  void pollEgressBadge();
-
   let pendingHitlCount = 0;
-  const renderStatusBar = (s: ConnectionState): void => {
-    statusBar.update({
-      connection: s,
-      profile: "",
-      degradedConnectorCount: 0,
-      degradedConnectorNames: [],
-      pendingHitlCount,
-      autoStartGateway: settings.autoStartGateway(),
-    });
+  let connectorHealth: { count: number; names: string[] } = { count: 0, names: [] };
+  let connectorPollSeq = 0;
+  const statusInputs = (s: ConnectionState): StatusBarInputs => ({
+    connection: s,
+    profile: "",
+    degradedConnectorCount: connectorHealth.count,
+    degradedConnectorNames: connectorHealth.names,
+    pendingHitlCount,
+    autoStartGateway: settings.autoStartGateway(),
+  });
+  // The status bar can be rendered from an externally supplied state (see
+  // fireConnectionState), so the async poll re-renders from the last state the
+  // bar actually showed — never from connection.current(), which may disagree.
+  let lastRenderedConnection: ConnectionState = connection.current();
+  const pollConnectorHealth = async (): Promise<void> => {
+    const mine = ++connectorPollSeq;
+    const client = nimbus();
+    if (lastRenderedConnection.kind !== "connected" || client === undefined) {
+      connectorHealth = { count: 0, names: [] };
+      return;
+    }
+    try {
+      const statuses = await client.connectorListStatus();
+      if (mine !== connectorPollSeq) return; // a newer poll superseded this one
+      connectorHealth = summarizeConnectorHealth(statuses);
+    } catch (e) {
+      if (mine !== connectorPollSeq) return;
+      log.warn(`connectorListStatus poll failed: ${errMsg(e)}`);
+      connectorHealth = { count: 0, names: [] };
+    }
+    statusBar.update(statusInputs(lastRenderedConnection));
+  };
+
+  const pollStatusBar = (): void => {
     void pollEgressBadge();
+    void pollConnectorHealth();
+  };
+  let egressTimer = setInterval(pollStatusBar, settings.statusBarPollMs());
+  ctx.subscriptions.push({ dispose: () => clearInterval(egressTimer) });
+  pollStatusBar();
+
+  const renderStatusBar = (s: ConnectionState): void => {
+    lastRenderedConnection = s;
+    statusBar.update(statusInputs(s));
+    pollStatusBar();
   };
 
   const chatPanelFactory = deps.chatPanelFactory?.({ log }) ?? createRealChatPanelFactory(log);
@@ -413,7 +439,7 @@ export function activateWithDeps(
     if (e.affectsConfiguration("nimbus.agents")) agentsView.refresh();
     if (e.affectsConfiguration("nimbus.statusBarPollMs")) {
       clearInterval(egressTimer);
-      egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
+      egressTimer = setInterval(pollStatusBar, settings.statusBarPollMs());
     }
   });
   ctx.subscriptions.push(cfgSub);
@@ -437,24 +463,15 @@ export function activateWithDeps(
     const client = nimbus();
     if (client === undefined) return [];
     try {
-      const result = await client.querySql(SESSIONS_SQL);
-      const sessions: SessionSummary[] = [];
-      for (const row of result.rows) {
-        const parsed = parseSessionRow(row);
-        if (parsed !== undefined) sessions.push(parsed);
-      }
+      const { sessions } = await client.sessionList();
       return sessions;
     } catch (e) {
-      // e.g. an older Gateway without the session_memory table. Log a trail,
-      // then rethrow so the view renders its "Failed to load sessions" row.
-      log.warn(`loadSessions querySql failed: ${errMsg(e)}`);
+      // e.g. an older Gateway without session.list. Log a trail, then rethrow
+      // so the view renders its "Failed to load sessions" row.
+      log.warn(`loadSessions sessionList failed: ${errMsg(e)}`);
       throw e;
     }
   };
-  // Session list comes from the Gateway's session_memory table via the public
-  // querySql (mirrors the Gateway's own session.list query). This schema
-  // coupling is isolated here so the view stays pure; swap for a typed
-  // client.listSessions() once the client exposes one.
   const sessionsView = createSessionsView({ connection, loadSessions });
   // Indexed items come from the Gateway via the public queryItems IPC. The
   // schema coupling (field names) is isolated here so the view stays pure; swap
@@ -826,9 +843,21 @@ export function activateWithDeps(
   });
 
   register("nimbus.troubleshootConnection", async () => {
-    const report = buildTroubleshooter(connection.current(), {
+    const state = connection.current();
+    let ping: PingOutcome | undefined;
+    const pingClient = nimbus();
+    if (state.kind === "connected" && pingClient !== undefined) {
+      try {
+        const p = await pingClient.gatewayPing();
+        ping = { ok: true, version: p.version, uptime: p.uptime };
+      } catch (e) {
+        ping = { ok: false, error: errMsg(e) };
+      }
+    }
+    const report = buildTroubleshooter(state, {
       autoStartGateway: settings.autoStartGateway(),
       platform: process.platform,
+      ...(ping !== undefined ? { ping } : {}),
     });
     const labels = report.actions.map((a) => a.label);
     const opts = { modal: true };

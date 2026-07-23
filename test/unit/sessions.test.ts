@@ -1,30 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { parseSessionRow, type SessionSummary, sessionToItem } from "../../src/sidebar/sessions.js";
-
-describe("parseSessionRow", () => {
-  test("parses a well-formed query row", () => {
-    expect(parseSessionRow({ sessionId: "abc", lastWriteAt: 42, chunkCount: 3 })).toEqual({
-      sessionId: "abc",
-      lastWriteAt: 42,
-      chunkCount: 3,
-    });
-  });
-
-  test("defaults a missing/invalid chunkCount to 0", () => {
-    expect(parseSessionRow({ sessionId: "abc", lastWriteAt: 1 })?.chunkCount).toBe(0);
-    expect(parseSessionRow({ sessionId: "abc", lastWriteAt: 1, chunkCount: "x" })?.chunkCount).toBe(
-      0,
-    );
-  });
-
-  test("rejects rows without a usable id or timestamp, and non-objects", () => {
-    expect(parseSessionRow({ lastWriteAt: 1 })).toBeUndefined();
-    expect(parseSessionRow({ sessionId: "", lastWriteAt: 1 })).toBeUndefined();
-    expect(parseSessionRow({ sessionId: "abc" })).toBeUndefined();
-    expect(parseSessionRow(null)).toBeUndefined();
-  });
-});
+import { type SessionSummary, sessionToItem } from "../../src/sidebar/sessions.js";
 
 describe("sessionToItem", () => {
   const summary: SessionSummary = {
