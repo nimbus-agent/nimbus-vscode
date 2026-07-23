@@ -2139,6 +2139,46 @@ describe("activateWithDeps", () => {
     expect(egressHead).toHaveBeenCalled();
   });
 
+  test("degraded connectors reach the status bar text", async () => {
+    const connectorListStatus = vi.fn(async () => [
+      {
+        serviceId: "slack",
+        status: "error" as const,
+        lastSyncAt: null,
+        nextSyncAt: null,
+        intervalMs: 60000,
+        itemCount: 0,
+        lastError: "401",
+        consecutiveFailures: 3,
+        depth: "summary" as const,
+        enabled: true,
+      },
+    ]);
+    const f = makeFixture({
+      openClient: makeFakeClient({ connectorListStatus } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await flush();
+    expect(connectorListStatus).toHaveBeenCalled();
+    expect(f.statusItem.text).toContain("1 degraded");
+    expect(f.statusItem.tooltip).toContain("slack");
+  });
+
+  test("a connector-health poll failure renders as zero degraded, not a crash", async () => {
+    const connectorListStatus = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ connectorListStatus } as unknown as Partial<ClientLike>),
+    });
+    expect(() => activateWithDeps(f.ctx, f.deps)).not.toThrow();
+    await waitForConnect();
+    await flush();
+    expect(connectorListStatus).toHaveBeenCalled();
+    expect(f.statusItem.text).not.toContain("degraded");
+  });
+
   test("nimbus.openWalkthrough opens the Get Started walkthrough", async () => {
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);

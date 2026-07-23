@@ -56,7 +56,8 @@ import {
   createEgressStatusBarController,
   type EgressBadgeInputs,
 } from "./status-bar/egress-status-bar-item.js";
-import { createStatusBarController } from "./status-bar/status-bar-item.js";
+import { summarizeConnectorHealth } from "./status-bar/connector-health.js";
+import { createStatusBarController, type StatusBarInputs } from "./status-bar/status-bar-item.js";
 import type {
   CommandsApi,
   DisposableLike,
@@ -193,21 +194,52 @@ export function activateWithDeps(
     }
   };
 
-  let egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
-  ctx.subscriptions.push({ dispose: () => clearInterval(egressTimer) });
-  void pollEgressBadge();
-
   let pendingHitlCount = 0;
-  const renderStatusBar = (s: ConnectionState): void => {
-    statusBar.update({
-      connection: s,
-      profile: "",
-      degradedConnectorCount: 0,
-      degradedConnectorNames: [],
-      pendingHitlCount,
-      autoStartGateway: settings.autoStartGateway(),
-    });
+  let connectorHealth: { count: number; names: string[] } = { count: 0, names: [] };
+  let connectorPollSeq = 0;
+  const statusInputs = (s: ConnectionState): StatusBarInputs => ({
+    connection: s,
+    profile: "",
+    degradedConnectorCount: connectorHealth.count,
+    degradedConnectorNames: connectorHealth.names,
+    pendingHitlCount,
+    autoStartGateway: settings.autoStartGateway(),
+  });
+  // The status bar can be rendered from an externally supplied state (see
+  // fireConnectionState), so the async poll re-renders from the last state the
+  // bar actually showed — never from connection.current(), which may disagree.
+  let lastRenderedConnection: ConnectionState = connection.current();
+  const pollConnectorHealth = async (): Promise<void> => {
+    const mine = ++connectorPollSeq;
+    const client = nimbus();
+    if (lastRenderedConnection.kind !== "connected" || client === undefined) {
+      connectorHealth = { count: 0, names: [] };
+      return;
+    }
+    try {
+      const statuses = await client.connectorListStatus();
+      if (mine !== connectorPollSeq) return; // a newer poll superseded this one
+      connectorHealth = summarizeConnectorHealth(statuses);
+    } catch (e) {
+      if (mine !== connectorPollSeq) return;
+      log.warn(`connectorListStatus poll failed: ${errMsg(e)}`);
+      connectorHealth = { count: 0, names: [] };
+    }
+    statusBar.update(statusInputs(lastRenderedConnection));
+  };
+
+  const pollStatusBar = (): void => {
     void pollEgressBadge();
+    void pollConnectorHealth();
+  };
+  let egressTimer = setInterval(pollStatusBar, settings.statusBarPollMs());
+  ctx.subscriptions.push({ dispose: () => clearInterval(egressTimer) });
+  pollStatusBar();
+
+  const renderStatusBar = (s: ConnectionState): void => {
+    lastRenderedConnection = s;
+    statusBar.update(statusInputs(s));
+    pollStatusBar();
   };
 
   const chatPanelFactory = deps.chatPanelFactory?.({ log }) ?? createRealChatPanelFactory(log);
@@ -407,7 +439,7 @@ export function activateWithDeps(
     if (e.affectsConfiguration("nimbus.agents")) agentsView.refresh();
     if (e.affectsConfiguration("nimbus.statusBarPollMs")) {
       clearInterval(egressTimer);
-      egressTimer = setInterval(() => void pollEgressBadge(), settings.statusBarPollMs());
+      egressTimer = setInterval(pollStatusBar, settings.statusBarPollMs());
     }
   });
   ctx.subscriptions.push(cfgSub);
