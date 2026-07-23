@@ -42,7 +42,7 @@ describe("createSessionsView", () => {
         return [];
       },
     });
-    expect((await view.getChildren())[0]?.label).toMatch(/reconnect/i);
+    expect(await view.getChildren()).toEqual([]); // empty tree → viewsWelcome renders instead
     expect(calls).toBe(0);
   });
 

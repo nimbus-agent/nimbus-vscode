@@ -9,6 +9,19 @@
   "engines": {
     "vscode": "^1.95.0"
   },
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In Restricted Mode the workspace-level socketPath and autoStartGateway settings are ignored (a workspace could otherwise redirect the IPC socket or spawn a process). Everything else works.",
+      "restrictedConfigurations": [
+        "nimbus.socketPath",
+        "nimbus.autoStartGateway"
+      ]
+    }
+  },
   "categories": [
     "AI",
     "Other"
@@ -257,6 +270,33 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "nimbus.auditView",
+        "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)\nLocal-first: your data never leaves this machine.",
+        "when": "!nimbus.connected"
+      },
+      {
+        "view": "nimbus.egressView",
+        "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)\nOnce connected, every outbound action appears here — the egress ledger is append-only and verifiable.",
+        "when": "!nimbus.connected"
+      },
+      {
+        "view": "nimbus.agentsView",
+        "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)",
+        "when": "!nimbus.connected"
+      },
+      {
+        "view": "nimbus.indexView",
+        "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)\nOnce connected, your newest indexed items (PRs, CI runs, issues, docs) appear here.",
+        "when": "!nimbus.connected"
+      },
+      {
+        "view": "nimbus.sessionsView",
+        "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)",
+        "when": "!nimbus.connected"
+      }
+    ],
     "menus": {
       "commandPalette": [
         {

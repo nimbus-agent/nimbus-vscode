@@ -52,7 +52,7 @@ describe("createAuditView", () => {
     const c = makeConnection({ kind: "disconnected", socketPath: "/s", reason: "down" });
     const view = createAuditView({ connection: c.connection, getClient: () => client });
     const rows = await view.getChildren();
-    expect(rows[0]?.label).toMatch(/reconnect/i);
+    expect(rows).toEqual([]); // empty tree → the viewsWelcome content renders instead
     expect(calls).toBe(0);
   });
 
