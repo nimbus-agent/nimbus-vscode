@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.7.0...v0.8.0) (2026-07-23)
+
+
+### Features
+
+* ops slash-command vocabulary + infra quick-ask presets (Stage 2b) ([#49](https://github.com/nimbus-agent/nimbus-vscode/issues/49)) ([475d24b](https://github.com/nimbus-agent/nimbus-vscode/commit/475d24b01e6ea0037c9d6745d53dcfe1da73b221))
+
 ## [0.7.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.6.2...v0.7.0) (2026-07-23)
 
 
