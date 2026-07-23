@@ -668,35 +668,35 @@ describe("activateWithDeps", () => {
     expect(() => cmd(f, command)()).not.toThrow();
   });
 
-  test("the registered sessions provider lists sessions via querySql", async () => {
-    const querySql = vi.fn(async () => ({
-      rows: [{ sessionId: "s1", lastWriteAt: 1, chunkCount: 2 }],
+  test("the registered sessions provider lists sessions via sessionList", async () => {
+    const sessionList = vi.fn(async () => ({
+      sessions: [{ sessionId: "s1", lastWriteAt: 1, chunkCount: 2 }],
     }));
     const f = makeFixture({
-      openClient: makeFakeClient({ querySql } as unknown as Partial<ClientLike>),
+      openClient: makeFakeClient({ sessionList } as unknown as Partial<ClientLike>),
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
     const provider = f.treeProviders.get("nimbus.sessionsView");
     if (provider === undefined) throw new Error("sessions provider not registered");
     const rows = await provider.getChildren(undefined);
-    expect(querySql).toHaveBeenCalled();
+    expect(sessionList).toHaveBeenCalled();
     expect(rows[0]).toMatchObject({ label: "Session s1" });
   });
 
-  test("the sessions provider shows an error row when querySql fails", async () => {
-    const querySql = vi.fn(async () => {
-      throw new Error("no such table: session_memory");
+  test("the sessions provider shows an error row when sessionList fails", async () => {
+    const sessionList = vi.fn(async () => {
+      throw new Error("Method not found: session.list");
     });
     const f = makeFixture({
-      openClient: makeFakeClient({ querySql } as unknown as Partial<ClientLike>),
+      openClient: makeFakeClient({ sessionList } as unknown as Partial<ClientLike>),
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
     const provider = f.treeProviders.get("nimbus.sessionsView");
     if (provider === undefined) throw new Error("sessions provider not registered");
     const rows = (await provider.getChildren(undefined)) as Array<{ label: string }>;
-    expect(querySql).toHaveBeenCalled();
+    expect(sessionList).toHaveBeenCalled();
     expect(rows[0]?.label).toMatch(/failed to load/i);
   });
 

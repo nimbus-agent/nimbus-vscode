@@ -49,7 +49,7 @@ import { createEgressView } from "./sidebar/egress-view.js";
 import { buildAskPrompt, type IndexItem, parseIndexRow } from "./sidebar/index.js";
 import { createIndexView } from "./sidebar/index-view.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
-import { parseSessionRow, type SessionSummary } from "./sidebar/sessions.js";
+import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
 import {
@@ -66,12 +66,6 @@ import type {
   WorkspaceApi,
 } from "./vscode-shim.js";
 import { PROGRESS_LOCATION_NOTIFICATION } from "./vscode-shim.js";
-
-// Mirrors the Gateway's session.list query against the local session_memory
-// table (reachable through the public read-only querySql).
-const SESSIONS_SQL =
-  "SELECT session_id AS sessionId, MAX(created_at) AS lastWriteAt, COUNT(*) AS chunkCount " +
-  "FROM session_memory GROUP BY session_id ORDER BY lastWriteAt DESC LIMIT 200";
 
 // Newest-N indexed items pulled for the Index view. The Gateway returns them
 // already ordered; we cap to keep the tree responsive (cf. the search handler).
@@ -437,24 +431,15 @@ export function activateWithDeps(
     const client = nimbus();
     if (client === undefined) return [];
     try {
-      const result = await client.querySql(SESSIONS_SQL);
-      const sessions: SessionSummary[] = [];
-      for (const row of result.rows) {
-        const parsed = parseSessionRow(row);
-        if (parsed !== undefined) sessions.push(parsed);
-      }
+      const { sessions } = await client.sessionList();
       return sessions;
     } catch (e) {
-      // e.g. an older Gateway without the session_memory table. Log a trail,
-      // then rethrow so the view renders its "Failed to load sessions" row.
-      log.warn(`loadSessions querySql failed: ${errMsg(e)}`);
+      // e.g. an older Gateway without session.list. Log a trail, then rethrow
+      // so the view renders its "Failed to load sessions" row.
+      log.warn(`loadSessions sessionList failed: ${errMsg(e)}`);
       throw e;
     }
   };
-  // Session list comes from the Gateway's session_memory table via the public
-  // querySql (mirrors the Gateway's own session.list query). This schema
-  // coupling is isolated here so the view stays pure; swap for a typed
-  // client.listSessions() once the client exposes one.
   const sessionsView = createSessionsView({ connection, loadSessions });
   // Indexed items come from the Gateway via the public queryItems IPC. The
   // schema coupling (field names) is isolated here so the view stays pure; swap
