@@ -2,6 +2,7 @@ import type { AskStreamHandle, AskStreamOptions, StreamEvent } from "@nimbus-dev
 import { errMsg } from "../logging.js";
 import { redactPath } from "../quick-ask.js";
 import { buildCitations } from "./citations.js";
+import { runOpsCommand } from "./ops-commands.js";
 import type {
   CancellationLike,
   ChatResponseSink,
@@ -140,9 +141,18 @@ export async function runParticipantTurn(
     return {};
   }
 
+  // Ops commands are structured brief/metric calls, not prompt rewrites — they
+  // route before the empty-prompt guard because a bare `/incident` is valid.
+  if (req.command !== undefined) {
+    await runOpsCommand(client, req, sink, deps.log);
+    return {};
+  }
+
   const prompt = buildParticipantPrompt(req);
   if (prompt.trim().length === 0) {
-    sink.markdown("Ask me a question, or run `/explain`, `/fix`, or `/test` on a selection.");
+    sink.markdown(
+      "Ask me a question, or try `/incident`, `/deploys <service>`, `/owns`, or `/blast`.",
+    );
     return {};
   }
 

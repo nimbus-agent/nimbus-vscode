@@ -29,7 +29,7 @@ import {
   redactPath,
   validateQuestion,
 } from "./quick-ask.js";
-import { type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
+import { filePresetsFor, type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
 import { createScmCommands } from "./scm/commands.js";
 import type { GitApiLike } from "./scm/git-types.js";
 import { createRealGitApi } from "./scm/real-git.js";
@@ -745,7 +745,16 @@ export function activateWithDeps(
       void deps.window.showErrorMessage("Nimbus: not connected to Gateway.");
       return;
     }
-    const presets = resolvePresets(settings.quickAskPresets());
+    // Infra files (terraform, k8s/helm YAML, Dockerfile, workflow YAML) get the
+    // ops presets prepended — the user's configured/default presets follow.
+    // Classification reads the DOCUMENT head, not the selection: a selected
+    // manifest subsection without apiVersion/kind must not suppress the presets.
+    const opsPresets = filePresetsFor(
+      editor.document.fileName,
+      editor.document.languageId,
+      editor.document.getText().slice(0, 2000),
+    );
+    const presets = [...opsPresets, ...resolvePresets(settings.quickAskPresets())];
     const items: QuickAskPick[] = [
       ...presets.map(
         (preset): QuickAskPick => ({

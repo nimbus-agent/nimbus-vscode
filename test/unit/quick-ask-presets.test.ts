@@ -1,6 +1,10 @@
 import { describe, expect, test } from "vitest";
 
-import { DEFAULT_QUICK_ASK_PRESETS, resolvePresets } from "../../src/quick-ask-presets.js";
+import {
+  DEFAULT_QUICK_ASK_PRESETS,
+  filePresetsFor,
+  resolvePresets,
+} from "../../src/quick-ask-presets.js";
 
 describe("resolvePresets", () => {
   test("empty array yields the built-in defaults", () => {
@@ -49,5 +53,46 @@ describe("resolvePresets", () => {
     expect(resolvePresets([{ label: "L", prompt: "P", description: 42 }])).toEqual([
       { label: "L", prompt: "P" },
     ]);
+  });
+});
+
+describe("filePresetsFor", () => {
+  test("terraform, dockerfile, and workflow files get the ops presets", () => {
+    for (const [file, lang] of [
+      ["/w/main.tf", "terraform"],
+      ["/w/prod.tfvars", "plaintext"],
+      ["/w/Dockerfile", "dockerfile"],
+      ["/w/Dockerfile.dev", "plaintext"],
+      ["/w/.github/workflows/ci.yml", "yaml"],
+    ] as const) {
+      const presets = filePresetsFor(file, lang);
+      expect(
+        presets.map((p) => p.label),
+        file,
+      ).toContain("Blast radius");
+    }
+  });
+
+  test("k8s yaml is recognized by path or by content hints, generic yaml is not", () => {
+    expect(filePresetsFor("/w/k8s/deploy.yaml", "yaml").length).toBeGreaterThan(0);
+    expect(
+      filePresetsFor("/w/values.yaml", "yaml", "kind: Deployment\napiVersion: apps/v1").length,
+    ).toBeGreaterThan(0);
+    expect(filePresetsFor("/w/data.yaml", "yaml", "colors:\n - red")).toEqual([]);
+  });
+
+  test("windows-style paths are normalized", () => {
+    const winPath = String.raw`C:\w\.github\workflows\ci.yaml`;
+    expect(filePresetsFor(winPath, "yaml").length).toBeGreaterThan(0);
+  });
+
+  test("ordinary source files get no ops presets", () => {
+    expect(filePresetsFor("/w/app.ts", "typescript")).toEqual([]);
+  });
+});
+
+describe("DEFAULT_QUICK_ASK_PRESETS", () => {
+  test("carries the retired /test command as a Write tests preset", () => {
+    expect(DEFAULT_QUICK_ASK_PRESETS.map((p) => p.label)).toContain("Write tests");
   });
 });

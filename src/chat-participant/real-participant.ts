@@ -16,7 +16,7 @@ import { readPriorSessionId, toResultMetadata } from "./session.js";
 const PARTICIPANT_ID = "nimbus-agent.nimbus";
 
 function normalizeCommand(c: string | undefined): ParticipantCommand | undefined {
-  return c === "explain" || c === "fix" || c === "test" ? c : undefined;
+  return c === "incident" || c === "deploys" || c === "owns" || c === "blast" ? c : undefined;
 }
 
 function readActiveSelection(): AttachedFile | undefined {

@@ -223,16 +223,20 @@
         "isSticky": true,
         "commands": [
           {
-            "name": "explain",
-            "description": "Explain the selected code"
+            "name": "incident",
+            "description": "What changed in the last 24h — optionally scoped to a service"
           },
           {
-            "name": "fix",
-            "description": "Suggest a fix for the selected code"
+            "name": "deploys",
+            "description": "DORA metrics for a service: /deploys <service> [window, e.g. 7d or 24h]"
           },
           {
-            "name": "test",
-            "description": "Generate tests for the selected code"
+            "name": "owns",
+            "description": "Who owns this file, service, or topic"
+          },
+          {
+            "name": "blast",
+            "description": "Blast radius of changing the current file or a PR"
           }
         ]
       }

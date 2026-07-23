@@ -23,7 +23,44 @@ export const DEFAULT_QUICK_ASK_PRESETS: readonly QuickAskPreset[] = Object.freez
     prompt: "Review this code for correctness, clarity, and potential improvements.",
   },
   { label: "Docstring", prompt: "Write a docstring / doc comment for this code." },
+  {
+    label: "Write tests",
+    prompt:
+      "Write focused unit tests for this code, following the project's existing test framework and conventions.",
+  },
 ]);
+
+// Ops presets keyed to infra file types (Stage 2b): shown ABOVE the generic
+// presets when the active file is infrastructure — the questions an on-call /
+// platform engineer actually asks of such a file.
+const OPS_PRESETS: readonly QuickAskPreset[] = Object.freeze([
+  { label: "Blast radius", prompt: "What breaks if I apply this change?" },
+  { label: "Ownership", prompt: "Who owns this service or resource?" },
+  { label: "Recent changes", prompt: "What changed here recently, and why?" },
+]);
+
+const K8S_HINT_RE = /\b(apiVersion|kind|helm|chart)\b/i;
+
+// Return the ops presets when (fileName, languageId) identifies an infra file:
+// Terraform, Kubernetes/Helm YAML, Dockerfiles, GitHub workflow definitions.
+// `contentHead` (the file's first chunk) disambiguates generic YAML.
+export function filePresetsFor(
+  fileName: string,
+  languageId: string,
+  contentHead = "",
+): QuickAskPreset[] {
+  const base = fileName.replace(/\\/g, "/").toLowerCase();
+  const isTerraform =
+    languageId === "terraform" || base.endsWith(".tf") || base.endsWith(".tfvars");
+  const isDockerfile = languageId === "dockerfile" || /(^|\/)dockerfile[^/]*$/.test(base);
+  const isWorkflow = /\.github\/workflows\/[^/]+\.ya?ml$/.test(base);
+  const isK8sYaml =
+    (languageId === "yaml" || base.endsWith(".yaml") || base.endsWith(".yml")) &&
+    (K8S_HINT_RE.test(contentHead) ||
+      /(^|\/)(k8s|kubernetes|helm|charts?|manifests?)\//.test(base));
+  if (isTerraform || isDockerfile || isWorkflow || isK8sYaml) return [...OPS_PRESETS];
+  return [];
+}
 
 // Coerce the untrusted nimbus.quickAsk.presets setting into presets. Non-array
 // input, or a list with no valid entries, yields the built-in defaults (Replace

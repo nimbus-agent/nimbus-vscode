@@ -62,6 +62,18 @@ function fakeClient(over: Partial<ParticipantClientLike> = {}): ParticipantClien
   return {
     askStream: () => streamOf([{ type: "done", reply: "hi", sessionId: "sess" }]),
     searchRanked: async () => [],
+    agentsExpert: async () => {
+      throw new Error("agentsExpert not faked");
+    },
+    agentsImpact: async () => {
+      throw new Error("agentsImpact not faked");
+    },
+    agentsCatchup: async () => {
+      throw new Error("agentsCatchup not faked");
+    },
+    metricsDora: async () => {
+      throw new Error("metricsDora not faked");
+    },
     ...over,
   };
 }
@@ -281,7 +293,36 @@ describe("runParticipantTurn", () => {
       noCancel,
     );
     expect(askStream).not.toHaveBeenCalled();
-    expect(f.md.join(" ")).toMatch(/ask me|\/explain/i);
+    expect(f.md.join(" ")).toMatch(/ask me|\/incident/i);
+  });
+
+  test("a slash command routes to the ops handler, never askStream — bare /incident included", async () => {
+    const f = fakeSink();
+    const askStream = vi.fn();
+    const agentsCatchup = vi.fn(async () => ({
+      agentVersion: 1 as const,
+      generatedAt: 1,
+      latencyMs: 1,
+      gaps: [],
+      kind: "catchup" as const,
+      query: { sinceMs: 86_400_000 },
+      selfPersonId: null,
+      involvement: {
+        ownedServices: [],
+        activeRepos: [],
+        incidentServices: [],
+        collaboratorPersonIds: [],
+      },
+      sections: [],
+    }));
+    await runParticipantTurn(
+      req({ prompt: "", command: "incident" }),
+      deps({ client: () => fakeClient({ askStream, agentsCatchup }) }),
+      f.sink,
+      noCancel,
+    );
+    expect(agentsCatchup).toHaveBeenCalled();
+    expect(askStream).not.toHaveBeenCalled();
   });
 
   test("a done event with only a reply (no tokens) renders the reply, not the no-LLM notice", async () => {
