@@ -52,8 +52,7 @@ export async function runNimbusSearchTool(deps: LmToolsDeps, input: unknown): Pr
       .filter((r): r is NonNullable<typeof r> => r !== undefined);
     if (results.length === 0) return `No matches in the local index for "${query}".`;
     const lines = results.map((r) => {
-      const snippet =
-        r.snippet !== undefined ? `: ${normalizeInline(r.snippet, SNIPPET_MAX)}` : "";
+      const snippet = r.snippet !== undefined ? `: ${normalizeInline(r.snippet, SNIPPET_MAX)}` : "";
       return `- ${r.name} (${r.service})${snippet}`;
     });
     return `Local index matches for "${query}":\n${lines.join("\n")}`;

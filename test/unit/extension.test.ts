@@ -6,9 +6,9 @@ import { commands, env, workspace as vscodeWorkspace } from "vscode";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
-import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
 import { activateWithDeps, createSourceOpener } from "../../src/extension.js";
+import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
 import type {
   CommandsApi,
