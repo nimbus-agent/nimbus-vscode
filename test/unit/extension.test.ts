@@ -6,6 +6,7 @@ import { commands, env, workspace as vscodeWorkspace } from "vscode";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
+import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
 import { activateWithDeps, createSourceOpener } from "../../src/extension.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
@@ -2459,6 +2460,22 @@ describe("activateWithDeps", () => {
     expect(() => captured?.registerStreamWithHitl("stream-x")).not.toThrow();
     expect(() => captured?.unregisterStreamWithHitl("stream-x")).not.toThrow();
     expect(captured?.agent()).toBe("researcher");
+  });
+
+  test("LM tools are registered once with a lazy client and the configured agent", async () => {
+    let captured: LmToolsDeps | undefined;
+    let registrations = 0;
+    const f = makeFixture({ cfg: { askAgent: "ops" } });
+    f.deps.registerLmTools = ({ deps }) => {
+      registrations += 1;
+      captured = deps;
+      return { dispose: () => undefined };
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(registrations).toBe(1);
+    expect(captured?.client()).toBeDefined();
+    expect(captured?.askAgent()).toBe("ops");
   });
 });
 

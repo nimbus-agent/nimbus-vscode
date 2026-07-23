@@ -95,6 +95,15 @@ export const chat = {
     dispose: () => undefined,
   }),
 };
+export const lm = {
+  registerTool: (_name: string, _tool: unknown) => ({ dispose: () => undefined }),
+};
+export class LanguageModelTextPart {
+  constructor(public value: string) {}
+}
+export class LanguageModelToolResult {
+  constructor(public content: unknown[]) {}
+}
 export const env = {
   openExternal: async () => true,
   isTelemetryEnabled: false,

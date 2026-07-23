@@ -18,6 +18,8 @@ import { buildTroubleshooter } from "./connection/troubleshooter.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
+import type { LmToolsDeps } from "./lm-tools/lm-tools.js";
+import { registerNimbusLmTools } from "./lm-tools/real-lm-tools.js";
 import { createLogger, errMsg, type Logger } from "./logging.js";
 import {
   buildQuickAskPrompt,
@@ -95,6 +97,7 @@ export interface ActivateDeps {
   discoverSocket?: typeof discoverSocketPath;
   chatPanelFactory?: (deps: { log: Logger }) => ChatPanelFactory;
   registerChatParticipant?: (opts: { deps: ParticipantDeps; log: Logger }) => { dispose(): void };
+  registerLmTools?: (opts: { deps: LmToolsDeps }) => DisposableLike;
   autoStarter?: AutoStarter;
   openReadonlyJson?: (title: string, content: string) => Promise<void>;
   openSource?: (item: { url?: string }) => Promise<void>;
@@ -1000,6 +1003,13 @@ export function activateWithDeps(
   };
   const registerParticipant = deps.registerChatParticipant ?? registerNimbusChatParticipant;
   ctx.subscriptions.push(registerParticipant({ deps: participantDeps, log }));
+
+  const registerLm = deps.registerLmTools ?? registerNimbusLmTools;
+  ctx.subscriptions.push(
+    registerLm({
+      deps: { client: () => nimbus(), askAgent: () => settings.askAgent(), log },
+    }),
+  );
 
   register("nimbus.showPendingHitl", () => {
     if (hitlRouter.snapshot().length === 0) return;
