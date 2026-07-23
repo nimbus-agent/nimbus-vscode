@@ -100,14 +100,85 @@ export function egressWindowPresets(now: number): EgressWindowPreset[] {
   ];
 }
 
-// The proof artifact: the egressProveWindow result verbatim, named with an
-// epoch-ms stamp (deterministic, filesystem-safe, sortable).
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function proofRowsTable(rows: EgressRow[]): string {
+  if (rows.length === 0) return "<p>No rows in this window.</p>";
+  const body = rows
+    .map(
+      (r) =>
+        `<tr><td>${escapeHtml(new Date(r.timestamp).toISOString())}</td>` +
+        `<td>${escapeHtml(`${r.destination}.${r.method}`)}</td>` +
+        `<td>${escapeHtml(r.resultStatus)}</td>` +
+        `<td>${escapeHtml(r.hitlStatus)}</td></tr>`,
+    )
+    .join("\n");
+  return `<table><thead><tr><th>Time (UTC)</th><th>Action</th><th>Result</th><th>Consent</th></tr></thead><tbody>${body}</tbody></table>`;
+}
+
+// The proof artifact: a SELF-CONTAINED HTML report (inline CSS, no external
+// requests) presenting the egressProveWindow result, with the raw RPC JSON
+// embedded verbatim for machine verification. In-file BLAKE3/Ed25519
+// verification is deliberately out of scope — the artifact points at
+// `nimbus egress verify` / `nimbus prove` instead. Named with an epoch-ms
+// stamp (deterministic, filesystem-safe, sortable).
 export function buildProofDocument(
   result: unknown,
   now: number,
 ): { filename: string; content: string } {
-  return {
-    filename: `egress-proof-${now}.json`,
-    content: JSON.stringify(result, null, 2),
-  };
+  const rec = asRecord(result) ?? {};
+  const rawRows = Array.isArray(rec["rows"]) ? rec["rows"] : [];
+  const rows = rawRows
+    .map(parseEgressRow)
+    .filter((r): r is EgressRow => r !== undefined);
+  const completeness = asRecord(rec["completeness"]) ?? {};
+  const verify = asRecord(rec["verify"]) ?? {};
+  const receipt = asRecord(rec["receipt"]);
+  const tier = typeof completeness["tier"] === "string" ? completeness["tier"] : "unknown";
+  const verifyOk = verify["ok"] === true;
+  const verifiedRows = typeof verify["verifiedRows"] === "number" ? verify["verifiedRows"] : 0;
+  // `</script>`-safe: escape `<` inside the JSON payload; JSON.parse restores it.
+  const embedded = JSON.stringify(result, null, 2).replace(/</g, "\\u003c");
+  const receiptBlock =
+    receipt === undefined
+      ? "<p>No signed receipt attached (no signing key configured).</p>"
+      : `<dl><dt>Digest</dt><dd><code>${escapeHtml(String(receipt["digest"] ?? ""))}</code></dd>` +
+        `<dt>Signature (Ed25519, base64)</dt><dd><code>${escapeHtml(String(receipt["sigB64"] ?? ""))}</code></dd>` +
+        `<dt>Public key (base64)</dt><dd><code>${escapeHtml(String(receipt["pubkeyB64"] ?? ""))}</code></dd></dl>`;
+  const verifyBadge = verifyOk
+    ? `<p class="ok">Whole-ledger chain verify: OK (${verifiedRows} rows)</p>`
+    : `<p class="bad">Whole-ledger chain verify: FAILED — this window claim is NOT sound</p>`;
+  const content = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Nimbus egress proof</title>
+<style>
+body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 60rem; color: #1a1a1a; }
+table { border-collapse: collapse; width: 100%; } th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; font-size: 0.9rem; }
+.ok { color: #116329; font-weight: 600; } .bad { color: #a40e26; font-weight: 700; }
+code { background: #f2f2f2; padding: 1px 4px; word-break: break-all; }
+</style>
+</head>
+<body>
+<h1>Nimbus egress proof</h1>
+<p>Completeness tier: <strong>${escapeHtml(tier)}</strong> — every gateway-authorized outbound action in the window, recorded before dispatch. Generated ${escapeHtml(new Date(now).toISOString())}.</p>
+${verifyBadge}
+<h2>Rows in window (${rows.length})</h2>
+${proofRowsTable(rows)}
+<h2>Signed receipt</h2>
+${receiptBlock}
+<h2>How to verify</h2>
+<p>On any machine with the ledger: <code>nimbus egress verify</code> re-walks the BLAKE3 hash chain; <code>nimbus prove</code> re-derives this window. The machine-readable proof below is byte-equivalent to the gateway's <code>egress.proveWindow</code> response.</p>
+<script type="application/json" id="nimbus-egress-proof">${embedded}</script>
+</body>
+</html>
+`;
+  return { filename: `egress-proof-${now}.html`, content };
 }
