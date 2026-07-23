@@ -744,10 +744,12 @@ export function activateWithDeps(
     }
     // Infra files (terraform, k8s/helm YAML, Dockerfile, workflow YAML) get the
     // ops presets prepended — the user's configured/default presets follow.
+    // Classification reads the DOCUMENT head, not the selection: a selected
+    // manifest subsection without apiVersion/kind must not suppress the presets.
     const opsPresets = filePresetsFor(
       editor.document.fileName,
       editor.document.languageId,
-      rawContext.slice(0, 2000),
+      editor.document.getText().slice(0, 2000),
     );
     const presets = [...opsPresets, ...resolvePresets(settings.quickAskPresets())];
     const items: QuickAskPick[] = [

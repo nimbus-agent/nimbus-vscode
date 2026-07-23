@@ -228,7 +228,7 @@
           },
           {
             "name": "deploys",
-            "description": "DORA metrics for a service: /deploys <service> [7d|24h]"
+            "description": "DORA metrics for a service: /deploys <service> [window, e.g. 7d or 24h]"
           },
           {
             "name": "owns",

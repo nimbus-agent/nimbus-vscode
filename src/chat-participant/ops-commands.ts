@@ -121,7 +121,7 @@ export async function runOpsCommand(
       case "deploys": {
         const [service, since] = arg.split(/\s+/).filter((s) => s.length > 0);
         if (service === undefined) {
-          sink.markdown("Usage: `/deploys <service> [7d|24h]` (window defaults to 7d).");
+          sink.markdown("Usage: `/deploys <service> [window]` — window is a duration like 7d or 24h (default 7d).");
           return;
         }
         const window = since !== undefined && SINCE_RE.test(since) ? since : "7d";
