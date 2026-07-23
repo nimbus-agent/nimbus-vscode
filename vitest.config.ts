@@ -18,6 +18,7 @@ export default defineConfig({
         "src/chat/real-chat-panel.ts",
         "src/chat-participant/real-participant.ts",
         "src/connection/ping-socket.ts",
+        "src/lm-tools/real-lm-tools.ts",
         "src/scm/real-git.ts",
       ],
       // No hard thresholds here: coverage quality is enforced by SonarCloud's
