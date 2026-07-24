@@ -49,7 +49,7 @@ export function filePresetsFor(
   languageId: string,
   contentHead = "",
 ): QuickAskPreset[] {
-  const base = fileName.replace(/\\/g, "/").toLowerCase();
+  const base = fileName.replaceAll("\\", "/").toLowerCase();
   const isTerraform =
     languageId === "terraform" || base.endsWith(".tf") || base.endsWith(".tfvars");
   const isDockerfile = languageId === "dockerfile" || /(^|\/)dockerfile[^/]*$/.test(base);

@@ -13,7 +13,7 @@ import type {
 const INCIDENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const EXPERT_LIMIT = 5;
 const SECTION_ITEM_LIMIT = 5;
-const SINCE_RE = /^\d+(d|h)$/;
+const SINCE_RE = /^\d+[dh]$/;
 
 type Gapped = { gaps: Array<{ detail: string }> };
 
@@ -74,6 +74,68 @@ function renderDora(result: DoraMetricsResult): string {
   return `DORA metrics for \`${result.service}\`:\n${lines.join("\n")}`;
 }
 
+async function handleBlast(
+  client: ParticipantClientLike,
+  arg: string,
+  req: ParticipantRequest,
+  sink: ChatResponseSink,
+): Promise<void> {
+  const target = arg.length > 0 ? arg : req.selection?.path;
+  if (target === undefined || target.length === 0) {
+    sink.markdown(
+      "Usage: `/blast <file-or-PR-url>` — or run it with a file open to analyze that file.",
+    );
+    return;
+  }
+  sink.markdown(renderImpact(target, await client.agentsImpact({ fileOrPrUrl: target })));
+}
+
+async function handleOwns(
+  client: ParticipantClientLike,
+  arg: string,
+  req: ParticipantRequest,
+  sink: ChatResponseSink,
+): Promise<void> {
+  const topic = arg.length > 0 ? arg : req.selection?.path;
+  if (topic === undefined || topic.length === 0) {
+    sink.markdown(
+      "Usage: `/owns <topic, service, or file>` — or run it with a file open to ask about that file.",
+    );
+    return;
+  }
+  sink.markdown(
+    renderExperts(topic, await client.agentsExpert({ topicOrFile: topic, limit: EXPERT_LIMIT })),
+  );
+}
+
+async function handleIncident(
+  client: ParticipantClientLike,
+  arg: string,
+  sink: ChatResponseSink,
+): Promise<void> {
+  const brief = await client.agentsCatchup({
+    sinceMs: INCIDENT_WINDOW_MS,
+    ...(arg.length > 0 ? { service: arg } : {}),
+  });
+  sink.markdown(renderCatchup(brief));
+}
+
+async function handleDeploys(
+  client: ParticipantClientLike,
+  arg: string,
+  sink: ChatResponseSink,
+): Promise<void> {
+  const [service, since] = arg.split(/\s+/).filter((s) => s.length > 0);
+  if (service === undefined) {
+    sink.markdown(
+      "Usage: `/deploys <service> [window]` — window is a duration like 7d or 24h (default 7d).",
+    );
+    return;
+  }
+  const window = since !== undefined && SINCE_RE.test(since) ? since : "7d";
+  sink.markdown(renderDora(await client.metricsDora({ service, since: window })));
+}
+
 export async function runOpsCommand(
   client: ParticipantClientLike,
   req: ParticipantRequest,
@@ -83,53 +145,14 @@ export async function runOpsCommand(
   const arg = req.prompt.trim();
   try {
     switch (req.command) {
-      case "blast": {
-        const target = arg.length > 0 ? arg : req.selection?.path;
-        if (target === undefined || target.length === 0) {
-          sink.markdown(
-            "Usage: `/blast <file-or-PR-url>` — or run it with a file open to analyze that file.",
-          );
-          return;
-        }
-        sink.markdown(renderImpact(target, await client.agentsImpact({ fileOrPrUrl: target })));
-        return;
-      }
-      case "owns": {
-        const topic = arg.length > 0 ? arg : req.selection?.path;
-        if (topic === undefined || topic.length === 0) {
-          sink.markdown(
-            "Usage: `/owns <topic, service, or file>` — or run it with a file open to ask about that file.",
-          );
-          return;
-        }
-        sink.markdown(
-          renderExperts(
-            topic,
-            await client.agentsExpert({ topicOrFile: topic, limit: EXPERT_LIMIT }),
-          ),
-        );
-        return;
-      }
-      case "incident": {
-        const brief = await client.agentsCatchup({
-          sinceMs: INCIDENT_WINDOW_MS,
-          ...(arg.length > 0 ? { service: arg } : {}),
-        });
-        sink.markdown(renderCatchup(brief));
-        return;
-      }
-      case "deploys": {
-        const [service, since] = arg.split(/\s+/).filter((s) => s.length > 0);
-        if (service === undefined) {
-          sink.markdown(
-            "Usage: `/deploys <service> [window]` — window is a duration like 7d or 24h (default 7d).",
-          );
-          return;
-        }
-        const window = since !== undefined && SINCE_RE.test(since) ? since : "7d";
-        sink.markdown(renderDora(await client.metricsDora({ service, since: window })));
-        return;
-      }
+      case "blast":
+        return await handleBlast(client, arg, req, sink);
+      case "owns":
+        return await handleOwns(client, arg, req, sink);
+      case "incident":
+        return await handleIncident(client, arg, sink);
+      case "deploys":
+        return await handleDeploys(client, arg, sink);
       default:
         return;
     }

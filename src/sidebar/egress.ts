@@ -110,22 +110,24 @@ export function egressWindowPresets(now: number): EgressWindowPreset[] {
 
 function escapeHtml(s: string): string {
   return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
 }
 
 function proofRowsTable(rows: EgressRow[]): string {
   if (rows.length === 0) return "<p>No rows in this window.</p>";
   const body = rows
-    .map(
-      (r) =>
+    .map((r) => {
+      const action = `${r.destination}.${r.method}`;
+      return (
         `<tr><td>${escapeHtml(new Date(r.timestamp).toISOString())}</td>` +
-        `<td>${escapeHtml(`${r.destination}.${r.method}`)}</td>` +
+        `<td>${escapeHtml(action)}</td>` +
         `<td>${escapeHtml(r.resultStatus)}</td>` +
-        `<td>${escapeHtml(r.hitlStatus)}</td></tr>`,
-    )
+        `<td>${escapeHtml(r.hitlStatus)}</td></tr>`
+      );
+    })
     .join("\n");
   return `<table><thead><tr><th>Time (UTC)</th><th>Action</th><th>Result</th><th>Consent</th></tr></thead><tbody>${body}</tbody></table>`;
 }
@@ -150,13 +152,13 @@ export function buildProofDocument(
   const verifyOk = verify["ok"] === true;
   const verifiedRows = typeof verify["verifiedRows"] === "number" ? verify["verifiedRows"] : 0;
   // `</script>`-safe: escape `<` inside the JSON payload; JSON.parse restores it.
-  const embedded = JSON.stringify(result, null, 2).replace(/</g, "\\u003c");
+  const embedded = JSON.stringify(result, null, 2).replaceAll("<", String.raw`\u003c`);
   const receiptBlock =
     receipt === undefined
       ? "<p>No signed receipt attached (no signing key configured).</p>"
-      : `<dl><dt>Digest</dt><dd><code>${escapeHtml(String(receipt["digest"] ?? ""))}</code></dd>` +
-        `<dt>Signature (Ed25519, base64)</dt><dd><code>${escapeHtml(String(receipt["sigB64"] ?? ""))}</code></dd>` +
-        `<dt>Public key (base64)</dt><dd><code>${escapeHtml(String(receipt["pubkeyB64"] ?? ""))}</code></dd></dl>`;
+      : `<dl><dt>Digest</dt><dd><code>${escapeHtml(str(receipt["digest"], ""))}</code></dd>` +
+        `<dt>Signature (Ed25519, base64)</dt><dd><code>${escapeHtml(str(receipt["sigB64"], ""))}</code></dd>` +
+        `<dt>Public key (base64)</dt><dd><code>${escapeHtml(str(receipt["pubkeyB64"], ""))}</code></dd></dl>`;
   const verifyBadge = verifyOk
     ? `<p class="ok">Whole-ledger chain verify: OK (${verifiedRows} rows)</p>`
     : `<p class="bad">Whole-ledger chain verify: FAILED — this window claim is NOT sound</p>`;

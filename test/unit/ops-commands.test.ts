@@ -240,6 +240,6 @@ describe("failure path", () => {
       warn: (m: string) => warnings.push(m),
     });
     expect(c.all()).toContain("agent timed out");
-    expect(warnings.length).toBe(1);
+    expect(warnings).toHaveLength(1);
   });
 });

@@ -84,7 +84,7 @@ describe("runNimbusSearchTool", () => {
     });
     const out = await runNimbusSearchTool(deps, { query: "x" });
     expect(out).toContain("Nimbus lookup failed: boom");
-    expect(deps.warnings.length).toBe(1);
+    expect(deps.warnings).toHaveLength(1);
   });
 });
 
@@ -130,6 +130,6 @@ describe("runNimbusAskTool", () => {
     });
     const out = await runNimbusAskTool(deps, { question: "q" });
     expect(out).toContain("Nimbus lookup failed: nope");
-    expect(deps.warnings.length).toBe(1);
+    expect(deps.warnings).toHaveLength(1);
   });
 });
