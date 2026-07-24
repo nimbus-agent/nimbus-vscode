@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.9.0...v0.9.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* **sonar:** clear 17 code smells across egress, participant, ops-commands, presets ([#53](https://github.com/nimbus-agent/nimbus-vscode/issues/53)) ([43deff7](https://github.com/nimbus-agent/nimbus-vscode/commit/43deff7c779620109ad503afa24476aac96df879))
+
 ## [0.9.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.8.0...v0.9.0) (2026-07-23)
 
 
