@@ -1,5 +1,13 @@
 # Nimbus VS Code — Roadmap
 
+> **The cross-surface product roadmap lives in the gateway repo:
+> [Nimbus Ecosystem Roadmap](https://github.com/nimbus-agent/Nimbus/blob/main/docs/ecosystem-roadmap.md)**
+> — it owns the client-surfaces / delivery plan across all Nimbus clients. This
+> file is `nimbus-vscode`'s local slice: the VS Code / Open VSX extension, which
+> consumes the published `@nimbus-dev/client` (see
+> [Releases](https://github.com/nimbus-agent/nimbus-vscode/releases) for the
+> current version). The phased plan below is this surface's own detail.
+
 A living, phased plan for where the extension is going. It is intentionally
 ordered by **SDK-readiness**, not just by value: the earlier phases ride
 capabilities that already exist in a published `@nimbus-dev/client`; the final
