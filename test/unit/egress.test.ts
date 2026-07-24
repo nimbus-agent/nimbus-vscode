@@ -184,4 +184,12 @@ describe("buildProofDocument", () => {
     const doc = buildProofDocument(bad, 1);
     expect(doc.content).toContain("FAILED");
   });
+
+  test("no receipt and non-array rows render the empty-state fallbacks", () => {
+    // rows is not an array (drops to []), and no receipt key is present.
+    const doc = buildProofDocument({ completeness: { tier: "unknown" }, rows: null }, 1);
+    expect(doc.content).toContain("No rows in this window.");
+    expect(doc.content).toContain("No signed receipt attached");
+    expect(doc.content).toContain("Rows in window (0)");
+  });
 });

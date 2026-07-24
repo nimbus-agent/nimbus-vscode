@@ -158,10 +158,11 @@ async function emitEgressDelta(
     return;
   }
   const delta = Math.max(0, after - before);
+  const plural = delta === 1 ? "" : "s";
   const text =
     delta === 0
       ? "\n\n---\n_Egress: no rows appended — nothing left this machine during this answer._"
-      : `\n\n---\n_Egress: ${delta} row${delta === 1 ? "" : "s"} appended to the local ledger during this answer._`;
+      : `\n\n---\n_Egress: ${delta} row${plural} appended to the local ledger during this answer._`;
   sink.markdown(text);
 }
 
