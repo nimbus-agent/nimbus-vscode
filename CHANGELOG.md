@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.10.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.9.0...v0.10.0) (2026-07-24)
+
+
+### Features
+
+* **marketplace:** re-cut the listing for the on-call/incident ICP + ROADMAP + why-lens tease ([#55](https://github.com/nimbus-agent/nimbus-vscode/issues/55)) ([aaab5a8](https://github.com/nimbus-agent/nimbus-vscode/commit/aaab5a8cabc537fbc282c6ced1abe6f0a6289970))
+
+
+### Bug Fixes
+
+* **sonar:** clear 17 code smells across egress, participant, ops-commands, presets ([#53](https://github.com/nimbus-agent/nimbus-vscode/issues/53)) ([43deff7](https://github.com/nimbus-agent/nimbus-vscode/commit/43deff7c779620109ad503afa24476aac96df879))
+
 ## [0.9.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.8.0...v0.9.0) (2026-07-23)
 
 
