@@ -1,9 +1,39 @@
-# Nimbus for VS Code
+# Nimbus — On-Call & Incident Agent for VS Code
 
-Local-first AI agent for the editor. Ask and search against your private [Nimbus](https://github.com/nimbus-agent/Nimbus) index — all running on your machine.
+A **private, local-first** agent for on-call and platform engineers. It answers
+from *your own* indexed context — incidents, deploys, ownership, code — and keeps
+a verifiable record of what it does off your machine. All running locally; your
+data never leaves the box except through actions you can see and prove.
+
+## Built for incident response & platform work
+
+Structured, grounded answers via the built-in Chat participant — not generic prompts:
+
+- **`/incident`** — what's going on right now: a catch-up brief across the services you own.
+- **`/deploys <service>`** — DORA metrics (deploy frequency, lead time, change-fail rate, MTTR).
+- **`/owns <file|service|topic>`** — who owns it, from your indexed history.
+- **`/blast <file|PR>`** — blast radius: what a change touches downstream.
+
+Each degrades honestly — an empty brief tells you *why* (missing connector, no data), never a confident guess.
+
+## A verifiable record of what the agent does off your machine
+
+Nimbus keeps a **signed, hash-chained egress ledger** of **every outbound action
+the agent dispatches** — one row, appended before the action leaves. Inspect it,
+verify the chain, and export a signed proof for any time window, all locally. A
+claim no cloud assistant can make, because completeness *for the agent's actions*
+can only be established at the point of departure, under your control.
+
+**Scope, stated plainly:** this records the agent's *dispatched actions*, not raw
+network traffic. It is not a firewall or host DLP and does not capture sockets or
+HTTP made outside the agent (the OS, other processes, or an unsandboxed
+third-party MCP server). It is a provable record of *what the agent did* — not a
+claim about every byte that left the machine.
+
+## Everything else it does
 
 - **Ask** — chat with the Nimbus agent in a side panel; responses stream token-by-token, and a **Stop** button cancels a long generation cleanly while keeping the partial reply.
-- **`@nimbus` Chat participant** — talk to Nimbus right in VS Code's built-in Chat view: `/explain`, `/fix`, and `/test` operate on your selection (or file), free-form questions can pull in `#file` context, answers stream token-by-token, and replies include clickable citations back to local-index sources.
+- **`@nimbus` Chat participant** — also works as a general assistant: `/explain`, `/fix`, and `/test` operate on your selection (or file), free-form questions can pull in `#file` context, answers stream token-by-token, and replies include clickable citations back to local-index sources.
 - **Quick Ask** — ask about a selection (or the whole file) and get a one-shot answer in a read-only tab, without opening the chat panel.
 - **Search** — live ranked (semantic + keyword) search over your local Nimbus index; results update as you type, and selecting one opens its source (or notifies you when it has none). **Search Selection** seeds it from the editor.
 - **Find related** — from a selection or an Index sidebar item, pivot to the local knowledge around it (ranked search that excludes the item itself).
@@ -76,6 +106,14 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). This repository was extracted from the
 - [Roadmap](./docs/ROADMAP.md) — where the extension is going, phased by SDK-readiness
 - [Nimbus User Guide](https://nimbus-agent.dev/user-guide/vscode-extension/)
 - [Nimbus](https://github.com/nimbus-agent/Nimbus) — the Gateway this extension talks to
+
+## On the roadmap (not yet shipped)
+
+- **The `why` lens** — hover any line to see who wrote it, the PR, the ticket, the
+  incident it responded to, and what breaks if you change it. Built on the gateway
+  and reachable through the client today ([`agents.why`/`agents.whyPeek`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/ecosystem-roadmap.md)); the in-editor hover is the next slice.
+
+See the [Nimbus Ecosystem Roadmap](https://github.com/nimbus-agent/Nimbus/blob/main/docs/ecosystem-roadmap.md) for the full plan.
 
 ## License
 
