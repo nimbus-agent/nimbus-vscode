@@ -1,7 +1,7 @@
 {
   "name": "nimbus-vscode",
-  "displayName": "Nimbus Agent",
-  "description": "Local-first AI agent for the editor. Ask and search against your private Nimbus index.",
+  "displayName": "Nimbus — On-Call & Incident Agent",
+  "description": "Private, local-first agent for on-call & platform engineers — /incident, /deploys, /owns, /blast grounded in your own index, with a signed, verifiable record of every action it takes off-device.",
   "version": "0.9.0",
   "publisher": "nimbus-agent",
   "license": "MIT",
@@ -24,7 +24,7 @@
   },
   "categories": [
     "AI",
-    "Other"
+    "Chat"
   ],
   "keywords": [
     "ai",
@@ -32,7 +32,16 @@
     "local-first",
     "nimbus",
     "privacy",
-    "mcp"
+    "mcp",
+    "on-call",
+    "incident-response",
+    "sre",
+    "platform-engineering",
+    "observability",
+    "dora",
+    "deploy",
+    "egress",
+    "audit"
   ],
   "main": "./dist/extension.js",
   "icon": "icon.png",
