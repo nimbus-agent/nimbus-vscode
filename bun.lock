@@ -10,7 +10,7 @@
       },
       "devDependencies": {
         "@biomejs/biome": "^2.5.0",
-        "@nimbus-dev/client": "^0.11.0",
+        "@nimbus-dev/client": "^0.12.1",
         "@types/node": "^26.0.0",
         "@types/vscode": "^1.95.0",
         "@vitest/coverage-v8": "^4.1.9",
@@ -170,9 +170,9 @@
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@0.2.12", "", { "dependencies": { "@emnapi/core": "^1.4.3", "@emnapi/runtime": "^1.4.3", "@tybys/wasm-util": "^0.10.0" } }, "sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ=="],
 
-    "@nimbus-dev/client": ["@nimbus-dev/client@0.11.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.5.1" } }, "sha512-vivkyPjXED9zGBzO4iH2k5M6wzfBw4kGRhXdJFnFc0m7BGYcxVGmQpbWFHE0Df6sTGn6ylHp/Jq1xxNlF9quKg=="],
+    "@nimbus-dev/client": ["@nimbus-dev/client@0.12.1", "", { "dependencies": { "@nimbus-dev/sdk": "^1.6.0" } }, "sha512-6vAzHfEH1mR2L4TJP8fjkBbS9O1vrxTu13Ss+0nI5OEAyUgJYrlG8m8vmdY2NHX2u6H9cf0CIjEdAsKjcgiP9A=="],
 
-    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.5.2", "", {}, "sha512-yqcGJ8bnlAYMJ80+p8F1bbyHawoxqJm89Y1zwrxTMVf2iGlhDFgUxrbi3QV5yVNmIbya4mNizQTyfvw6tW41Jg=="],
+    "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.7.0", "", {}, "sha512-ApS6UElKIGABnqWZsBQvKptlERDI5B18NfQFFZSLk/prEDd8473pR6H/17SMi96fk7/1bp4HgYI5ioqVr6Y2dA=="],
 
     "@node-rs/crc32": ["@node-rs/crc32@1.10.6", "", { "optionalDependencies": { "@node-rs/crc32-android-arm-eabi": "1.10.6", "@node-rs/crc32-android-arm64": "1.10.6", "@node-rs/crc32-darwin-arm64": "1.10.6", "@node-rs/crc32-darwin-x64": "1.10.6", "@node-rs/crc32-freebsd-x64": "1.10.6", "@node-rs/crc32-linux-arm-gnueabihf": "1.10.6", "@node-rs/crc32-linux-arm64-gnu": "1.10.6", "@node-rs/crc32-linux-arm64-musl": "1.10.6", "@node-rs/crc32-linux-x64-gnu": "1.10.6", "@node-rs/crc32-linux-x64-musl": "1.10.6", "@node-rs/crc32-wasm32-wasi": "1.10.6", "@node-rs/crc32-win32-arm64-msvc": "1.10.6", "@node-rs/crc32-win32-ia32-msvc": "1.10.6", "@node-rs/crc32-win32-x64-msvc": "1.10.6" } }, "sha512-+llXfqt+UzgoDzT9of5vPQPGqTAVCohU74I9zIBkNo5TH6s2P31DFJOGsJQKN207f0GHnYv5pV3wh3BCY/un/A=="],
 
