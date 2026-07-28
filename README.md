@@ -113,9 +113,9 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). This repository was extracted from the
 
 - **The `why` lens** — hover any line to see who wrote it, the PR, the ticket, the
   incident it responded to, and what breaks if you change it. Built on the gateway
-  and reachable through the client today ([`agents.why`/`agents.whyPeek`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/ecosystem-roadmap.md)); the in-editor hover is the next slice.
+  and reachable through the client today ([`agents.why`/`agents.whyPeek`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md)); the in-editor hover is the next slice.
 
-See the [Nimbus Ecosystem Roadmap](https://github.com/nimbus-agent/Nimbus/blob/main/docs/ecosystem-roadmap.md) for the full plan.
+See the [Nimbus roadmap](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md) for the full plan.
 
 ## License
 
