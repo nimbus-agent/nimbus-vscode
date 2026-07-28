@@ -1,8 +1,10 @@
 # Nimbus VS Code — Roadmap
 
-> **The cross-surface product roadmap lives in the gateway repo:
-> [Nimbus Ecosystem Roadmap](https://github.com/nimbus-agent/Nimbus/blob/main/docs/ecosystem-roadmap.md)**
-> — it owns the client-surfaces / delivery plan across all Nimbus clients. This
+> **Product sequencing lives in the gateway repo:
+> [roadmap.md](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md)**
+> — it owns what the gateway does and the order in which surfaces land. How the
+> ecosystem fits together is described at org level in
+> [ECOSYSTEM.md](https://github.com/nimbus-agent/.github/blob/main/ECOSYSTEM.md). This
 > file is `nimbus-vscode`'s local slice: the VS Code / Open VSX extension, which
 > consumes the published `@nimbus-dev/client` (see
 > [Releases](https://github.com/nimbus-agent/nimbus-vscode/releases) for the
