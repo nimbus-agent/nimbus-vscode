@@ -1,6 +1,6 @@
 ---
 name: verify-extension
-description: Verify a change to the nimbus-vscode extension actually works — run the full local gate (test, typecheck, lint, build, bundle + settings-doc guards) and, for anything with runtime/UI surface, drive it in an Extension Development Host. Use before committing a non-trivial change, opening a PR, or claiming a fix works.
+description: Verify a change to the nimbus-vscode extension actually works — run the full local gate (test, typecheck, lint, build, bundle, .vsix-contents + settings-doc guards) and, for anything with runtime/UI surface, drive it in an Extension Development Host. Use before committing a non-trivial change, opening a PR, or claiming a fix works.
 ---
 
 # Verify the nimbus-vscode extension
@@ -16,13 +16,14 @@ Run all of these; every one must pass before a change is "verified":
 ```bash
 bun run test          # vitest — unit tests (vscode is stubbed)
 bun run typecheck     # tsc --noEmit (strict; no `any`)
-bun run lint          # biome check src/
+bun run lint          # biome check . (whole repo)
 bun run build         # esbuild bundles to dist/ + media/
 bun run check-bundle  # asserts vscode is the bundle's only external (run AFTER build)
+bun run check-vsix-contents  # asserts the .vsix ships only allowlisted files (run AFTER build)
 bun run check-settings-docs  # every nimbus.* setting is documented
 ```
 
-One-liner: `bun run test && bun run typecheck && bun run lint && bun run build && bun run check-bundle && bun run check-settings-docs`
+One-liner: `bun run test && bun run typecheck && bun run lint && bun run build && bun run check-bundle && bun run check-vsix-contents && bun run check-settings-docs`
 
 Notes:
 - Editor "stale diagnostic" popups can lag a mid-edit state — trust `bun run typecheck`

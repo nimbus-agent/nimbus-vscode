@@ -13,6 +13,10 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
 - Override the Gateway IPC socket path. Leave empty to auto-detect via
   `gateway.json` or the platform default. Set this only if you run the Gateway
   with a non-standard socket location.
+- **Restricted Mode:** ignored at the workspace level in an untrusted workspace
+  (`capabilities.untrustedWorkspaces.restrictedConfigurations` in
+  `package.json`), so a workspace cannot redirect the IPC socket. Your user-level
+  value still applies.
 
 ### `nimbus.autoStartGateway`
 
@@ -20,6 +24,9 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
 - When `true`, the extension spawns `nimbus start` if the Gateway socket is
   unreachable. Leave `false` if you manage the Gateway lifecycle yourself (e.g. a
   service or a separate terminal); enable it for a one-step "just works" setup.
+- **Restricted Mode:** ignored at the workspace level in an untrusted workspace,
+  so opening an untrusted folder cannot spawn a process. Your user-level value
+  still applies.
 
 ### `nimbus.statusBarPollMs`
 

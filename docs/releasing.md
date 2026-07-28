@@ -32,13 +32,11 @@ affected — it records dependencies, not this package's own version.
 
 ## Prerequisites (one-time)
 
-Repository secrets:
-
-| Secret | What | Why |
-| --- | --- | --- |
-| `RELEASE_PLEASE_PAT` | Fine-grained PAT — **Contents: RW**, **Pull requests: RW**, **Issues: RW**, this repo only | Release Please pushes the tag as this identity so `publish.yml` fires (with only the default `GITHUB_TOKEN`, the release PR opens but the tag never triggers publishing). Issues RW lets it create the `autorelease:*` labels on the first run. |
-| `VSCE_PAT` | Azure DevOps PAT, **Marketplace (Manage)**, publisher `nimbus-agent` | Marketplace publish. |
-| `OVSX_PAT` | Open VSX token, namespace `nimbus-agent` | Open VSX publish. |
+| Secret | Where | What | Why |
+| --- | --- | --- | --- |
+| `RELEASE_BOT_CLIENT_ID` / `RELEASE_BOT_PRIVATE_KEY` | Organization (`nimbus-agent`) | Credentials for the **"Nimbus Release Bot"** GitHub App, installed on this repo with Contents / Pull requests / Issues write | `release-please.yml` mints a short-lived App token from them and pushes the tag as that identity so `publish.yml` fires (with only the default `GITHUB_TOKEN`, the release PR opens but the tag never triggers publishing). Issues write lets it create the `autorelease:*` labels on the first run. These replaced the retired `RELEASE_PLEASE_PAT` in PR #42. |
+| `VSCE_PAT` | Repository | Azure DevOps PAT, **Marketplace (Manage)**, publisher `nimbus-agent` | Marketplace publish. |
+| `OVSX_PAT` | Repository | Open VSX token, namespace `nimbus-agent` | Open VSX publish. |
 
 > **Note on the `release` environment.** `publish.yml`'s job declares
 > `environment: release`, but `VSCE_PAT` and `OVSX_PAT` are currently configured
@@ -49,7 +47,7 @@ Repository secrets:
 > reviewer; until then, treat any workflow on this repo as able to read them.
 
 Also confirm no **tag protection rule / ruleset** (or "require signed tags") blocks
-the PAT actor from creating `v*` tags (Settings → Rules/Tags).
+the Release Bot App from creating `v*` tags (Settings → Rules/Tags).
 
 ## Manual release (fallback)
 
@@ -62,9 +60,9 @@ but no auto notes (Release Please normally writes those).
 
 | Symptom | Cause / fix |
 | --- | --- |
-| Release PR opens, but no tag/publish after merge | `RELEASE_PLEASE_PAT` missing or expired → the tag was created by `GITHUB_TOKEN` (or not at all) and didn't trigger `publish.yml`. Rotate the PAT, then recover by tag state: **no `vX.Y.Z` tag exists** → re-run `release-please` (it creates the tag → publish fires), or push the tag from your machine (`git tag vX.Y.Z <sha> && git push origin vX.Y.Z`). **Tag already exists** (created by `GITHUB_TOKEN`) → re-pushing it is a no-op and won't re-trigger; delete and recreate it from your machine (`git push origin :vX.Y.Z` then `git tag vX.Y.Z <sha> && git push origin vX.Y.Z`), or publish the built `.vsix` by hand (`vsce publish` / `ovsx publish`). |
+| Release PR opens, but no tag/publish after merge | The Release Bot App token wasn't minted (missing `RELEASE_BOT_CLIENT_ID`/`RELEASE_BOT_PRIVATE_KEY`, the App uninstalled from this repo, or its Contents/Pull-requests/Issues permissions revoked) → the tag was created by `GITHUB_TOKEN` (or not at all) and didn't trigger `publish.yml`. Check the App installation and its repository permissions, then recover by tag state: **no `vX.Y.Z` tag exists** → re-run `release-please` (it creates the tag → publish fires), or push the tag from your machine (`git tag vX.Y.Z <sha> && git push origin vX.Y.Z`). **Tag already exists** (created by `GITHUB_TOKEN`) → re-pushing it is a no-op and won't re-trigger; delete and recreate it from your machine (`git push origin :vX.Y.Z` then `git tag vX.Y.Z <sha> && git push origin vX.Y.Z`), or publish the built `.vsix` by hand (`vsce publish` / `ovsx publish`). |
 | No release PR appears after merging `feat:`/`fix:` PRs | PR titles weren't Conventional Commits (nothing to release), or `release-please` didn't run — check the Actions tab. |
-| Tag push rejected | A tag protection rule / ruleset (or required signed tags) blocks the PAT actor. Adjust the rule or exempt the actor. |
+| Tag push rejected | A tag protection rule / ruleset (or required signed tags) blocks the Release Bot App. Adjust the rule or exempt the actor. |
 | `publish.yml` fails at "Resolve version from tag" | Tag isn't `vMAJOR.MINOR.PATCH` (optionally `-prerelease`). |
 | `publish.yml` fails at "Verify required publish secrets" | `VSCE_PAT`/`OVSX_PAT` missing or expired. Check **repository** secrets first — that is where both currently live (see the note above); check the `release` environment only if they have since been moved there. Rotate, then re-run the failed job (safe — version derives from the tag). |
 | Marketplace succeeded, Open VSX failed (or vice-versa) | Separate steps. Don't re-tag; re-run the failed job, or publish the built `.vsix` manually (`ovsx publish` / `vsce publish`). |
