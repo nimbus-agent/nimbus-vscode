@@ -27,16 +27,23 @@ That is why, for the Gateway-backed items, the phase boundary that matters most
 is "does the RPC exist yet?":
 
 - **Phases 1–3** need nothing new from the SDK. They deepen surfaces and exploit
-  RPCs that a published client already exposes (through `0.5.0`, the latest
-  published version — it added no RPCs over `0.4.0`).
+  RPCs that a published client already exposes (the repo pins `^0.12.1`).
 - **Phase 4** is blocked until a published `@nimbus-dev/client` surfaces the
   required RPC, typed. An item graduates out of Phase 4 the moment its RPC ships.
-  As of `0.5.0` the client's full method list is `open`, `agentInvoke`,
-  `askStream`, `subscribeHitl`, `getSessionTranscript`, `cancelStream`,
-  `queryItems`, `searchRanked`, `querySql`, `auditList`, `egressHead`,
-  `egressList`, `egressVerify`, `egressProveWindow`, `close` — every one of which
-  the extension already consumes. So no Phase 4 item is unblocked today, and
-  none is a version bump away.
+  `0.12.1` widened the surface well past the egress-era client: it adds the
+  workflow family (`workflowList`, `workflowSave`, `workflowDelete`,
+  `workflowListRuns`, `workflowRun`), the full connector suite
+  (`connectorListStatus`, `connectorStatus`, `connectorHealthHistory`,
+  `connectorPause`, `connectorResume`, `connectorSetInterval`,
+  `connectorSetConfig`, `connectorSync`, `connectorAuth`, `connectorAddMcp`,
+  `connectorRemove`, `connectorReindex`), the nine `agents*` briefs, the
+  `session*` and `audit*` families, and `metricsDora` / `deployPreflight`. Read
+  the authoritative list off the `NimbusClientLike` interface in
+  `node_modules/@nimbus-dev/client/dist/nimbus-client.d.ts` rather than
+  re-freezing a copy here — a frozen copy is what made this section stale. Three
+  items graduated out of Phase 4 on that bump (Workflow surface, Connector
+  management, Index write ops); what is left below is genuinely unshipped
+  upstream.
 
 The columns below name the enabling client RPC (or, for Phase 4, the new SDK
 capability required) so the split is verifiable, not aspirational. Effort is a
@@ -50,7 +57,9 @@ rough T-shirt size (S / M / L).
 | **Search** — live ranked search over the local index (+ configurable limit, duplicates badge, Search Selection) | `searchRanked` |
 | **Find related** — pivot from a selection or Index item to ranked local neighbors (self-excluded) | `searchRanked` |
 | **Quick Ask** — one-shot editor quick-ask (preset actions + custom), reply in a read-only tab | `agentInvoke` |
-| **`@nimbus` Chat participant** — native participant in VS Code's built-in Chat view, with slash commands (`/explain`, `/fix`, `/test`), `#file`/selection context, streaming answers, and local-index citations | `askStream`, `searchRanked` |
+| **`@nimbus` Chat participant** — native participant in VS Code's built-in Chat view, with the ops slash commands (`/incident`, `/deploys`, `/owns`, `/blast`), `#file`/selection context, streaming answers, and local-index citations | `askStream`, `searchRanked`, `agentsCatchup`, `agentsImpact`, `agentsExpert`, `metricsDora` |
+| **Language Model tools** — `nimbus_search` + `nimbus_ask` registered via `contributes.languageModelTools`, so other chat extensions and agents can call Nimbus as a tool | `searchRanked`, `agentInvoke` |
+| **Restricted Mode support** — runs in an untrusted workspace with the workspace-level `nimbus.socketPath` / `nimbus.autoStartGateway` settings ignored | *no RPC* |
 | **Dev-workflow trio** — Generate commit message (staged diff → SCM input box), Review changes (all local changes vs `HEAD` → findings tab), Generate tests / docstrings (untitled test buffer / docstring diff) | `agentInvoke` + SCM API |
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
@@ -78,6 +87,7 @@ still open.
 
 | Feature | Value | Client RPC | Effort |
 | --- | --- | --- | --- |
+| **Workflow surface** — run / monitor / cancel workflows | The flagship gap (the removed `Run Workflow` stub is tracked here); unblocked by client `0.12.1` | `workflowList`, `workflowSave`, `workflowDelete`, `workflowListRuns`, `workflowRun` | L |
 | **"Preview what leaves" pre-flight** — before an agent action, show the exact context that will be sent, with redacted paths | The privacy moat made visible; extends the `redactPath` work | local + `egressList` | M |
 | **Context-grounded Ask** — `@`-mention / attach files, search results, or index items into a question | Answers cite *your* local knowledge, not the model's guess | `searchRanked` / `queryItems` + `askStream` | M |
 
@@ -97,6 +107,8 @@ story. Still no SDK change required.
 | **Multi-agent compare** — ask N agents, diff their answers; per-action agent picker | Exploit the agent model; pick the best take | `agentInvoke` (fan-out) | M |
 | **Live egress feed** panel + **HITL history/notification center** + "what has Nimbus sent about this file/session?" | A complete, glanceable trust surface | `egressList` / `subscribeHitl` | M |
 | **Saved searches / history**; **CodeLens** "Ask Nimbus" over functions | Everyday ergonomics | `searchRanked` / `agentInvoke` | S |
+| **Connector management** — add / configure / health | Manage sources in-editor; unblocked by client `0.12.1` | `connectorListStatus`, `connectorStatus`, `connectorHealthHistory`, `connectorPause`/`connectorResume`, `connectorSetConfig`, `connectorAuth`, `connectorAddMcp`, `connectorRemove` | L |
+| **Index write ops** — trigger reindex / add sources | Control indexing without the CLI; unblocked by client `0.12.1` | `connectorReindex`, `connectorSync`, `connectorAddMcp` | M |
 
 ## Phase 4 — Requires new nimbus SDK/Gateway development
 
@@ -107,11 +119,8 @@ RPC ships.
 
 | Feature | Value | New SDK capability required | Effort |
 | --- | --- | --- | --- |
-| **Workflow surface** — run / monitor / cancel workflows | The flagship gap (the removed `Run Workflow` stub is tracked here) | workflow RPCs | L |
 | **Share surface** — share a session or result | Collaboration | share RPCs | L |
 | **Streaming + cancellable quick-ask**; true one-shot cancellation | Live replies; abort an in-flight `agentInvoke` | abort / stream on `agentInvoke` | M |
-| **Connector management** — add / configure / health | Manage sources in-editor | connector RPCs | L |
-| **Index write ops** — trigger reindex / add sources | Control indexing without the CLI | index-write RPCs | M |
 | **Egress policy management** + live egress subscription | Configure and watch egress in real time | egress-policy / subscription RPCs | M |
 | **Inline completions / ghost text** | Type-ahead grounded in the local model | a completion-oriented RPC | L |
 | **Agent authoring** in-editor | Create/edit agents without leaving VS Code | agent-write RPCs | L |

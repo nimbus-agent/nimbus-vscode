@@ -32,6 +32,8 @@ build-test:
   script:
     - bun run typecheck
     - bun run lint
+    - bun run check-settings-docs
     - bun run test
     - bun run build
     - bun run check-bundle
+    - bun run check-vsix-contents

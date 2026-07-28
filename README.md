@@ -33,7 +33,8 @@ claim about every byte that left the machine.
 ## Everything else it does
 
 - **Ask** — chat with the Nimbus agent in a side panel; responses stream token-by-token, and a **Stop** button cancels a long generation cleanly while keeping the partial reply.
-- **`@nimbus` Chat participant** — also works as a general assistant: `/explain`, `/fix`, and `/test` operate on your selection (or file), free-form questions can pull in `#file` context, answers stream token-by-token, and replies include clickable citations back to local-index sources.
+- **`@nimbus` Chat participant** — also works as a general assistant: free-form questions can pull in `#file` context (or your selection), answers stream token-by-token, and replies include clickable citations back to local-index sources. Explain / Fix / Review / Docstring live as **Quick Ask presets** rather than slash commands.
+- **Language Model tools** — other chat extensions and agents can call Nimbus as a tool: `nimbus_search` (ranked search over your private local index) and `nimbus_ask` (a one-shot answer from your local agent), referenceable in a prompt as `#nimbusSearch` / `#nimbusAsk`.
 - **Quick Ask** — ask about a selection (or the whole file) and get a one-shot answer in a read-only tab, without opening the chat panel.
 - **Search** — live ranked (semantic + keyword) search over your local Nimbus index; results update as you type, and selecting one opens its source (or notifies you when it has none). **Search Selection** seeds it from the editor.
 - **Find related** — from a selection or an Index sidebar item, pivot to the local knowledge around it (ranked search that excludes the item itself).
@@ -43,6 +44,7 @@ claim about every byte that left the machine.
 - **Audit & Egress ledgers** — inspect what the agent did and everything it sent off-device; verify the egress hash-chain and export a signed proof for any time window, all locally. A **status-bar badge** (shown while connected, on by default) displays the egress row count with a ledger-live ✓ — click to open the ledger, or toggle it with `nimbus.egress.showStatusBarBadge`.
 - **Connection troubleshooter** — *Nimbus: Troubleshoot Connection* explains why you're disconnected and offers one-click fixes (start the Gateway, reconnect, open logs, or edit the socket path).
 - **Get Started walkthrough** — a first-run walkthrough (*Nimbus: Open Walkthrough*, also on the Welcome page) that guides you from connecting the Gateway through Ask, Search, and Quick Ask.
+- **Restricted Mode aware** — the extension still works in an untrusted workspace; only the workspace-level `nimbus.socketPath` and `nimbus.autoStartGateway` settings are ignored, so a workspace can't redirect the IPC socket or spawn a process.
 
 ## Install
 
