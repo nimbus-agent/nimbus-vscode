@@ -38,13 +38,25 @@ affected — it records dependencies, not this package's own version.
 | `VSCE_PAT` | Repository | Azure DevOps PAT, **Marketplace (Manage)**, publisher `nimbus-agent` | Marketplace publish. |
 | `OVSX_PAT` | Repository | Open VSX token, namespace `nimbus-agent` | Open VSX publish. |
 
-> **Note on the `release` environment.** `publish.yml`'s job declares
-> `environment: release`, but `VSCE_PAT` and `OVSX_PAT` are currently configured
-> as **repository** secrets, and the `release` environment has no protection
-> rules. Publishing works, but the environment provides no approval gate or
-> secret isolation today. To get that isolation, move both secrets onto the
-> `release` environment (Settings → Environments → release) and add a required
-> reviewer; until then, treat any workflow on this repo as able to read them.
+> **Note on the `release` environment.** The environment now carries a
+> **deployment branch policy** admitting only `main` and `v*` tags, so a
+> workflow added on a feature branch cannot deploy to it. Both jobs that read a
+> publish PAT declare `environment: release` — `publish.yml`'s `publish` and
+> `secret-health.yml`'s `check` — and `main` is in the policy because the latter
+> runs on a Monday cron, which executes from the default branch.
+>
+> **`VSCE_PAT` and `OVSX_PAT` are still configured as repository secrets**, so
+> every workflow on this repo can currently read them; the branch policy does
+> not change that. To get real isolation, re-add both under Settings →
+> Environments → release → Environment secrets and then **delete the
+> repository-scoped copies** — the delete is the step that closes the hole.
+> Safe to do here because both consumers are already environment-scoped
+> (unlike the monorepo, where several release secrets are read by jobs that do
+> not declare the environment).
+>
+> A required reviewer is deliberately *not* configured: it would suspend every
+> release on a manual approval, which defeats the Release Please automation.
+> Add one only if you want that trade.
 
 Also confirm no **tag protection rule / ruleset** (or "require signed tags") blocks
 the Release Bot App from creating `v*` tags (Settings → Rules/Tags).
@@ -65,6 +77,7 @@ but no auto notes (Release Please normally writes those).
 | Tag push rejected | A tag protection rule / ruleset (or required signed tags) blocks the Release Bot App. Adjust the rule or exempt the actor. |
 | `publish.yml` fails at "Resolve version from tag" | Tag isn't `vMAJOR.MINOR.PATCH` (optionally `-prerelease`). |
 | `publish.yml` fails at "Verify required publish secrets" | `VSCE_PAT`/`OVSX_PAT` missing or expired. Check **repository** secrets first — that is where both currently live (see the note above); check the `release` environment only if they have since been moved there. Rotate, then re-run the failed job (safe — version derives from the tag). |
+| `publish.yml` fails before any step with "not allowed to deploy to release" | The tag or branch is outside the `release` environment's deployment branch policy (`main` + `v*`). Expected for a non-`v*` tag; otherwise widen the policy under Settings → Environments → release. |
 | Marketplace succeeded, Open VSX failed (or vice-versa) | Separate steps. Don't re-tag; re-run the failed job, or publish the built `.vsix` manually (`ovsx publish` / `vsce publish`). |
 
 Published versions are immutable — to retract, unpublish from the dashboards and cut
