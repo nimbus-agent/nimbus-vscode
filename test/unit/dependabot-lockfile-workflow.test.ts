@@ -134,12 +134,44 @@ describe("dependabot-lockfile workflow: privileged-job guards", () => {
   });
 
   test("the job token is granted contents: write and nothing wider", () => {
-    const writeGrants = codeLines.filter((line) => /^\s+[a-z-]+:\s+write$/.test(line));
-    for (const grant of writeGrants) {
-      expect(grant.trim(), "a permission wider than contents: write was granted").toBe(
-        "contents: write",
-      );
+    // This assertion has to fail closed in three directions, and the obvious
+    // filter-then-loop shape failed closed in none of them:
+    //
+    //   - DELETE `contents: write` entirely -> the array is empty, the loop body
+    //     never runs, the test passes, and lockfile push-back is silently broken.
+    //   - MOVE it to top-level permissions  -> it still matches the same
+    //     `<key>: write` regex, so the loop still passes — while every job in the
+    //     workflow, not just this one, now holds a write-capable token on a
+    //     `pull_request_target` trigger.
+    //   - WIDEN it to another scope         -> the only case the loop caught.
+    //
+    // So: pin the read-only default, pin the sole job-scoped grant, and assert
+    // the write-grant set by EQUALITY rather than element-wise.
+
+    // 1. The workflow default stays read-only.
+    expect(code, "top-level permissions must stay read-only").toMatch(
+      /^permissions:\n {2}contents: read$/m,
+    );
+
+    // 2. The one privileged job still carries its own write grant. An explicit
+    //    throw rather than optional chaining: a renamed job must red this test,
+    //    not narrow away into a vacuous pass.
+    const syncLockfile = jobBlocks().find((job) => job.name === "sync-lockfile");
+    if (!syncLockfile) {
+      throw new Error('missing "sync-lockfile" job — the privileged job was renamed or removed');
     }
+    expect(syncLockfile.body, "sync-lockfile lost its job-scoped contents: write").toMatch(
+      /^ {4}permissions:\n {6}contents: write$/m,
+    );
+
+    // 3. Exactly ONE write grant in the whole file, at job scope (six spaces).
+    //    Equality, not per-element: an empty set now fails, and a top-level
+    //    grant fails on its indentation.
+    const writeGrants = codeLines.filter((line) => /^\s+[a-z-]+:\s+write$/.test(line));
+    expect(writeGrants, "expected exactly one job-scoped contents: write grant").toEqual([
+      "      contents: write",
+    ]);
+
     expect(code).not.toContain("write-all");
   });
 });
