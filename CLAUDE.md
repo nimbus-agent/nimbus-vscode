@@ -22,6 +22,7 @@ Extracted from the Nimbus monorepo (`packages/vscode-extension`) on 2026-06-22 s
 - `docs/` — contributor/maintainer reference: `architecture.md`, `development.md`, `settings.md`, `releasing.md`. See `docs/README.md`.
 - `.github/workflows/ci.yml` — typecheck + lint + check-settings-docs + test + build + check-bundle + check-vsix-contents on PR/push (Ubuntu), plus a lean Windows job (typecheck + test + build + the two bundle guards)
 - `.github/workflows/publish.yml` — on a `v*` tag: Marketplace + Open VSX + GitHub Release
+- `.github/workflows/dependabot-lockfile.yml` — the only `pull_request_target` workflow here (a write-capable token over a PR author's tree). Its four defences — the `dependabot[bot]` actor gate, `bun install --ignore-scripts`, `persist-credentials: false`, and a `head.sha`-pinned checkout — are pinned by `test/unit/dependabot-lockfile-workflow.test.ts`; change one and that test tells you.
 
 ## Commands
 
