@@ -18,7 +18,7 @@ Extracted from the Nimbus monorepo (`packages/vscode-extension`) on 2026-06-22 s
 - `src/vscode-shim.ts` — the seam over the `vscode` API (stubbed in tests via `test/unit/vscode-stub.ts`)
 - `test/unit/` — Vitest unit tests; `vscode` is aliased to the stub in `vitest.config.ts`
 - `esbuild.mjs` — build
-- `scripts/` — Node ESM maintenance helpers: `clean.mjs`, `check-bundle.mjs` (guards the no-runtime-dep bundling invariant), `check-vsix-contents.mjs` (guards what the `.vsix` ships), `check-settings-docs.mjs` (guards settings-doc drift). See `scripts/README.md`.
+- `scripts/` — Node ESM maintenance helpers: `clean.mjs`, `check-bundle.mjs` (guards the no-runtime-dep bundling invariant), `check-vsix-contents.mjs` (guards what the `.vsix` ships), `check-settings-docs.mjs` (guards settings-doc drift); plus `secret-health.ts`, the tested classifier behind `secret-health.yml` that keeps a rejected publish token apart from one merely approaching a known expiry. See `scripts/README.md`.
 - `docs/` — contributor/maintainer reference: `architecture.md`, `development.md`, `settings.md`, `releasing.md`. See `docs/README.md`.
 - `.github/workflows/ci.yml` — typecheck + lint + check-settings-docs + test + build + check-bundle + check-vsix-contents on PR/push (Ubuntu), plus a lean Windows job (typecheck + test + build + the two bundle guards)
 - `.github/workflows/publish.yml` — on a `v*` tag: Marketplace + Open VSX + GitHub Release

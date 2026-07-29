@@ -82,3 +82,36 @@ but no auto notes (Release Please normally writes those).
 
 Published versions are immutable — to retract, unpublish from the dashboards and cut
 a new patch.
+
+## The weekly credential monitor
+
+`secret-health.yml` runs Mondays 09:00 UTC. It probes both publish tokens against
+their real services and classifies each into one verdict
+(`scripts/secret-health.ts`, unit-tested in `test/unit/secret-health.test.ts`).
+
+The split that matters is **rejected vs dated**, because the two look similar in a
+table and need opposite responses:
+
+| Verdict | Where it comes from | Job outcome | What to do |
+| --- | --- | --- | --- |
+| `dead` | a **live probe** — the marketplace rejected the token this run | ❌ fails | **Rotate now.** Publishing is blocked today. |
+| `not-configured` | the secret is absent | ❌ fails | **Provision.** Do *not* rotate — there is nothing to rotate. |
+| `unrecognised` | the probe returned something unexpected | ❌ fails | Diagnose the probe (renamed output, bumped action ref) before trusting any verdict. |
+| `expiry-critical` | the **calendar** — ≤14 days of recorded runway | ❌ fails | Replace this week. The token still works; it is about to stop. |
+| `expiry-overdue` | the calendar — recorded expiry passed, but the token still authenticates | ❌ fails | **Correct the record**, don't rotate blindly: the token was probably regenerated without updating the date. |
+| `expiry-approaching` | the calendar — 15–90 days out | 🟡 warns, job stays green | Schedule the regeneration. This is not an emergency and is not a rotation trigger. |
+| `unreachable` | the probe could not reach the service | 🟡 warns | Re-run. This is **not** evidence of revocation. |
+
+An issue is filed only for a ❌ verdict. `expiry-approaching` is true for up to 76
+consecutive days, and an issue left open that long is how the *next* real finding
+gets skimmed past — so the warning half lives in the run's `::warning::`
+annotations and step summary, which cannot accumulate. When an issue is filed, its
+body carries every row under its own heading, so a dated row is still visible
+there and can never appear under **BROKEN**.
+
+**Where the dates come from.** `DECLARED_EXPIRY` in `scripts/secret-health.ts` is a
+*mirror*. The source of truth is `scripts/release/credential-registry.ts` in
+[`nimbus-agent/Nimbus`](https://github.com/nimbus-agent/Nimbus), whose own weekly
+monitor audits this repo's secrets org-wide. When a token is regenerated, update
+the registry first, then the mirror. Drift can only produce a spurious *warning* —
+never a false "healthy", because the liveness probe is never softened by a date.
