@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.11.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.10.0...v0.11.0) (2026-07-29)
+
+
+### Features
+
+* **ci:** tell an expiring publish token apart from a dead one ([#64](https://github.com/nimbus-agent/nimbus-vscode/issues/64)) ([1a93ed4](https://github.com/nimbus-agent/nimbus-vscode/commit/1a93ed4ae7c76bfa88f1e064d8d09ee97baaf307))
+
 ## [0.10.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.9.0...v0.10.0) (2026-07-24)
 
 
