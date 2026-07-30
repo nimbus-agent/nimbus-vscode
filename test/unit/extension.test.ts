@@ -2696,3 +2696,23 @@ describe("pre-flight gate blocks a send", () => {
     expect(doc?.content).toContain("const secret = 1;");
   });
 });
+
+describe("pass-through surfaces route through the seam", () => {
+  test("an Ask-panel send is recorded but never prompts", async () => {
+    const f = makeFixture({
+      inputBoxAnswers: ["why is p99 up?"],
+      openClient: makeFakeClient({ askStream: doneAskStream() } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.ask")();
+    // The user typed it, so nothing is asked — but it still routed through the
+    // seam, which is what "no call site bypasses the gate" means.
+    expect(f.warnMessages).toEqual([]);
+    await cmd(f, "nimbus.showLastOutbound")();
+    const doc = f.openedDocs.at(-1);
+    expect(doc?.title).toBe("Nimbus outbound.md");
+    expect(doc?.content).toContain("Ask panel");
+    expect(doc?.content).toContain("why is p99 up?");
+  });
+});

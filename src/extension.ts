@@ -17,7 +17,7 @@ import { type ConnectionState, createConnectionManager } from "./connection/conn
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
 import { createEgressGate } from "./egress/gate.js";
-import { gateAgentInvoke, isEgressCancelled } from "./egress/gated-client.js";
+import { gateAgentInvoke, gateAskStream, isEgressCancelled } from "./egress/gated-client.js";
 import { droppedRoots } from "./egress/leak-check.js";
 import { renderFullEgress } from "./egress/preflight.js";
 import { createPreflightSkipStore } from "./egress/skip-store.js";
@@ -130,6 +130,39 @@ export function activateWithDeps(
   log.info("Nimbus VS Code extension activating");
 
   const sessionStore = createSessionStore(ctx.workspaceState);
+
+  // Leak-check needles, resolved fresh each time so a folder opened mid-session
+  // is picked up. They are held locally and never sent.
+  //
+  // tmpdir() earns its place on macOS, where it is /var/folders/<hash>/T —
+  // long, specific, and NOT under homedir, so nothing else would catch it. On
+  // Windows it lives under homedir (redundant but harmless) and on Linux it is
+  // usually "/tmp", which leak-check drops for being too short to search for
+  // safely. Passing it unconditionally is therefore safe: the threshold, not
+  // this call site, decides whether it is specific enough to use.
+  const egressRoots = (): readonly string[] => {
+    const folders = deps.workspace.workspaceFolders ?? [];
+    return [...folders.map((f) => f.uri.fsPath), homedir(), tmpdir()];
+  };
+  // Narrowing coverage silently reads as "we checked everything". Say what was
+  // dropped, once, at activation.
+  const droppedNeedles = droppedRoots(egressRoots());
+  if (droppedNeedles.length > 0) {
+    log.debug(
+      `egress: leak check skipping ${droppedNeedles.length} short root(s): ${droppedNeedles.join(", ")}`,
+    );
+  }
+  const preflightSkips = createPreflightSkipStore(ctx.workspaceState);
+  const egressGate = createEgressGate({
+    window: deps.window,
+    // A small retention bound: a full outbound prompt is among the largest
+    // strings this extension builds, and the shared opener keeps 50.
+    openReadonly: deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx, 5),
+    skips: preflightSkips,
+    isTrusted: () => deps.workspace.isTrusted,
+    roots: egressRoots,
+    log,
+  });
 
   const openClient =
     deps.openClient ?? (async (socketPath: string) => await NimbusClient.open({ socketPath }));
@@ -267,8 +300,19 @@ export function activateWithDeps(
       return undefined;
     }
     const panel = chatPanelFactory.createOrReveal();
+    // Pass-through: the user typed this, so the gate records rather than
+    // prompts. Routing it anyway is what makes "no call site bypasses the
+    // seam" true rather than aspirational.
+    const full = nimbus();
+    const gatedChatClient =
+      full === undefined
+        ? c
+        : {
+            ...full,
+            askStream: gateAskStream(full.askStream.bind(full), egressGate, "ask", "Ask panel"),
+          };
     chatController = createChatController({
-      client: c as unknown as Parameters<typeof createChatController>[0]["client"],
+      client: gatedChatClient as unknown as Parameters<typeof createChatController>[0]["client"],
       panel,
       sessionStore,
       registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
@@ -542,39 +586,6 @@ export function activateWithDeps(
         end: editor.document.offsetAt(editor.selection.end),
       };
     });
-
-  // Leak-check needles, resolved fresh each time so a folder opened mid-session
-  // is picked up. They are held locally and never sent.
-  //
-  // tmpdir() earns its place on macOS, where it is /var/folders/<hash>/T —
-  // long, specific, and NOT under homedir, so nothing else would catch it. On
-  // Windows it lives under homedir (redundant but harmless) and on Linux it is
-  // usually "/tmp", which leak-check drops for being too short to search for
-  // safely. Passing it unconditionally is therefore safe: the threshold, not
-  // this call site, decides whether it is specific enough to use.
-  const egressRoots = (): readonly string[] => {
-    const folders = deps.workspace.workspaceFolders ?? [];
-    return [...folders.map((f) => f.uri.fsPath), homedir(), tmpdir()];
-  };
-  // Narrowing coverage silently reads as "we checked everything". Say what was
-  // dropped, once, at activation.
-  const droppedNeedles = droppedRoots(egressRoots());
-  if (droppedNeedles.length > 0) {
-    log.debug(
-      `egress: leak check skipping ${droppedNeedles.length} short root(s): ${droppedNeedles.join(", ")}`,
-    );
-  }
-  const preflightSkips = createPreflightSkipStore(ctx.workspaceState);
-  const egressGate = createEgressGate({
-    window: deps.window,
-    // A small retention bound: a full outbound prompt is among the largest
-    // strings this extension builds, and the shared opener keeps 50.
-    openReadonly: deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx, 5),
-    skips: preflightSkips,
-    isTrusted: () => deps.workspace.isTrusted,
-    roots: egressRoots,
-    log,
-  });
 
   const scm = createScmCommands({
     git: deps.git ?? createRealGitApi(log),
@@ -1117,7 +1128,23 @@ export function activateWithDeps(
   });
 
   const participantDeps: ParticipantDeps = {
-    client: () => nimbus() as unknown as ParticipantClientLike | undefined,
+    // Pass-through, like the Ask panel: the user typed the prompt (plus any
+    // #file refs), so the gate records rather than prompts. Every other member
+    // — searchRanked, egressHead, the ops RPCs — still comes straight through.
+    client: () => {
+      const client = nimbus();
+      if (client === undefined) return undefined;
+      const gated = {
+        ...client,
+        askStream: gateAskStream(
+          client.askStream.bind(client),
+          egressGate,
+          "participant",
+          "@nimbus chat",
+        ),
+      };
+      return gated as unknown as ParticipantClientLike;
+    },
     registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
     unregisterStreamWithHitl: (id) => {
       registeredHitlStreams.delete(id);
