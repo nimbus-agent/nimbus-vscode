@@ -1138,13 +1138,16 @@ export function createInlineHitlSurface(args: {
 // The provider is registered lazily on first use; each call gets a unique URI
 // so VS Code re-resolves the content. The `.json` path extension drives syntax
 // highlighting. Injectable as deps.openReadonlyJson so tests don't touch vscode.
-function createReadonlyJsonOpener(
+export function createReadonlyJsonOpener(
   ctx: ExtensionContextLike,
-): (title: string, content: string) => Promise<void> {
-  const scheme = "nimbus-audit";
   // Bound retained content so a long session of opening entries can't grow the
   // map without limit (Map preserves insertion order → oldest evicts first).
-  const MAX_DOCS = 50;
+  // Callers that render large payloads (the egress preview) pass a small bound:
+  // a full outbound prompt is among the biggest strings this extension builds,
+  // and 50 of them would sit in memory for the whole session.
+  maxDocs = 50,
+): (title: string, content: string) => Promise<void> {
+  const scheme = "nimbus-audit";
   const docs = new Map<string, string>();
   let seq = 0;
   let registered = false;
@@ -1161,7 +1164,7 @@ function createReadonlyJsonOpener(
     seq += 1;
     const path = `/${seq}/${title}`;
     docs.set(path, content);
-    while (docs.size > MAX_DOCS) {
+    while (docs.size > maxDocs) {
       const oldest = docs.keys().next().value;
       if (oldest === undefined) break;
       docs.delete(oldest);

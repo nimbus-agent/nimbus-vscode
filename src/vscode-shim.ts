@@ -84,22 +84,28 @@ export interface TextEditorLike {
   selection: { isEmpty: boolean };
 }
 
+export interface MessageOptionsLike {
+  modal?: boolean;
+  /** Secondary text under the main message. Modal dialogs only; plain text. */
+  detail?: string;
+}
+
 export interface WindowApi {
   createOutputChannel(name: string): OutputChannelHandle;
   createStatusBarItem(alignment: 1 | 2, priority: number): StatusBarItemHandle;
   showInformationMessage(
     msg: string,
-    opts: { modal?: boolean },
+    opts: MessageOptionsLike,
     ...items: string[]
   ): Thenable<string | undefined>;
   showErrorMessage(
     msg: string,
-    opts?: { modal?: boolean },
+    opts?: MessageOptionsLike,
     ...items: string[]
   ): Thenable<string | undefined>;
   showWarningMessage(
     msg: string,
-    opts?: { modal?: boolean },
+    opts?: MessageOptionsLike,
     ...items: string[]
   ): Thenable<string | undefined>;
   showInputBox(opts?: {
@@ -129,9 +135,17 @@ export interface ConfigurationChangeEventLike {
   affectsConfiguration(section: string): boolean;
 }
 
+export interface WorkspaceFolderLike {
+  uri: { fsPath: string };
+}
+
 export interface WorkspaceApi {
   getConfiguration(section: string): WorkspaceConfigSection;
   onDidChangeConfiguration(handler: (e: ConfigurationChangeEventLike) => void): DisposableLike;
+  /** False in Restricted Mode — the pre-flight gate is never suppressed there. */
+  isTrusted: boolean;
+  /** Leak-check needles. Undefined when no folder is open (a loose file). */
+  workspaceFolders: readonly WorkspaceFolderLike[] | undefined;
 }
 
 export interface MementoLike {

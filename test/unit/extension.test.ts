@@ -7,7 +7,11 @@ import { commands, env, workspace as vscodeWorkspace } from "vscode";
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
-import { activateWithDeps, createSourceOpener } from "../../src/extension.js";
+import {
+  activateWithDeps,
+  createReadonlyJsonOpener,
+  createSourceOpener,
+} from "../../src/extension.js";
 import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
 import type {
@@ -195,6 +199,9 @@ function makeFixture(opts: {
   saveJsonResult?: { fsPath: string } | undefined;
   openSource?: (item: { url?: string }) => Promise<void>;
   searchDebounceMs?: number;
+  /** False simulates Restricted Mode, where no pre-flight skip is honoured. */
+  isTrusted?: boolean;
+  workspaceFolders?: readonly { uri: { fsPath: string } }[];
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -314,6 +321,8 @@ function makeFixture(opts: {
       configChangeHandlers.push(handler);
       return { dispose: () => undefined };
     },
+    isTrusted: opts.isTrusted ?? true,
+    workspaceFolders: opts.workspaceFolders,
   };
 
   const commands: CommandsApi = {
@@ -2562,5 +2571,25 @@ describe("createSourceOpener", () => {
     expect(openExternal).not.toHaveBeenCalled();
     exec.mockRestore();
     openExternal.mockRestore();
+  });
+});
+
+describe("createReadonlyJsonOpener", () => {
+  test("evicts oldest documents beyond the requested bound", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    // The egress preview passes a small bound: a full outbound prompt is among
+    // the largest strings this extension builds, and the shared opener keeps 50.
+    const open = createReadonlyJsonOpener(ctx, 2);
+    await open("a.md", "AAA");
+    await open("b.md", "BBB");
+    await open("c.md", "CCC");
+    const provider = spy.mock.calls[0]?.[1] as {
+      provideTextDocumentContent(uri: { path: string }): string;
+    };
+    expect(provider.provideTextDocumentContent({ path: "/1/a.md" })).toBe("");
+    expect(provider.provideTextDocumentContent({ path: "/2/b.md" })).toBe("BBB");
+    expect(provider.provideTextDocumentContent({ path: "/3/c.md" })).toBe("CCC");
+    spy.mockRestore();
   });
 });
