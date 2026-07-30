@@ -92,8 +92,11 @@ export interface EgressPayload {
   files: readonly EgressFile[];
   /** What was deliberately left out: "2 files omitted (diff too large)". */
   omissions: readonly string[];
-  /** repo.rootPath. Held LOCALLY for the leak check. Never sent. */
-  rootHint?: string;
+  /**
+   * Absolute paths held LOCALLY for the leak check — the picked repo's
+   * rootPath plus every open workspace folder. Never sent.
+   */
+  roots: readonly string[];
 }
 
 /**
@@ -135,10 +138,23 @@ The prompt is `showWarningMessage(title, { modal: true, detail }, …)` with thr
 items — VS Code adds Cancel to a modal automatically:
 
 - **Send** → `send`
-- **Show full text** → open the verbatim prompt in the existing read-only tab,
-  then re-show the modal. Bounded loop; the tab does not decide anything.
+- **Show full text** → dismiss, open the verbatim prompt in the read-only tab,
+  then **re-ask with a non-modal notification** (`Send` / `Cancel`)
 - **Always send &lt;surface&gt; here** → set the skip, then `send`
 - Cancel / Esc / dismissed → `cancel`
+
+**The re-ask must not be modal.** A VS Code modal blocks the whole workbench, so
+re-showing one over the freshly opened tab would leave the user unable to
+scroll, search, or copy the very text they asked to see. The second prompt is a
+plain notification, which floats and lets the editor be used. This costs nothing
+architecturally: what makes this a gate is that the code *awaits* a decision
+before calling the client, not that the dialog is blocking.
+
+The first modal stays modal. It is a self-contained summary — there is nothing
+behind it to read, and a send should interrupt.
+
+A dismissed notification is `cancel`. The gate fails closed on every ambiguous
+outcome.
 
 ### The guardrail — two mechanisms
 
@@ -191,12 +207,31 @@ Three rules:
 call sites. A second implementation inside the gate would diverge and let call
 sites get lazy.
 
-**The leak check is a non-negotiable made executable.** We hold `repo.rootPath`
-as an exact string, so searching the assembled prompt for that literal has no
-false positives — unlike a "looks like a path" regex, which fires on every
+**The leak check is a non-negotiable made executable.** We hold each root as an
+exact string, so searching the assembled prompt for those literals has no false
+positives — unlike a "looks like a path" regex, which fires on every
 `#!/usr/bin/env` in a diff. On a hit the modal warns, and says plainly that
 Nimbus did not add it: it is inside the user's own changes. Today "never send an
 absolute path" is enforced only by a reviewer noticing.
+
+What the check searches for:
+
+| Needle | Why |
+|---|---|
+| The picked repo's `rootPath` | The original non-negotiable |
+| Every open workspace folder | Multi-root windows, **and** Quick Ask — which has no repo at all, so a root-only check would have skipped it entirely |
+| `os.homedir()` | The highest-value needle: it carries the OS username |
+| Each of the above with `/` and `\` swapped | On Windows the same path appears both ways, often within one payload |
+
+**Not** `os.tmpdir()`. On Linux that is `/tmp` — a string that legitimately
+appears in shebangs, scripts, test fixtures, and documentation. Matching it
+would break the zero-false-positive property that makes the warning worth
+showing at all, and a gate that cries wolf trains people to click through it.
+On Windows `tmpdir()` lives under `homedir()`, so it is largely covered anyway.
+
+The checker is pure and takes needles as input strings. The caller resolves
+`os.homedir()` and the workspace folders; `node:os` never appears in a pure
+module.
 
 **Omissions are part of what leaves.** `collectDiff` already computes
 `omittedTooLarge`, `skippedSecret`, `nonTextual`, and `warnOmissions`
@@ -246,7 +281,23 @@ unaffected.
 | SCM trio | `commands.ts:252` `invoke()` gains a `meta` parameter. One shared helper, so all four commands — and any fifth — are covered. A pure `collectedToMeta(collected)` maps `CollectedDiff` onto the manifest |
 | Ask panel | `chat-controller.ts` deps receive the gated client; `record()` fires inside it. **No call-site diff** |
 | Participant | same |
-| LM tools | `prepareInvocation` added to `real-lm-tools.ts` (already coverage-excluded glue); its message comes from pure `confirmationMessage()`. Kind `lmTool` is record-only — the confirmation happened upstream, and VS Code remembers *Continue* for the session itself |
+| LM tools | `prepareInvocation` added to `real-lm-tools.ts` (already coverage-excluded glue); its message comes from pure `confirmationMessage()`, **including the leak-check warning** (see below). Kind `lmTool` is record-only at `invoke` time — the confirmation happened upstream, and VS Code remembers *Continue* for the session itself |
+
+### The leak check runs on the LM-tools path too
+
+We author the confirmation card — `confirmationMessages: { title, message }` is
+ours — so this is not a generic host dialog we are stuck with. But marking the
+kind record-only would mean the leak check never runs there, and the question
+text on that path is written by *another model*, which may well quote an
+absolute path it read from disk. So `prepareInvocation` builds the payload and
+runs the same check, folding any warning into the card's message before the user
+is asked.
+
+**Unverified, for the Extension Development Host pass:** `prepareInvocation` is
+optional in the VS Code LM-tool API, and I have not confirmed that every
+invocation route calls it. If a route skips it, the card never appears and only
+`record` runs on that path. Worth checking against a real Copilot Chat turn
+before treating this path as gated rather than merely observed.
 
 `extension.ts` builds the gate once and hands each surface its own fixed-kind
 wrapper.
@@ -278,17 +329,47 @@ Cancel is handled by VS Code before `invoke` runs.
 `lastPayload` is in-memory only; it does not survive a window reload. The signed
 ledger is the durable record, and this must not become a second one.
 
+### Retention
+
+`lastPayload` is a single slot, replaced on every send — there is no list to
+accumulate. Its size is already bounded upstream: Quick Ask clamps at
+`QUICK_ASK_MAX_CONTEXT_CHARS` (50,000) and `collectDiff` drops files that blow
+its budget, so the multi-megabyte payload is not reachable on the prompting
+paths.
+
+The real retention is elsewhere. `createReadonlyJsonOpener`
+(`src/extension.ts:1141`) keeps its rendered documents in a `Map` capped at
+`MAX_DOCS = 50` so the content provider can still serve a tab the user left
+open. Routing full outbound payloads through the shared instance would park up
+to 50 of the largest strings this extension ever builds there for the rest of
+the session, interleaved with audit entries.
+
+So the preview gets its **own** opener instance with a small cap.
+`createReadonlyJsonOpener` takes `maxDocs` as a parameter (default 50,
+preserving today's behaviour); the preview passes 5. Anything older than the
+last handful of previews is not worth a megabyte.
+
 ## Shim change
 
-One new member on `WorkspaceApi`: `isTrusted: boolean`, for the Restricted-Mode
-override. Added to `test/unit/vscode-stub.ts` alongside it.
+Two new members on `WorkspaceApi` (`src/vscode-shim.ts:132`, which today carries
+only `getConfiguration` and `onDidChangeConfiguration`):
+
+- `isTrusted: boolean` — the Restricted-Mode override
+- `workspaceFolders: readonly { uri: { fsPath: string } }[] | undefined` — the
+  leak check's needles
+
+Both added to `test/unit/vscode-stub.ts` alongside.
+
+`createReadonlyJsonOpener` (`src/extension.ts:1141`) gains a `maxDocs`
+parameter, defaulting to 50.
 
 ## Testing
 
 | File | Covers |
 |---|---|
 | `egress-preflight.test.ts` | renderers: elision at 5, zero-file case, omissions, leak warning, LM card |
-| `egress-gate.test.ts` | decision table × trusted/untrusted × skip set/unset; the *Show full text* re-ask loop; Cancel |
+| `egress-leak-check.test.ts` | each needle kind; both separator forms; **`/tmp` in a shebang does not fire**; no needles → no warning |
+| `egress-gate.test.ts` | decision table × trusted/untrusted × skip set/unset; the *Show full text* path (**second prompt is non-modal**, dismissal is `cancel`); Cancel |
 | `egress-gated-client.test.ts` | args forwarded; **on cancel the raw client is never called**; `askStream` still returns synchronously |
 | `egress-skip-store.test.ts` | memento round-trip, per-surface isolation |
 | `egress-choke-point.test.ts` | the allowlist grep guard |
@@ -325,6 +406,12 @@ bun run test && bun run typecheck && bun run lint && bun run build \
   && bun run check-bundle && bun run check-vsix-contents && bun run check-settings-docs
 ```
 
-Plus the `verify-extension` skill's Extension Development Host pass: the modal
-is a real VS Code dialog and its button order, the automatic Cancel, and the
-*Show full text* re-ask loop are worth seeing once for real.
+Plus the `verify-extension` skill's Extension Development Host pass. Four things
+cannot be settled from a unit test:
+
+1. The modal's real button order and its automatic Cancel.
+2. That the tab opened by *Show full text* is genuinely usable — scrollable and
+   searchable — with the non-modal re-ask on screen.
+3. Whether `prepareInvocation` is called on every LM-tool invocation route
+   (see above).
+4. That an untrusted workspace really does prompt despite a set skip.
