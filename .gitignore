@@ -10,3 +10,6 @@ coverage/
 # Personal (per-developer) Claude Code settings — shared config lives in .claude/settings.json
 .claude/settings.local.json
 .claude/worktrees/
+
+# Superpowers brainstorming mockups (local, per-session)
+.superpowers/brainstorm/
