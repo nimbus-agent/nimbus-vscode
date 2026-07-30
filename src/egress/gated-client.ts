@@ -57,3 +57,38 @@ export function gateAskStream<H, O>(
     return raw(input, opts);
   };
 }
+
+// ---------------------------------------------------------------------------
+// Raw-client entry points.
+//
+// These exist so the wiring in extension.ts — the ONE place holding a real
+// NimbusClient — never has to write `.agentInvoke(` or `.askStream(` itself.
+// Keeping those call shapes inside this file is what lets
+// egress-choke-point.test.ts allowlist consumer modules (which only ever hold
+// an injected seam) while still catching any new code that reaches for a raw
+// client.
+
+export interface RawAgentInvoker<R> {
+  agentInvoke(input: string, opts: { stream: boolean; agent?: string }): Promise<R>;
+}
+
+export interface RawAskStreamer<H, O> {
+  askStream(input: string, opts?: O): H;
+}
+
+export function gateRawAgentInvoke<R>(
+  client: RawAgentInvoker<R>,
+  gate: EgressGate,
+  kind: EgressKind,
+): GatedAgentInvoke<R> {
+  return gateAgentInvoke((i, o) => client.agentInvoke(i, o), gate, kind);
+}
+
+export function gateRawAskStream<H, O>(
+  client: RawAskStreamer<H, O>,
+  gate: EgressGate,
+  kind: EgressKind,
+  action: string,
+): (input: string, opts?: O) => H {
+  return gateAskStream((i, o) => client.askStream(i, o), gate, kind, action);
+}

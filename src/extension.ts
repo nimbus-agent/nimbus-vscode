@@ -17,7 +17,7 @@ import { type ConnectionState, createConnectionManager } from "./connection/conn
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
 import { createEgressGate } from "./egress/gate.js";
-import { gateAgentInvoke, gateAskStream, isEgressCancelled } from "./egress/gated-client.js";
+import { gateRawAgentInvoke, gateRawAskStream, isEgressCancelled } from "./egress/gated-client.js";
 import { droppedRoots } from "./egress/leak-check.js";
 import { renderFullEgress } from "./egress/preflight.js";
 import { createPreflightSkipStore } from "./egress/skip-store.js";
@@ -309,7 +309,7 @@ export function activateWithDeps(
         ? c
         : {
             ...full,
-            askStream: gateAskStream(full.askStream.bind(full), egressGate, "ask", "Ask panel"),
+            askStream: gateRawAskStream(full, egressGate, "ask", "Ask panel"),
           };
     chatController = createChatController({
       client: gatedChatClient as unknown as Parameters<typeof createChatController>[0]["client"],
@@ -594,7 +594,7 @@ export function activateWithDeps(
       return client === undefined
         ? undefined
         : {
-            agentInvoke: gateAgentInvoke((i, o) => client.agentInvoke(i, o), egressGate, "scm"),
+            agentInvoke: gateRawAgentInvoke(client, egressGate, "scm"),
             egressProveWindow: (p) => client.egressProveWindow(p),
           };
     },
@@ -849,7 +849,7 @@ export function activateWithDeps(
     const options: { stream: boolean; agent?: string } = { stream: false };
     if (agent.length > 0) options.agent = agent;
     try {
-      const invoke = gateAgentInvoke((i, o) => client.agentInvoke(i, o), egressGate, "quickAsk");
+      const invoke = gateRawAgentInvoke(client, egressGate, "quickAsk");
       const result = await deps.window.withProgress(
         { location: PROGRESS_LOCATION_NOTIFICATION, title: "Nimbus: asking…" },
         () =>
@@ -1136,12 +1136,7 @@ export function activateWithDeps(
       if (client === undefined) return undefined;
       const gated = {
         ...client,
-        askStream: gateAskStream(
-          client.askStream.bind(client),
-          egressGate,
-          "participant",
-          "@nimbus chat",
-        ),
+        askStream: gateRawAskStream(client, egressGate, "participant", "@nimbus chat"),
       };
       return gated as unknown as ParticipantClientLike;
     },
@@ -1170,11 +1165,7 @@ export function activateWithDeps(
             ? undefined
             : {
                 searchRanked: (p) => client.searchRanked(p),
-                agentInvoke: gateAgentInvoke(
-                  (i, o) => client.agentInvoke(i, o),
-                  egressGate,
-                  "lmTool",
-                ),
+                agentInvoke: gateRawAgentInvoke(client, egressGate, "lmTool"),
               };
         },
         askAgent: () => settings.askAgent(),
