@@ -2593,3 +2593,27 @@ describe("createReadonlyJsonOpener", () => {
     spy.mockRestore();
   });
 });
+
+describe("pre-flight commands", () => {
+  test("registers both", () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    expect(f.commandHandlers.has("nimbus.showLastOutbound")).toBe(true);
+    expect(f.commandHandlers.has("nimbus.resetPreflightPrompts")).toBe(true);
+  });
+
+  test("showLastOutbound says so plainly when nothing has been sent", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await cmd(f, "nimbus.showLastOutbound")();
+    expect(f.infoMessages.join(" ")).toContain("nothing has been sent");
+    expect(f.openedDocs).toEqual([]);
+  });
+
+  test("resetPreflightPrompts clears the skips and says so", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await cmd(f, "nimbus.resetPreflightPrompts")();
+    expect(f.infoMessages.join(" ")).toContain("shown again");
+  });
+});

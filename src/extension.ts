@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
+import { homedir, tmpdir } from "node:os";
 
 import { discoverSocketPath, type HitlRequest, NimbusClient } from "@nimbus-dev/client";
 import * as vscode from "vscode";
@@ -15,6 +16,10 @@ import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js"
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
+import { createEgressGate } from "./egress/gate.js";
+import { droppedRoots } from "./egress/leak-check.js";
+import { renderFullEgress } from "./egress/preflight.js";
+import { createPreflightSkipStore } from "./egress/skip-store.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
@@ -537,6 +542,39 @@ export function activateWithDeps(
       };
     });
 
+  // Leak-check needles, resolved fresh each time so a folder opened mid-session
+  // is picked up. They are held locally and never sent.
+  //
+  // tmpdir() earns its place on macOS, where it is /var/folders/<hash>/T —
+  // long, specific, and NOT under homedir, so nothing else would catch it. On
+  // Windows it lives under homedir (redundant but harmless) and on Linux it is
+  // usually "/tmp", which leak-check drops for being too short to search for
+  // safely. Passing it unconditionally is therefore safe: the threshold, not
+  // this call site, decides whether it is specific enough to use.
+  const egressRoots = (): readonly string[] => {
+    const folders = deps.workspace.workspaceFolders ?? [];
+    return [...folders.map((f) => f.uri.fsPath), homedir(), tmpdir()];
+  };
+  // Narrowing coverage silently reads as "we checked everything". Say what was
+  // dropped, once, at activation.
+  const droppedNeedles = droppedRoots(egressRoots());
+  if (droppedNeedles.length > 0) {
+    log.debug(
+      `egress: leak check skipping ${droppedNeedles.length} short root(s): ${droppedNeedles.join(", ")}`,
+    );
+  }
+  const preflightSkips = createPreflightSkipStore(ctx.workspaceState);
+  const egressGate = createEgressGate({
+    window: deps.window,
+    // A small retention bound: a full outbound prompt is among the largest
+    // strings this extension builds, and the shared opener keeps 50.
+    openReadonly: deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx, 5),
+    skips: preflightSkips,
+    isTrusted: () => deps.workspace.isTrusted,
+    roots: egressRoots,
+    log,
+  });
+
   const scm = createScmCommands({
     git: deps.git ?? createRealGitApi(log),
     client: () => {
@@ -813,6 +851,30 @@ export function activateWithDeps(
       log.error(`nimbus.quickAsk failed: ${errMsg(e)}`);
       void deps.window.showErrorMessage(`Nimbus quick ask failed: ${errMsg(e)}`);
     }
+  });
+
+  // The before-the-fact view's counterpart to the egress ledger: what the LAST
+  // send actually carried. In-memory only — the signed ledger is the durable
+  // record, and this must not become a second one.
+  register("nimbus.showLastOutbound", async () => {
+    const payload = egressGate.lastPayload();
+    if (payload === undefined) {
+      void deps.window.showInformationMessage(
+        "Nimbus: nothing has been sent to the agent in this window yet.",
+        {},
+      );
+      return;
+    }
+    await openReadonlyJson("Nimbus outbound.md", renderFullEgress(payload));
+  });
+
+  // The way back from an over-eager "Always send …".
+  register("nimbus.resetPreflightPrompts", async () => {
+    await preflightSkips.clearAll();
+    void deps.window.showInformationMessage(
+      "Nimbus: the send preview will be shown again in this workspace.",
+      {},
+    );
   });
 
   register("nimbus.newConversation", async () => {

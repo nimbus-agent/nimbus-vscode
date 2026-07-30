@@ -88,6 +88,16 @@
         "category": "Nimbus"
       },
       {
+        "command": "nimbus.showLastOutbound",
+        "title": "Show Last Outbound Payload",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.resetPreflightPrompts",
+        "title": "Reset Egress Preview Prompts",
+        "category": "Nimbus"
+      },
+      {
         "command": "nimbus.newConversation",
         "title": "New Conversation",
         "category": "Nimbus"
