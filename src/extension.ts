@@ -1160,7 +1160,27 @@ export function activateWithDeps(
   const registerLm = deps.registerLmTools ?? registerNimbusLmTools;
   ctx.subscriptions.push(
     registerLm({
-      deps: { client: () => nimbus(), askAgent: () => settings.askAgent(), log },
+      deps: {
+        // Another extension's agent drives this path, so it routes through the
+        // seam like every other. The user-facing confirmation happens upstream
+        // in prepareInvocation, which renders the same manifest.
+        client: () => {
+          const client = nimbus();
+          return client === undefined
+            ? undefined
+            : {
+                searchRanked: (p) => client.searchRanked(p),
+                agentInvoke: gateAgentInvoke(
+                  (i, o) => client.agentInvoke(i, o),
+                  egressGate,
+                  "lmTool",
+                ),
+              };
+        },
+        askAgent: () => settings.askAgent(),
+        roots: egressRoots,
+        log,
+      },
     }),
   );
 
