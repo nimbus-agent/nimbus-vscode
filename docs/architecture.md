@@ -88,6 +88,44 @@ code paths without a running editor. Keep `src/` and `test/` self-contained.
 | `src/logging.ts` | Output-channel logger. **Never** `console` in `src/` (Biome's `noConsole`). |
 | `src/settings.ts` | Typed accessors over `nimbus.*` configuration. |
 | `src/scm/` | Dev-workflow trio (Generate Commit Message, Review Changes, Generate Tests, Generate Docstrings): pure diff/commit-message/review/generate modules behind a `GitApiLike` seam, plus `commands.ts` and `real-git.ts` (see below). |
+| `src/egress/` | The pre-flight gate: every agent-bound call routes through `gated-client.ts` (see below). Pure `leak-check.ts` / `preflight.ts`, the `gate.ts` decision table, and the `skip-store.ts` memento wrapper. |
+
+## The `src/egress/` choke point
+
+Before anything reaches the agent, it passes through one seam that can render
+exactly what would leave — paths already redacted — and refuse to send it. The
+gate is the point; the transparency is the payoff.
+
+Five outbound paths route through it. Only the two where the **extension**
+assembles context prompt by default:
+
+| Surface | Call | Gate behaviour |
+| --- | --- | --- |
+| Quick Ask | `agentInvoke` | **prompts** — extension picks the context (a whole file, when there is no selection) |
+| SCM trio (4 commands) | `agentInvoke` | **prompts** — extension picks the context (diffs of up to 100 files) |
+| Ask panel | `askStream` | routes and records; no prompt — the user typed it |
+| `@nimbus` participant | `askStream` | routes and records; no prompt — the user typed it |
+| LM tools (`nimbus_ask`) | `agentInvoke` | native `prepareInvocation` card, rendered inline by the *calling* chat |
+
+Two mechanisms keep it a guardrail rather than a convention:
+
+1. **Type-level.** `ScmClientLike.agentInvoke` and `LmToolsClientLike.agentInvoke`
+   take a third required `EgressMeta` argument, so a raw `NimbusClient` does not
+   satisfy them structurally — the ungated client cannot be wired in by
+   accident. Each surface gets a wrapper with its `EgressKind` fixed at wiring
+   time, so a fifth SCM command inherits the gate by construction.
+2. **CI-level.** `test/unit/egress-choke-point.test.ts` asserts that
+   `extension.ts` — the one place holding a real client — never touches
+   `.agentInvoke` / `.askStream`, and that those call shapes appear only in
+   `gated-client.ts` plus four allowlisted consumer modules, each of which holds
+   an injected seam rather than a real client.
+
+Cancelling throws `EgressCancelled`; every catch treats it as a normal outcome
+and stays silent, exactly as dismissing a Quick Pick does.
+
+The gate makes **no RPCs**. A pre-flight view describes a payload the extension
+already holds, so like the troubleshooter and walkthrough it works while
+disconnected. It is the before-the-fact counterpart to the egress ledger.
 
 ## The `src/scm/` seam
 

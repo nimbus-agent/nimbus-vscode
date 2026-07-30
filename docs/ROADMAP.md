@@ -65,6 +65,7 @@ rough T-shirt size (S / M / L).
 | **Dev-workflow trio** — Generate commit message (staged diff → SCM input box), Review changes (all local changes vs `HEAD` → findings tab), Generate tests / docstrings (untitled test buffer / docstring diff) | `agentInvoke` + SCM API |
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
+| **"Preview what leaves" pre-flight** — a gate, not a viewer: all five agent-bound paths route through one seam that renders the exact outbound context with redacted paths and can refuse to send. Prompts on the two surfaces where the extension assembles the context; per-surface, per-workspace "always send here"; plus `Show Last Outbound Payload` and `Reset Egress Preview Prompts` | *no RPC — the payload is already in hand* |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
 | **Get Started walkthrough** — first-run walkthrough (install → connect Gateway → try Ask/Search/Quick Ask), on the Welcome page and via `Nimbus: Open Walkthrough` | *VS Code Walkthroughs API — no RPC* |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
@@ -83,14 +84,18 @@ The features that move the extension from good to **great** — the ones that le
 into what Copilot-style tools cannot do (local-first, agent-based, egress-audited)
 or that meet developers where they already work. All still on existing RPCs.
 
-The **native VS Code Chat participant** and the **Dev-workflow trio** have
-shipped — see **Already shipped** above; the remaining Phase 2 items below are
-still open.
+The **native VS Code Chat participant**, the **Dev-workflow trio** and the
+**"Preview what leaves" pre-flight** have shipped — see **Already shipped**
+above; the remaining Phase 2 items below are still open.
+
+The pre-flight shipped as a **gate**, not the passive viewer this table
+originally described, and it needed **no RPCs** at all — not the `local` +
+`egressList` guessed here. A pre-flight view describes a payload the extension
+is already holding.
 
 | Feature | Value | Client RPC | Effort |
 | --- | --- | --- | --- |
 | **Workflow surface** — run / monitor / cancel workflows | The flagship gap (the removed `Run Workflow` stub is tracked here); unblocked by client `0.12.1` | `workflowList`, `workflowSave`, `workflowDelete`, `workflowListRuns`, `workflowRun` | L |
-| **"Preview what leaves" pre-flight** — before an agent action, show the exact context that will be sent, with redacted paths | The privacy moat made visible; extends the `redactPath` work | local + `egressList` | M |
 | **Context-grounded Ask** — `@`-mention / attach files, search results, or index items into a question | Answers cite *your* local knowledge, not the model's guess | `searchRanked` / `queryItems` + `askStream` | M |
 
 ## Phase 3 — Deepen surfaces & trust
