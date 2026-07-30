@@ -221,17 +221,28 @@ What the check searches for:
 | The picked repo's `rootPath` | The original non-negotiable |
 | Every open workspace folder | Multi-root windows, **and** Quick Ask — which has no repo at all, so a root-only check would have skipped it entirely |
 | `os.homedir()` | The highest-value needle: it carries the OS username |
+| `os.tmpdir()` | Earns its place on macOS, where it is `/var/folders/<hash>/T` — long, specific, and *not* under `homedir()`, so nothing else would catch it |
 | Each of the above with `/` and `\` swapped | On Windows the same path appears both ways, often within one payload |
 
-**Not** `os.tmpdir()`. On Linux that is `/tmp` — a string that legitimately
-appears in shebangs, scripts, test fixtures, and documentation. Matching it
-would break the zero-false-positive property that makes the warning worth
-showing at all, and a gate that cries wolf trains people to click through it.
-On Windows `tmpdir()` lives under `homedir()`, so it is largely covered anyway.
+**A length threshold, not a per-needle veto.** A needle shorter than 5
+characters is dropped, because a 1-4 character string fires on almost any
+payload. That single rule is what makes `tmpdir()` safe to pass in
+unconditionally: on Linux it is usually `/tmp`, four characters that appear
+legitimately in shebangs, fixtures and documentation, so the threshold drops it
+— while the long macOS form is still checked. The *call site* does not decide
+which needles are trustworthy; the threshold does.
+
+The threshold is why the warning can be trusted at all: a gate that cries wolf
+trains people to click through it. Homedirs at or above 5 characters —
+including `/root`, which is exactly 5 — are unaffected.
+
+Dropping a needle narrows coverage silently, which reads as "we checked
+everything" when we did not. So `droppedRoots()` is exported and logged once at
+activation.
 
 The checker is pure and takes needles as input strings. The caller resolves
-`os.homedir()` and the workspace folders; `node:os` never appears in a pure
-module.
+`os.homedir()`, `os.tmpdir()` and the workspace folders; `node:os` never
+appears in a pure module.
 
 **Omissions are part of what leaves.** `collectDiff` already computes
 `omittedTooLarge`, `skippedSecret`, `nonTextual`, and `warnOmissions`
@@ -368,7 +379,7 @@ parameter, defaulting to 50.
 | File | Covers |
 |---|---|
 | `egress-preflight.test.ts` | renderers: elision at 5, zero-file case, omissions, leak warning, LM card |
-| `egress-leak-check.test.ts` | each needle kind; both separator forms; **`/tmp` in a shebang does not fire**; no needles → no warning |
+| `egress-leak-check.test.ts` | each needle kind; both separator forms; **`/tmp` in a shebang does not fire**; `/root` at exactly the threshold does; `droppedRoots` names what was skipped; no needles → no warning |
 | `egress-gate.test.ts` | decision table × trusted/untrusted × skip set/unset; the *Show full text* path (**second prompt is non-modal**, dismissal is `cancel`); Cancel |
 | `egress-gated-client.test.ts` | args forwarded; **on cancel the raw client is never called**; `askStream` still returns synchronously |
 | `egress-skip-store.test.ts` | memento round-trip, per-surface isolation |

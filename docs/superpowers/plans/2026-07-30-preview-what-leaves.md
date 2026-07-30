@@ -47,6 +47,7 @@ Create `test/unit/egress-leak-check.test.ts`:
 import { describe, expect, test } from "vitest";
 
 import {
+  droppedRoots,
   findLeakedRoots,
   MIN_NEEDLE_LENGTH,
   pathVariants,
@@ -92,6 +93,23 @@ describe("findLeakedRoots", () => {
   test("ignores empty and whitespace-only roots", () => {
     expect(findLeakedRoots("anything at all", ["", "   "])).toEqual([]);
   });
+
+  test("a 5-character root is long enough to be a needle", () => {
+    // "/root" is homedir() for the root user on Linux. Worth checking
+    // explicitly: it sits exactly on the threshold.
+    expect("/root".length).toBe(MIN_NEEDLE_LENGTH);
+    expect(findLeakedRoots("wrote /root/svc.log", ["/root"])).toEqual(["/root"]);
+  });
+});
+
+describe("droppedRoots", () => {
+  test("names the roots that are too short to search for", () => {
+    expect(droppedRoots(["/tmp", "/", "C:\\gitrep\\nimbus"])).toEqual(["/tmp", "/"]);
+  });
+
+  test("is empty when every root is usable", () => {
+    expect(droppedRoots(["/home/asafg", "C:\\gitrep\\nimbus"])).toEqual([]);
+  });
 });
 ```
 
@@ -116,9 +134,15 @@ Create `src/egress/leak-check.ts`:
 // Needles never leave the machine; they exist only to be searched for.
 
 // Shorter needles are dropped. A root of "/" or "" would match everything,
-// and this is also the structural reason os.tmpdir() is not a needle: on
-// Linux it is "/tmp", four characters that appear legitimately in shebangs,
-// test fixtures and documentation.
+// and this is what makes os.tmpdir() safe to pass in: on Linux it is usually
+// "/tmp" — four characters that appear legitimately in shebangs, fixtures and
+// documentation — so it is filtered here rather than at the call site, while
+// the long macOS form (/var/folders/…/T) still gets checked.
+//
+// LIMITATION: a dropped root is not searched for at all. That is the right
+// trade (a 1-4 character needle would fire on almost any payload), but it is
+// silent, so callers should log droppedRoots() once. Homedirs at or above the
+// threshold — including "/root", which is exactly 5 — are unaffected.
 export const MIN_NEEDLE_LENGTH = 5;
 
 // The same path can appear in one payload written both ways — a Windows tool
@@ -130,18 +154,29 @@ export function pathVariants(root: string): readonly string[] {
   return forward === back ? [forward] : [root, root.includes("\\") ? forward : back];
 }
 
+function usable(root: string): boolean {
+  return root.trim().length >= MIN_NEEDLE_LENGTH;
+}
+
 // The roots found verbatim in `text`, each reported once, in the order given.
 // An empty result means the payload is clean.
 export function findLeakedRoots(text: string, roots: readonly string[]): readonly string[] {
   const haystack = text.toLowerCase();
   const hits: string[] = [];
   for (const root of roots) {
-    if (root.trim().length < MIN_NEEDLE_LENGTH) continue;
+    if (!usable(root)) continue;
     if (hits.includes(root)) continue;
     const found = pathVariants(root).some((v) => haystack.includes(v.toLowerCase()));
     if (found) hits.push(root);
   }
   return hits;
+}
+
+// The roots findLeakedRoots will NOT search for. Exported so the caller can
+// log them: narrowing coverage silently reads as "we checked everything" when
+// we did not.
+export function droppedRoots(roots: readonly string[]): readonly string[] {
+  return roots.filter((r) => !usable(r));
 }
 ```
 
@@ -1291,12 +1326,25 @@ In `src/extension.ts`, near `const sessionStore = createSessionStore(ctx.workspa
 (line 126), add:
 
 ```ts
-  // Leak-check needles, resolved fresh each time so opening a folder mid-
+  // Leak-check needles, resolved fresh each time so a folder opened mid-
   // session is picked up. They are held locally and never sent.
+  //
+  // tmpdir() earns its place on macOS, where it is /var/folders/<hash>/T —
+  // long, specific, and NOT under homedir, so nothing else would catch it. On
+  // Windows it lives under homedir (redundant but harmless) and on Linux it is
+  // usually "/tmp", which leak-check drops for being too short to search for
+  // safely. Passing it unconditionally is therefore safe: the threshold, not
+  // this call site, decides whether it is specific enough to use.
   const egressRoots = (): readonly string[] => {
     const folders = deps.workspace.workspaceFolders ?? [];
-    return [...folders.map((f) => f.uri.fsPath), homedir()];
+    return [...folders.map((f) => f.uri.fsPath), homedir(), tmpdir()];
   };
+  // Narrowing coverage silently reads as "we checked everything". Say what was
+  // dropped, once, at activation.
+  const dropped = droppedRoots(egressRoots());
+  if (dropped.length > 0) {
+    log.debug(`egress: leak check skipping ${dropped.length} short root(s): ${dropped.join(", ")}`);
+  }
   const egressGate = createEgressGate({
     window: deps.window,
     // A small retention bound: a full outbound prompt is among the largest
@@ -1312,9 +1360,10 @@ In `src/extension.ts`, near `const sessionStore = createSessionStore(ctx.workspa
 Add the imports:
 
 ```ts
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 import { createEgressGate } from "./egress/gate.js";
+import { droppedRoots } from "./egress/leak-check.js";
 import { renderFullEgress } from "./egress/preflight.js";
 import { createPreflightSkipStore } from "./egress/skip-store.js";
 ```
