@@ -1,7 +1,14 @@
 import { describe, expect, test } from "vitest";
 
+import { EgressCancelled } from "../../src/egress/gated-client.js";
 import type { Logger } from "../../src/logging.js";
-import { createScmCommands, type ScmCommandDeps } from "../../src/scm/commands.js";
+import {
+  collectedToFiles,
+  collectedToOmissions,
+  createScmCommands,
+  editorContextMeta,
+  type ScmCommandDeps,
+} from "../../src/scm/commands.js";
 import type {
   ChangedFile,
   DiffScope,
@@ -731,5 +738,117 @@ describe("generateDocstrings", () => {
     const h = harness();
     await createScmCommands(h.deps).generateDocstrings();
     expect(h.errors[0]).toContain("open a file");
+  });
+});
+
+describe("collectedToFiles", () => {
+  test("names every reviewed file with the scope note", () => {
+    expect(
+      collectedToFiles(
+        {
+          block: "",
+          reviewed: ["a.ts", "b.ts"],
+          omittedTooLarge: [],
+          skippedSecret: [],
+          nonTextual: [],
+          empty: false,
+        },
+        "staged + unstaged",
+      ),
+    ).toEqual([
+      { name: "a.ts", note: "staged + unstaged" },
+      { name: "b.ts", note: "staged + unstaged" },
+    ]);
+  });
+});
+
+describe("collectedToOmissions", () => {
+  test("reports what was left out, so 'what leaves' is not an understatement", () => {
+    expect(
+      collectedToOmissions({
+        block: "",
+        reviewed: ["a.ts"],
+        omittedTooLarge: ["big.ts", "huge.ts"],
+        skippedSecret: [".env"],
+        nonTextual: ["logo.png"],
+        empty: false,
+      }),
+    ).toEqual([
+      "2 files omitted (diff too large).",
+      "1 possible secret file skipped.",
+      "1 binary or non-textual file not sent.",
+    ]);
+  });
+
+  test("says nothing when nothing was left out", () => {
+    expect(
+      collectedToOmissions({
+        block: "",
+        reviewed: ["a.ts"],
+        omittedTooLarge: [],
+        skippedSecret: [],
+        nonTextual: [],
+        empty: false,
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("editorContextMeta", () => {
+  test("redacts the path and reports whole-file scope", () => {
+    expect(
+      editorContextMeta(
+        { fileName: "/home/dev/proj/src/a.ts", hasSelection: false, truncated: false },
+        "Generate Tests",
+      ),
+    ).toEqual({
+      action: "Generate Tests",
+      files: [{ name: "a.ts", note: "whole file" }],
+      omissions: [],
+    });
+  });
+
+  test("reports a selection and a truncation as an omission", () => {
+    const meta = editorContextMeta(
+      { fileName: "a.ts", hasSelection: true, truncated: true },
+      "Generate Docstrings",
+    );
+    expect(meta.files[0]?.note).toBe("selected code");
+    expect(meta.omissions[0]).toContain("truncated");
+  });
+});
+
+describe("pre-flight cancellation", () => {
+  test("leaves the input box untouched and shows no error", async () => {
+    const repo = fakeRepo();
+    const h = harness(
+      {
+        client: () => ({
+          agentInvoke: async () => {
+            throw new EgressCancelled();
+          },
+        }),
+      },
+      [repo],
+    );
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(repo.inputBox.value).toBe("");
+    // Cancelling is a normal outcome, like dismissing a Quick Pick — the user
+    // must not be told their command "failed".
+    expect(h.errors).toEqual([]);
+    expect(h.infos).toEqual([]);
+  });
+
+  test("review opens no findings tab when cancelled", async () => {
+    const h = harness({
+      client: () => ({
+        agentInvoke: async () => {
+          throw new EgressCancelled();
+        },
+      }),
+    });
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.opened).toEqual([]);
+    expect(h.errors).toEqual([]);
   });
 });

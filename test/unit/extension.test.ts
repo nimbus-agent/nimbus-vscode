@@ -196,6 +196,7 @@ function makeFixture(opts: {
     { label: string; preset?: { label: string; prompt: string } } | undefined
   >;
   infoMessageClicks?: Array<string | undefined>;
+  warnMessageClicks?: Array<string | undefined>;
   saveJsonResult?: { fsPath: string } | undefined;
   openSource?: (item: { url?: string }) => Promise<void>;
   searchDebounceMs?: number;
@@ -218,6 +219,10 @@ function makeFixture(opts: {
   const inputAnswers = [...(opts.inputBoxAnswers ?? [])];
   const quickPickAnswers = [...(opts.quickPickAnswers ?? [])];
   const infoClicks = [...(opts.infoMessageClicks ?? [])];
+  // Answers for the pre-flight gate's modal. Undefined (the default) reads as
+  // a dismissal, which the gate treats as "cancel" — so any fixture driving a
+  // gated command to completion must supply "Send".
+  const warnClicks = [...(opts.warnMessageClicks ?? [])];
   const saveJsonCalls: Array<{ defaultName: string; content: string }> = [];
   const quickPicks: FakeQuickPick[] = [];
 
@@ -275,7 +280,7 @@ function makeFixture(opts: {
     }),
     showWarningMessage: vi.fn(async (m: string) => {
       warnMessages.push(m);
-      return undefined;
+      return warnClicks.shift();
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
     // vi.fn() collapses the generic <T> of showQuickPick, so cast to the exact
@@ -548,6 +553,9 @@ describe("activateWithDeps", () => {
       openClient: makeFakeClient({
         agentInvoke: async () => ({ reply: "```ts\nexpect(1).toBe(1);\n```" }),
       } as unknown as Partial<ClientLike>),
+      // Both invocations now pass the pre-flight gate first; without an answer
+      // the modal reads as dismissed and nothing is sent.
+      warnMessageClicks: ["Send", "Send"],
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();

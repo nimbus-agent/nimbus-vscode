@@ -17,6 +17,7 @@ import { type ConnectionState, createConnectionManager } from "./connection/conn
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
 import { createEgressGate } from "./egress/gate.js";
+import { gateAgentInvoke } from "./egress/gated-client.js";
 import { droppedRoots } from "./egress/leak-check.js";
 import { renderFullEgress } from "./egress/preflight.js";
 import { createPreflightSkipStore } from "./egress/skip-store.js";
@@ -582,7 +583,7 @@ export function activateWithDeps(
       return client === undefined
         ? undefined
         : {
-            agentInvoke: (i, o) => client.agentInvoke(i, o),
+            agentInvoke: gateAgentInvoke((i, o) => client.agentInvoke(i, o), egressGate, "scm"),
             egressProveWindow: (p) => client.egressProveWindow(p),
           };
     },
