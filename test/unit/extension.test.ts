@@ -219,10 +219,13 @@ function makeFixture(opts: {
   const inputAnswers = [...(opts.inputBoxAnswers ?? [])];
   const quickPickAnswers = [...(opts.quickPickAnswers ?? [])];
   const infoClicks = [...(opts.infoMessageClicks ?? [])];
-  // Answers for the pre-flight gate's modal. Undefined (the default) reads as
-  // a dismissal, which the gate treats as "cancel" — so any fixture driving a
-  // gated command to completion must supply "Send".
+  // Answers for the pre-flight gate's modal. Defaults to "Send" so tests about
+  // Quick Ask / SCM behaviour are not all rewritten to click through a gate
+  // they are not testing. Pass [undefined] to exercise a dismissal — see
+  // "pre-flight gate blocks a send" below, which covers that path directly.
   const warnClicks = [...(opts.warnMessageClicks ?? [])];
+  const nextWarnClick = (): string | undefined =>
+    warnClicks.length > 0 ? warnClicks.shift() : "Send";
   const saveJsonCalls: Array<{ defaultName: string; content: string }> = [];
   const quickPicks: FakeQuickPick[] = [];
 
@@ -280,7 +283,7 @@ function makeFixture(opts: {
     }),
     showWarningMessage: vi.fn(async (m: string) => {
       warnMessages.push(m);
-      return warnClicks.shift();
+      return nextWarnClick();
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
     // vi.fn() collapses the generic <T> of showQuickPick, so cast to the exact
@@ -553,9 +556,6 @@ describe("activateWithDeps", () => {
       openClient: makeFakeClient({
         agentInvoke: async () => ({ reply: "```ts\nexpect(1).toBe(1);\n```" }),
       } as unknown as Partial<ClientLike>),
-      // Both invocations now pass the pre-flight gate first; without an answer
-      // the modal reads as dismissed and nothing is sent.
-      warnMessageClicks: ["Send", "Send"],
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
@@ -2623,5 +2623,76 @@ describe("pre-flight commands", () => {
     activateWithDeps(f.ctx, f.deps);
     await cmd(f, "nimbus.resetPreflightPrompts")();
     expect(f.infoMessages.join(" ")).toContain("shown again");
+  });
+});
+
+describe("pre-flight gate blocks a send", () => {
+  const editor = {
+    text: "const secret = 1;",
+    empty: true,
+    fileName: "/p/a.ts",
+    languageId: "typescript",
+  };
+
+  test("quick ask sends nothing and reports no error when the modal is dismissed", async () => {
+    let invoked = 0;
+    const f = makeFixture({
+      activeEditor: editor,
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: ["what is this?"],
+      // Dismissed — the gate fails closed.
+      warnMessageClicks: [undefined],
+      openClient: makeFakeClient({
+        agentInvoke: async () => {
+          invoked += 1;
+          return { reply: "should never be produced" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(invoked).toBe(0);
+    expect(f.openedDocs).toEqual([]);
+    // Cancelling is a normal outcome, not a failure.
+    expect(f.errorMessages).toEqual([]);
+  });
+
+  test("the modal names the file and its scope before anything leaves", async () => {
+    const f = makeFixture({
+      activeEditor: editor,
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: ["what is this?"],
+      warnMessageClicks: [undefined],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    const detail = vi.mocked(f.deps.window.showWarningMessage).mock.calls.at(-1)?.[1] as
+      | { detail?: string }
+      | undefined;
+    expect(detail?.detail).toContain("Quick Ask");
+    // The path is redacted to a basename even in the local preview.
+    expect(detail?.detail).toContain("a.ts — whole file");
+    expect(detail?.detail).not.toContain("/p/a.ts");
+  });
+
+  test("showLastOutbound reveals what the last send actually carried", async () => {
+    const f = makeFixture({
+      activeEditor: editor,
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: ["what is this?"],
+      openClient: makeFakeClient({
+        agentInvoke: async () => ({ reply: "ok" }),
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    await cmd(f, "nimbus.showLastOutbound")();
+    const doc = f.openedDocs.at(-1);
+    expect(doc?.title).toBe("Nimbus outbound.md");
+    expect(doc?.content).toContain("what is this?");
+    expect(doc?.content).toContain("const secret = 1;");
   });
 });

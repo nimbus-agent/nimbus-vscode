@@ -17,7 +17,7 @@ import { type ConnectionState, createConnectionManager } from "./connection/conn
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
 import { createEgressGate } from "./egress/gate.js";
-import { gateAgentInvoke } from "./egress/gated-client.js";
+import { gateAgentInvoke, isEgressCancelled } from "./egress/gated-client.js";
 import { droppedRoots } from "./egress/leak-check.js";
 import { renderFullEgress } from "./egress/preflight.js";
 import { createPreflightSkipStore } from "./egress/skip-store.js";
@@ -838,9 +838,22 @@ export function activateWithDeps(
     const options: { stream: boolean; agent?: string } = { stream: false };
     if (agent.length > 0) options.agent = agent;
     try {
+      const invoke = gateAgentInvoke((i, o) => client.agentInvoke(i, o), egressGate, "quickAsk");
       const result = await deps.window.withProgress(
         { location: PROGRESS_LOCATION_NOTIFICATION, title: "Nimbus: asking…" },
-        () => client.agentInvoke(prompt, options),
+        () =>
+          invoke(prompt, options, {
+            action: "Quick Ask",
+            files: [
+              {
+                name: redactPath(editor.document.fileName),
+                note: hasSelection ? "selected code" : "whole file",
+              },
+            ],
+            omissions: truncated
+              ? [`Context truncated at ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`]
+              : [],
+          }),
       );
       const reply = extractReply(result);
       if (reply === undefined) {
@@ -849,6 +862,12 @@ export function activateWithDeps(
       }
       await openReadonlyJson("Nimbus reply.md", reply);
     } catch (e) {
+      // Cancelling at the preview is a normal outcome, like dismissing the
+      // Quick Pick above — say nothing.
+      if (isEgressCancelled(e)) {
+        log.debug("nimbus.quickAsk cancelled at the pre-flight preview");
+        return;
+      }
       log.error(`nimbus.quickAsk failed: ${errMsg(e)}`);
       void deps.window.showErrorMessage(`Nimbus quick ask failed: ${errMsg(e)}`);
     }
