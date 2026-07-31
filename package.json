@@ -404,7 +404,7 @@
         },
         {
           "command": "nimbus.quickAsk",
-          "when": "editorTextFocus"
+          "when": "editorIsOpen"
         },
         {
           "command": "nimbus.findRelatedFromIndex",
