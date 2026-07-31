@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { errMsg, type Logger } from "../logging.js";
 import type { ChangedFile, DiffScope, GitApiLike, GitRepositoryLike } from "./git-types.js";
 import { relativeOrBasename } from "./paths.js";
+import { type StatusedPath, untrackedPathsFrom } from "./untracked.js";
 
 // Thin vscode-git glue — mirrors real-participant.ts. Excluded from coverage;
 // the pure modules carry the logic and the tests.
@@ -19,7 +20,9 @@ interface RawChange {
 interface RawRepository {
   rootUri: { fsPath: string };
   inputBox: { value: string };
-  state: { untrackedChanges?: RawChange[] };
+  // Both groups are optional: which one holds untracked entries depends on the
+  // user's `git.untrackedChanges` setting — see untracked.ts.
+  state: { untrackedChanges?: RawChange[]; workingTreeChanges?: RawChange[] };
   diffIndexWithHEAD(): Promise<RawChange[]>;
   diffIndexWithHEAD(path: string): Promise<string>;
   diffWithHEAD(): Promise<RawChange[]>;
@@ -51,8 +54,17 @@ function adaptRepository(raw: RawRepository): GitRepositoryLike {
     changedFiles: listing,
     fileDiff: async (scope, path) =>
       scope === "staged" ? raw.diffIndexWithHEAD(path) : raw.diffWithHEAD(path),
-    untrackedPaths: async () =>
-      (raw.state.untrackedChanges ?? []).map((c) => relativeOrBasename(root, c.uri.fsPath)),
+    untrackedPaths: async () => {
+      const statused = (changes: RawChange[] | undefined): StatusedPath[] =>
+        (changes ?? []).map((c) => ({
+          path: relativeOrBasename(root, c.uri.fsPath),
+          status: c.status,
+        }));
+      return untrackedPathsFrom(
+        statused(raw.state.untrackedChanges),
+        statused(raw.state.workingTreeChanges),
+      );
+    },
     log: async (maxEntries) => (await raw.log({ maxEntries })).map((c) => c.message),
     inputBox: raw.inputBox,
   };
