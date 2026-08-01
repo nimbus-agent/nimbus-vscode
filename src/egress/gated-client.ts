@@ -27,7 +27,19 @@ export type GatedAgentInvoke<R> = (
   input: string,
   opts: { stream: boolean; agent?: string },
   meta: EgressMeta,
+  /**
+   * Progress title for the send itself. Shown only after the gate clears, so a
+   * "sending…" notification never appears over the preview that is still asking
+   * whether to send. Omit for a silent send.
+   */
+  progressTitle?: string,
 ) => Promise<R>;
+
+/**
+ * Runs `body` under a progress indicator. Injected rather than imported so this
+ * module stays free of `vscode` and the ordering below stays unit-testable.
+ */
+export type ProgressRunner = <R>(title: string, body: () => Promise<R>) => Promise<R>;
 
 // The required third argument is the type-level half of the guardrail: the raw
 // NimbusClient no longer satisfies ScmClientLike or LmToolsClientLike
@@ -36,10 +48,14 @@ export function gateAgentInvoke<R>(
   raw: (input: string, opts: { stream: boolean; agent?: string }) => Promise<R>,
   gate: EgressGate,
   kind: EgressKind,
+  // Defaults to running the body bare, so a caller with no progress surface —
+  // and every existing test — needs no runner.
+  withProgress: ProgressRunner = (_title, body) => body(),
 ): GatedAgentInvoke<R> {
-  return async (input, opts, meta) => {
+  return async (input, opts, meta, progressTitle) => {
     if ((await gate.check(kind, input, meta)) === "cancel") throw new EgressCancelled();
-    return raw(input, opts);
+    if (progressTitle === undefined) return raw(input, opts);
+    return withProgress(progressTitle, () => raw(input, opts));
   };
 }
 
@@ -80,8 +96,9 @@ export function gateRawAgentInvoke<R>(
   client: RawAgentInvoker<R>,
   gate: EgressGate,
   kind: EgressKind,
+  withProgress?: ProgressRunner,
 ): GatedAgentInvoke<R> {
-  return gateAgentInvoke((i, o) => client.agentInvoke(i, o), gate, kind);
+  return gateAgentInvoke((i, o) => client.agentInvoke(i, o), gate, kind, withProgress);
 }
 
 export function gateRawAskStream<H, O>(
