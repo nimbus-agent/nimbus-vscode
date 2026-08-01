@@ -120,7 +120,7 @@ describe("prompting kinds", () => {
     const h = harness({ answers: [undefined] });
     await h.deps.skips.setSkipped("quickAsk");
     expect(await h.gate.check("scm", "diff", META)).toBe("cancel");
-    expect(h.shown.length).toBe(1);
+    expect(h.shown).toHaveLength(1);
   });
 });
 
@@ -128,7 +128,7 @@ describe("Show full text", () => {
   test("opens the tab, then re-asks with a NON-modal notification", async () => {
     const h = harness({ answers: ["Show full text", "Send"] });
     expect(await h.gate.check("scm", "EXACT BYTES", META)).toBe("send");
-    expect(h.opened.length).toBe(1);
+    expect(h.opened).toHaveLength(1);
     expect(h.opened[0]?.content).toContain("EXACT BYTES");
     expect(h.shown[0]?.modal).toBe(true);
     // A modal here would block the workbench and leave the user unable to
@@ -152,7 +152,7 @@ describe("Restricted Mode", () => {
     const h = harness({ answers: [undefined], trusted: false });
     await h.deps.skips.setSkipped("scm");
     expect(await h.gate.check("scm", "diff", META)).toBe("cancel");
-    expect(h.shown.length).toBe(1);
+    expect(h.shown).toHaveLength(1);
   });
 
   test("offers no Always send button, which would be ignored anyway", async () => {

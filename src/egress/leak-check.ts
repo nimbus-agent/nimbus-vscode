@@ -23,8 +23,8 @@ export const MIN_NEEDLE_LENGTH = 5;
 // prints "C:\a\b" while a script in the same diff writes "C:/a/b". Both forms
 // are exact transforms of a known string, so neither weakens the guarantee.
 export function pathVariants(root: string): readonly string[] {
-  const forward = root.replace(/\\/g, "/");
-  const back = root.replace(/\//g, "\\");
+  const forward = root.replaceAll("\\", "/");
+  const back = root.replaceAll("/", "\\");
   return forward === back ? [forward] : [root, root.includes("\\") ? forward : back];
 }
 

@@ -78,10 +78,7 @@ function render(p: EgressPayload, limit: number | undefined): string {
     if (rest > 0) lines.push(`  … and ${rest} more`);
   }
   const footer = footerLines(p);
-  if (footer.length > 0) {
-    lines.push("");
-    lines.push(...footer);
-  }
+  if (footer.length > 0) lines.push("", ...footer);
   return lines.join("\n");
 }
 
