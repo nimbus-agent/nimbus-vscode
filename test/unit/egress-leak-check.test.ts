@@ -51,7 +51,7 @@ describe("findLeakedRoots", () => {
   test("a 5-character root is long enough to be a needle", () => {
     // "/root" is homedir() for the root user on Linux. Worth checking
     // explicitly: it sits exactly on the threshold.
-    expect("/root".length).toBe(MIN_NEEDLE_LENGTH);
+    expect("/root").toHaveLength(MIN_NEEDLE_LENGTH);
     expect(findLeakedRoots("wrote /root/svc.log", ["/root"])).toEqual(["/root"]);
   });
 });
