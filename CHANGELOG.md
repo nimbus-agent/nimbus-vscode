@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.12.0...v0.12.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* clear the 7 open SonarCloud code smells in the egress preview gate ([#70](https://github.com/nimbus-agent/nimbus-vscode/issues/70)) ([66bfe20](https://github.com/nimbus-agent/nimbus-vscode/commit/66bfe204e3d5eedbe48b0df853c7457548523455))
+
 ## [0.12.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.11.0...v0.12.0) (2026-08-01)
 
 
