@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.11.0...v0.12.0) (2026-08-01)
+
+
+### Features
+
+* **egress:** preview what leaves — a pre-flight gate on every agent-bound path ([#67](https://github.com/nimbus-agent/nimbus-vscode/issues/67)) ([690cb38](https://github.com/nimbus-agent/nimbus-vscode/commit/690cb38b7663d647cc30d3c5b1b78d4cc69710e8))
+
 ## [0.11.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.10.0...v0.11.0) (2026-07-29)
 
 
