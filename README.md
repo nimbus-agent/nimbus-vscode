@@ -130,6 +130,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). This repository was extracted from the
 - [Roadmap](./docs/ROADMAP.md) — where the extension is going, phased by SDK-readiness
 - [Nimbus User Guide](https://nimbus-agent.dev/user-guide/vscode-extension/)
 - [Nimbus](https://github.com/nimbus-agent/Nimbus) — the Gateway this extension talks to
+- [Ask a question](https://github.com/nimbus-agent/Nimbus/discussions) — the shared Nimbus Discussions board. If something is broken rather than unclear, run **Nimbus: Troubleshoot Connection** first, then [report it](https://github.com/nimbus-agent/nimbus-vscode/issues)
 
 ## On the roadmap (not yet shipped)
 
