@@ -77,6 +77,75 @@ describe("gateAgentInvoke", () => {
   });
 });
 
+// A progress notification reading "Nimbus: asking…" while the preview is still
+// on screen says the send already happened. Nothing leaks — the gate is still
+// the await — but the user is being told the opposite of the truth at the exact
+// moment they are deciding. Ordering it here rather than at the call sites means
+// no call site can get it wrong.
+describe("gateAgentInvoke progress ordering", () => {
+  const runner =
+    (events: string[]) =>
+    async <R>(title: string, body: () => Promise<R>) => {
+      events.push(`progress:${title}`);
+      return body();
+    };
+
+  test("does not start progress until the gate has cleared the send", async () => {
+    const events: string[] = [];
+    const gate = fakeGate("send");
+    const wrapped: EgressGate = {
+      ...gate,
+      check: async (kind, prompt, meta) => {
+        events.push("gate");
+        return gate.check(kind, prompt, meta);
+      },
+    };
+    const invoke = gateAgentInvoke(
+      async () => {
+        events.push("send");
+        return {};
+      },
+      wrapped,
+      "quickAsk",
+      runner(events),
+    );
+    await invoke("q", { stream: false }, META, "Nimbus: asking…");
+    expect(events).toEqual(["gate", "progress:Nimbus: asking…", "send"]);
+  });
+
+  test("shows no progress at all when the gate cancels", async () => {
+    const events: string[] = [];
+    const invoke = gateAgentInvoke(
+      async () => {
+        events.push("send");
+        return {};
+      },
+      fakeGate("cancel"),
+      "scm",
+      runner(events),
+    );
+    await expect(
+      invoke("diff", { stream: false }, META, "Nimbus: reviewing changes…"),
+    ).rejects.toBeInstanceOf(EgressCancelled);
+    expect(events).toEqual([]);
+  });
+
+  test("sends without progress when the call site asks for none", async () => {
+    const events: string[] = [];
+    const invoke = gateAgentInvoke(
+      async () => {
+        events.push("send");
+        return { reply: "ok" };
+      },
+      fakeGate("send"),
+      "lmTool",
+      runner(events),
+    );
+    expect(await invoke("q", { stream: false }, META)).toEqual({ reply: "ok" });
+    expect(events).toEqual(["send"]);
+  });
+});
+
 describe("gateAskStream", () => {
   test("records and returns the handle synchronously", () => {
     const handle = { streamId: "s1" };
