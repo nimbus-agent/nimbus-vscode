@@ -29,23 +29,25 @@ That is why, for the Gateway-backed items, the phase boundary that matters most
 is "does the RPC exist yet?":
 
 - **Phases 1–3** need nothing new from the SDK. They deepen surfaces and exploit
-  RPCs that a published client already exposes (the repo pins `^0.12.1`).
+  RPCs that a published client already exposes (the repo pins `^0.14.0`).
 - **Phase 4** is blocked until a published `@nimbus-dev/client` surfaces the
   required RPC, typed. An item graduates out of Phase 4 the moment its RPC ships.
-  `0.12.1` widened the surface well past the egress-era client: it adds the
+  `0.14.0` widens the surface well past the egress-era client: it exposes the
   workflow family (`workflowList`, `workflowSave`, `workflowDelete`,
-  `workflowListRuns`, `workflowRun`), the full connector suite
-  (`connectorListStatus`, `connectorStatus`, `connectorHealthHistory`,
-  `connectorPause`, `connectorResume`, `connectorSetInterval`,
-  `connectorSetConfig`, `connectorSync`, `connectorAuth`, `connectorAddMcp`,
-  `connectorRemove`, `connectorReindex`), the nine `agents*` briefs, the
-  `session*` and `audit*` families, and `metricsDora` / `deployPreflight`. Read
-  the authoritative list off the `NimbusClientLike` interface in
-  `node_modules/@nimbus-dev/client/dist/nimbus-client.d.ts` rather than
-  re-freezing a copy here — a frozen copy is what made this section stale. Three
-  items graduated out of Phase 4 on that bump (Workflow surface, Connector
-  management, Index write ops); what is left below is genuinely unshipped
-  upstream.
+  `workflowListRuns`, `workflowRun`, plus `workflowRunStream` since `0.13.0`),
+  the full connector suite (`connectorListStatus`, `connectorStatus`,
+  `connectorHealthHistory`, `connectorPause`, `connectorResume`,
+  `connectorSetInterval`, `connectorSetConfig`, `connectorSync`,
+  `connectorAuth`, `connectorAddMcp`, `connectorRemove`, `connectorReindex`)
+  and `subscribeConnectorConfigChanged` (also `0.13.0`), the nine `agents*`
+  briefs, the `session*` and `audit*` families, and `metricsDora` /
+  `deployPreflight`; `0.14.0` itself preserves the JSON-RPC `code`/`data` on a
+  rejected call. Read the authoritative list off the `NimbusClientLike`
+  interface in `node_modules/@nimbus-dev/client/dist/nimbus-client.d.ts` rather
+  than re-freezing a copy here — a frozen copy is what made this section stale.
+  Three items graduated out of Phase 4 once those RPCs shipped (Workflow surface,
+  Connector management, Index write ops); what is left below is genuinely
+  unshipped upstream.
 
 The columns below name the enabling client RPC (or, for Phase 4, the new SDK
 capability required) so the split is verifiable, not aspirational. Effort is a
@@ -95,7 +97,7 @@ is already holding.
 
 | Feature | Value | Client RPC | Effort |
 | --- | --- | --- | --- |
-| **Workflow surface** — run / monitor / cancel workflows | The flagship gap (the removed `Run Workflow` stub is tracked here); unblocked by client `0.12.1` | `workflowList`, `workflowSave`, `workflowDelete`, `workflowListRuns`, `workflowRun` | L |
+| **Workflow surface** — run / monitor / cancel workflows | The flagship gap (the removed `Run Workflow` stub is tracked here); unblocked by client `0.14.0` | `workflowList`, `workflowSave`, `workflowDelete`, `workflowListRuns`, `workflowRun` | L |
 | **Context-grounded Ask** — `@`-mention / attach files, search results, or index items into a question | Answers cite *your* local knowledge, not the model's guess | `searchRanked` / `queryItems` + `askStream` | M |
 
 ## Phase 3 — Deepen surfaces & trust
@@ -114,8 +116,8 @@ story. Still no SDK change required.
 | **Multi-agent compare** — ask N agents, diff their answers; per-action agent picker | Exploit the agent model; pick the best take | `agentInvoke` (fan-out) | M |
 | **Live egress feed** panel + **HITL history/notification center** + "what has Nimbus sent about this file/session?" | A complete, glanceable trust surface | `egressList` / `subscribeHitl` | M |
 | **Saved searches / history**; **CodeLens** "Ask Nimbus" over functions | Everyday ergonomics | `searchRanked` / `agentInvoke` | S |
-| **Connector management** — add / configure / health | Manage sources in-editor; unblocked by client `0.12.1` | `connectorListStatus`, `connectorStatus`, `connectorHealthHistory`, `connectorPause`/`connectorResume`, `connectorSetConfig`, `connectorAuth`, `connectorAddMcp`, `connectorRemove` | L |
-| **Index write ops** — trigger reindex / add sources | Control indexing without the CLI; unblocked by client `0.12.1` | `connectorReindex`, `connectorSync`, `connectorAddMcp` | M |
+| **Connector management** — add / configure / health | Manage sources in-editor; unblocked by client `0.14.0` | `connectorListStatus`, `connectorStatus`, `connectorHealthHistory`, `connectorPause`/`connectorResume`, `connectorSetConfig`, `connectorAuth`, `connectorAddMcp`, `connectorRemove` | L |
+| **Index write ops** — trigger reindex / add sources | Control indexing without the CLI; unblocked by client `0.14.0` | `connectorReindex`, `connectorSync`, `connectorAddMcp` | M |
 
 ## Phase 4 — Requires new nimbus SDK/Gateway development
 

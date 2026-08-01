@@ -195,8 +195,9 @@ the IPC socket or spawn a process).
 
 The **share** surface is **not** implemented — it is blocked upstream, not
 deferred by choice: no published `@nimbus-dev/client` exposes those RPCs (checked
-through `0.12.1`, the pinned version), and the IPC-only non-negotiable forbids
+through `0.14.0`, the pinned version), and the IPC-only non-negotiable forbids
 reaching past the typed client. Workflow and connector surfaces are no longer
-blocked — `0.12.1` exposes `workflowList`/`workflowSave`/`workflowDelete`/
-`workflowListRuns`/`workflowRun` and the full `connector*` suite — they are
-simply unbuilt. See [ROADMAP.md](./ROADMAP.md).
+blocked — `0.14.0` exposes `workflowList`/`workflowSave`/`workflowDelete`/
+`workflowListRuns`/`workflowRun`/`workflowRunStream`, the full `connector*`
+suite, and `subscribeConnectorConfigChanged` — they are simply unbuilt. See
+[ROADMAP.md](./ROADMAP.md).
