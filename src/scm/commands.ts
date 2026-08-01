@@ -7,7 +7,7 @@ import {
   QUICK_ASK_MAX_CONTEXT_CHARS,
   redactPath,
 } from "../quick-ask.js";
-import { PROGRESS_LOCATION_NOTIFICATION, type WindowApi } from "../vscode-shim.js";
+import type { WindowApi } from "../vscode-shim.js";
 import {
   buildCommitPrompt,
   buildEgressTrailer,
@@ -43,6 +43,8 @@ export interface ScmClientLike {
     input: string,
     opts: { stream: boolean; agent?: string },
     meta: EgressMeta,
+    /** Shown once the gate clears — never over the preview. See gated-client.ts. */
+    progressTitle?: string,
   ): Promise<unknown>;
   /** Optional: present when the connected client can prove an egress window. */
   egressProveWindow?(params: {
@@ -325,10 +327,9 @@ export function createScmCommands(deps: ScmCommandDeps): {
     const options: { stream: boolean; agent?: string } = { stream: false };
     if (agent.length > 0) options.agent = agent;
     deps.log.debug(`scm: sending ${prompt.length} chars to agentInvoke`);
-    const result = await deps.window.withProgress(
-      { location: PROGRESS_LOCATION_NOTIFICATION, title },
-      () => client.agentInvoke(prompt, options, meta),
-    );
+    // The seam owns the progress indicator so it can hold it back until the
+    // pre-flight gate has cleared the send.
+    const result = await client.agentInvoke(prompt, options, meta, title);
     const reply = extractReply(result);
     if (reply === undefined) {
       void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});

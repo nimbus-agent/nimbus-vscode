@@ -17,7 +17,12 @@ import { type ConnectionState, createConnectionManager } from "./connection/conn
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
 import { createEgressGate } from "./egress/gate.js";
-import { gateRawAgentInvoke, gateRawAskStream, isEgressCancelled } from "./egress/gated-client.js";
+import {
+  gateRawAgentInvoke,
+  gateRawAskStream,
+  isEgressCancelled,
+  type ProgressRunner,
+} from "./egress/gated-client.js";
 import { droppedRoots } from "./egress/leak-check.js";
 import { renderFullEgress } from "./egress/preflight.js";
 import { createPreflightSkipStore } from "./egress/skip-store.js";
@@ -163,6 +168,14 @@ export function activateWithDeps(
     roots: egressRoots,
     log,
   });
+
+  // Handed to every gated invoke so the "sending…" notification is raised by the
+  // seam, after the gate clears, rather than by the call site around it — which
+  // would put it on screen while the preview is still asking whether to send.
+  const runWithProgress: ProgressRunner = (title, body) =>
+    Promise.resolve(
+      deps.window.withProgress({ location: PROGRESS_LOCATION_NOTIFICATION, title }, body),
+    );
 
   const openClient =
     deps.openClient ?? (async (socketPath: string) => await NimbusClient.open({ socketPath }));
@@ -594,7 +607,7 @@ export function activateWithDeps(
       return client === undefined
         ? undefined
         : {
-            agentInvoke: gateRawAgentInvoke(client, egressGate, "scm"),
+            agentInvoke: gateRawAgentInvoke(client, egressGate, "scm", runWithProgress),
             egressProveWindow: (p) => client.egressProveWindow(p),
           };
     },
@@ -849,22 +862,23 @@ export function activateWithDeps(
     const options: { stream: boolean; agent?: string } = { stream: false };
     if (agent.length > 0) options.agent = agent;
     try {
-      const invoke = gateRawAgentInvoke(client, egressGate, "quickAsk");
-      const result = await deps.window.withProgress(
-        { location: PROGRESS_LOCATION_NOTIFICATION, title: "Nimbus: asking…" },
-        () =>
-          invoke(prompt, options, {
-            action: "Quick Ask",
-            files: [
-              {
-                name: redactPath(editor.document.fileName),
-                note: hasSelection ? "selected code" : "whole file",
-              },
-            ],
-            omissions: truncated
-              ? [`Context truncated at ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`]
-              : [],
-          }),
+      const invoke = gateRawAgentInvoke(client, egressGate, "quickAsk", runWithProgress);
+      const result = await invoke(
+        prompt,
+        options,
+        {
+          action: "Quick Ask",
+          files: [
+            {
+              name: redactPath(editor.document.fileName),
+              note: hasSelection ? "selected code" : "whole file",
+            },
+          ],
+          omissions: truncated
+            ? [`Context truncated at ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`]
+            : [],
+        },
+        "Nimbus: asking…",
       );
       const reply = extractReply(result);
       if (reply === undefined) {
