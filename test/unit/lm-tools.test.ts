@@ -1,15 +1,20 @@
 import { describe, expect, test, vi } from "vitest";
 
 import {
+  buildAskConfirmation,
   type LmToolsClientLike,
   type LmToolsDeps,
   runNimbusAskTool,
   runNimbusSearchTool,
 } from "../../src/lm-tools/lm-tools.js";
 
+// Every agentInvoke on this path now carries the pre-flight manifest.
+const ASK_META = { action: "Ask Nimbus", files: [], omissions: [] };
+
 function makeDeps(over: {
   client?: Partial<LmToolsClientLike> | undefined;
   askAgent?: string;
+  roots?: readonly string[];
 }): LmToolsDeps & { warnings: string[] } {
   const warnings: string[] = [];
   const client =
@@ -23,6 +28,7 @@ function makeDeps(over: {
   return {
     client: () => client,
     askAgent: () => over.askAgent ?? "",
+    roots: () => over.roots ?? [],
     log: { warn: (m: string) => warnings.push(m) },
     warnings,
   };
@@ -94,14 +100,18 @@ describe("runNimbusAskTool", () => {
     const out = await runNimbusAskTool(makeDeps({ client: { agentInvoke }, askAgent: "ops" }), {
       question: "who owns billing?",
     });
-    expect(agentInvoke).toHaveBeenCalledWith("who owns billing?", { stream: false, agent: "ops" });
+    expect(agentInvoke).toHaveBeenCalledWith(
+      "who owns billing?",
+      { stream: false, agent: "ops" },
+      ASK_META,
+    );
     expect(out).toBe("the answer");
   });
 
   test("omits the agent option when askAgent is blank", async () => {
     const agentInvoke = vi.fn(async () => ({ reply: "r" }));
     await runNimbusAskTool(makeDeps({ client: { agentInvoke } }), { question: "q" });
-    expect(agentInvoke).toHaveBeenCalledWith("q", { stream: false });
+    expect(agentInvoke).toHaveBeenCalledWith("q", { stream: false }, ASK_META);
   });
 
   test("substitutes a marker for a missing reply", async () => {
@@ -131,5 +141,46 @@ describe("runNimbusAskTool", () => {
     const out = await runNimbusAskTool(deps, { question: "q" });
     expect(out).toContain("Nimbus lookup failed: nope");
     expect(deps.warnings).toHaveLength(1);
+  });
+});
+
+describe("buildAskConfirmation", () => {
+  test("describes the question the calling model wants to send", () => {
+    const c = buildAskConfirmation({ roots: () => [] }, { question: "why is p99 up?" });
+    expect(c?.title).toBe("Send this to the Nimbus agent?");
+    expect(c?.message).toContain("Ask Nimbus");
+    expect(c?.message).toContain("14 characters");
+  });
+
+  test("warns when the calling model quoted an absolute path", () => {
+    // The question on this path is written by ANOTHER model, which may well
+    // quote a path it read from disk — so the leak check runs here too.
+    const c = buildAskConfirmation(
+      { roots: () => ["/home/asafg"] },
+      { question: "look at /home/asafg/svc/main.go" },
+    );
+    expect(c?.message).toContain("WARNING");
+  });
+
+  test("returns undefined for invalid input, leaving the handler to explain", () => {
+    expect(buildAskConfirmation({ roots: () => [] }, { question: "  " })).toBeUndefined();
+    expect(buildAskConfirmation({ roots: () => [] }, null)).toBeUndefined();
+  });
+});
+
+describe("nimbus_ask routes through the gate", () => {
+  test("passes a manifest alongside the question", async () => {
+    const seen: unknown[] = [];
+    const deps = makeDeps({
+      client: {
+        agentInvoke: async (input: string, options: unknown, meta: unknown) => {
+          seen.push({ input, options, meta });
+          return { reply: "ok" };
+        },
+      },
+    });
+    await runNimbusAskTool(deps, { question: "why is p99 up?" });
+    expect(seen).toHaveLength(1);
+    expect((seen[0] as { meta: { action: string } }).meta.action).toBe("Ask Nimbus");
   });
 });

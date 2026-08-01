@@ -30,6 +30,28 @@ HTTP made outside the agent (the OS, other processes, or an unsandboxed
 third-party MCP server). It is a provable record of *what the agent did* — not a
 claim about every byte that left the machine.
 
+### Preview what leaves — before it does
+
+The ledger answers "what left?". The **pre-flight gate** answers "should this
+leave at all?", while you can still say no. Every agent-bound path routes through
+one seam that renders exactly what would be sent — file names only, never
+directory or repository paths — and can refuse to send it.
+
+Where the extension assembles the context for you, you get the final say: **Quick
+Ask** and the **dev-workflow trio** show a manifest of the payload (how many
+files, how many characters, what was left out and why) with *Show full text* to
+read the exact bytes in a tab, and *Always send … here* to stop asking per
+surface, per workspace. `nimbus_ask` confirms inline when another chat extension
+calls it. The Ask panel and `@nimbus` participant send text you typed yourself,
+so they record without interrupting.
+
+It also warns when the payload contains an absolute path from your machine —
+Nimbus never adds one, but your own code and comments sometimes do. In Restricted
+Mode a stored *Always send* is ignored and you are asked again, since that is
+precisely when you wanted to be. The gate needs no Gateway connection: it works
+while disconnected. `Nimbus: Show Last Outbound Payload` replays the last send
+verbatim, and `Nimbus: Reset Egress Preview Prompts` clears the stored choices.
+
 ## Everything else it does
 
 - **Ask** — chat with the Nimbus agent in a side panel; responses stream token-by-token, and a **Stop** button cancels a long generation cleanly while keeping the partial reply.

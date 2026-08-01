@@ -7,7 +7,11 @@ import { commands, env, workspace as vscodeWorkspace } from "vscode";
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
-import { activateWithDeps, createSourceOpener } from "../../src/extension.js";
+import {
+  activateWithDeps,
+  createReadonlyJsonOpener,
+  createSourceOpener,
+} from "../../src/extension.js";
 import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
 import type {
@@ -192,9 +196,13 @@ function makeFixture(opts: {
     { label: string; preset?: { label: string; prompt: string } } | undefined
   >;
   infoMessageClicks?: Array<string | undefined>;
+  warnMessageClicks?: Array<string | undefined>;
   saveJsonResult?: { fsPath: string } | undefined;
   openSource?: (item: { url?: string }) => Promise<void>;
   searchDebounceMs?: number;
+  /** False simulates Restricted Mode, where no pre-flight skip is honoured. */
+  isTrusted?: boolean;
+  workspaceFolders?: readonly { uri: { fsPath: string } }[];
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -211,6 +219,13 @@ function makeFixture(opts: {
   const inputAnswers = [...(opts.inputBoxAnswers ?? [])];
   const quickPickAnswers = [...(opts.quickPickAnswers ?? [])];
   const infoClicks = [...(opts.infoMessageClicks ?? [])];
+  // Answers for the pre-flight gate's modal. Defaults to "Send" so tests about
+  // Quick Ask / SCM behaviour are not all rewritten to click through a gate
+  // they are not testing. Pass [undefined] to exercise a dismissal — see
+  // "pre-flight gate blocks a send" below, which covers that path directly.
+  const warnClicks = [...(opts.warnMessageClicks ?? [])];
+  const nextWarnClick = (): string | undefined =>
+    warnClicks.length > 0 ? warnClicks.shift() : "Send";
   const saveJsonCalls: Array<{ defaultName: string; content: string }> = [];
   const quickPicks: FakeQuickPick[] = [];
 
@@ -268,7 +283,7 @@ function makeFixture(opts: {
     }),
     showWarningMessage: vi.fn(async (m: string) => {
       warnMessages.push(m);
-      return undefined;
+      return nextWarnClick();
     }),
     showInputBox: vi.fn(async () => inputAnswers.shift()),
     // vi.fn() collapses the generic <T> of showQuickPick, so cast to the exact
@@ -314,6 +329,8 @@ function makeFixture(opts: {
       configChangeHandlers.push(handler);
       return { dispose: () => undefined };
     },
+    isTrusted: opts.isTrusted ?? true,
+    workspaceFolders: opts.workspaceFolders,
   };
 
   const commands: CommandsApi = {
@@ -2562,5 +2579,140 @@ describe("createSourceOpener", () => {
     expect(openExternal).not.toHaveBeenCalled();
     exec.mockRestore();
     openExternal.mockRestore();
+  });
+});
+
+describe("createReadonlyJsonOpener", () => {
+  test("evicts oldest documents beyond the requested bound", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    // The egress preview passes a small bound: a full outbound prompt is among
+    // the largest strings this extension builds, and the shared opener keeps 50.
+    const open = createReadonlyJsonOpener(ctx, 2);
+    await open("a.md", "AAA");
+    await open("b.md", "BBB");
+    await open("c.md", "CCC");
+    const provider = spy.mock.calls[0]?.[1] as {
+      provideTextDocumentContent(uri: { path: string }): string;
+    };
+    expect(provider.provideTextDocumentContent({ path: "/1/a.md" })).toBe("");
+    expect(provider.provideTextDocumentContent({ path: "/2/b.md" })).toBe("BBB");
+    expect(provider.provideTextDocumentContent({ path: "/3/c.md" })).toBe("CCC");
+    spy.mockRestore();
+  });
+});
+
+describe("pre-flight commands", () => {
+  test("registers both", () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    expect(f.commandHandlers.has("nimbus.showLastOutbound")).toBe(true);
+    expect(f.commandHandlers.has("nimbus.resetPreflightPrompts")).toBe(true);
+  });
+
+  test("showLastOutbound says so plainly when nothing has been sent", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await cmd(f, "nimbus.showLastOutbound")();
+    expect(f.infoMessages.join(" ")).toContain("nothing has been sent");
+    expect(f.openedDocs).toEqual([]);
+  });
+
+  test("resetPreflightPrompts clears the skips and says so", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await cmd(f, "nimbus.resetPreflightPrompts")();
+    expect(f.infoMessages.join(" ")).toContain("shown again");
+  });
+});
+
+describe("pre-flight gate blocks a send", () => {
+  const editor = {
+    text: "const secret = 1;",
+    empty: true,
+    fileName: "/p/a.ts",
+    languageId: "typescript",
+  };
+
+  test("quick ask sends nothing and reports no error when the modal is dismissed", async () => {
+    let invoked = 0;
+    const f = makeFixture({
+      activeEditor: editor,
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: ["what is this?"],
+      // Dismissed — the gate fails closed.
+      warnMessageClicks: [undefined],
+      openClient: makeFakeClient({
+        agentInvoke: async () => {
+          invoked += 1;
+          return { reply: "should never be produced" };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(invoked).toBe(0);
+    expect(f.openedDocs).toEqual([]);
+    // Cancelling is a normal outcome, not a failure.
+    expect(f.errorMessages).toEqual([]);
+  });
+
+  test("the modal names the file and its scope before anything leaves", async () => {
+    const f = makeFixture({
+      activeEditor: editor,
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: ["what is this?"],
+      warnMessageClicks: [undefined],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    const detail = vi.mocked(f.deps.window.showWarningMessage).mock.calls.at(-1)?.[1] as
+      | { detail?: string }
+      | undefined;
+    expect(detail?.detail).toContain("Quick Ask");
+    // The path is redacted to a basename even in the local preview.
+    expect(detail?.detail).toContain("a.ts — whole file");
+    expect(detail?.detail).not.toContain("/p/a.ts");
+  });
+
+  test("showLastOutbound reveals what the last send actually carried", async () => {
+    const f = makeFixture({
+      activeEditor: editor,
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: ["what is this?"],
+      openClient: makeFakeClient({
+        agentInvoke: async () => ({ reply: "ok" }),
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    await cmd(f, "nimbus.showLastOutbound")();
+    const doc = f.openedDocs.at(-1);
+    expect(doc?.title).toBe("Nimbus outbound.md");
+    expect(doc?.content).toContain("what is this?");
+    expect(doc?.content).toContain("const secret = 1;");
+  });
+});
+
+describe("pass-through surfaces route through the seam", () => {
+  test("an Ask-panel send is recorded but never prompts", async () => {
+    const f = makeFixture({
+      inputBoxAnswers: ["why is p99 up?"],
+      openClient: makeFakeClient({ askStream: doneAskStream() } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.ask")();
+    // The user typed it, so nothing is asked — but it still routed through the
+    // seam, which is what "no call site bypasses the gate" means.
+    expect(f.warnMessages).toEqual([]);
+    await cmd(f, "nimbus.showLastOutbound")();
+    const doc = f.openedDocs.at(-1);
+    expect(doc?.title).toBe("Nimbus outbound.md");
+    expect(doc?.content).toContain("Ask panel");
+    expect(doc?.content).toContain("why is p99 up?");
   });
 });

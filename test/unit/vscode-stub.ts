@@ -81,7 +81,8 @@ export const workspace = {
     dispose: () => undefined,
   }),
   openTextDocument: async (uri: unknown) => ({ uri }),
-  workspaceFolders: undefined as Array<{ uri: unknown }> | undefined,
+  isTrusted: true,
+  workspaceFolders: undefined as Array<{ uri: { fsPath: string } }> | undefined,
   fs: {
     writeFile: async (_uri: unknown, _content: Uint8Array) => undefined,
   },

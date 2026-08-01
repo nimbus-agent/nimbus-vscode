@@ -1,6 +1,11 @@
 import * as vscode from "vscode";
 
-import { type LmToolsDeps, runNimbusAskTool, runNimbusSearchTool } from "./lm-tools.js";
+import {
+  buildAskConfirmation,
+  type LmToolsDeps,
+  runNimbusAskTool,
+  runNimbusSearchTool,
+} from "./lm-tools.js";
 
 // Thin vscode-API glue — mirrors real-participant.ts. Excluded from coverage;
 // the pure handlers (lm-tools.ts) carry the logic and the tests.
@@ -18,6 +23,16 @@ export function registerNimbusLmTools(opts: { deps: LmToolsDeps }): { dispose():
     invoke: async (options) => asToolResult(await runNimbusSearchTool(opts.deps, options.input)),
   });
   const ask = vscode.lm.registerTool("nimbus_ask", {
+    // The inline Continue/Cancel card in the CALLING chat — no modal, no focus
+    // steal, and VS Code remembers the choice for the session. The message is
+    // ours, built by the same renderer the Nimbus-owned surfaces use, so the
+    // leak check runs on this path too.
+    prepareInvocation: (options) => {
+      const messages = buildAskConfirmation(opts.deps, options.input);
+      return messages === undefined
+        ? { invocationMessage: "Asking Nimbus…" }
+        : { invocationMessage: "Asking Nimbus…", confirmationMessages: messages };
+    },
     invoke: async (options) => asToolResult(await runNimbusAskTool(opts.deps, options.input)),
   });
   return {

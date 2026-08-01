@@ -1,3 +1,5 @@
+import { isEgressCancelled } from "../egress/gated-client.js";
+import type { EgressFile, EgressMeta } from "../egress/preflight.js";
 import { errMsg, type Logger } from "../logging.js";
 import {
   clampContext,
@@ -35,7 +37,13 @@ import { classifyRepositories, findRepoByRoot, repoLabel } from "./repo-select.j
 import { buildReviewDocument, buildReviewPrompt, type ReviewCoverage } from "./review.js";
 
 export interface ScmClientLike {
-  agentInvoke(input: string, opts: { stream: boolean; agent?: string }): Promise<unknown>;
+  // The third argument is the guardrail: the raw NimbusClient does not satisfy
+  // this shape, so only a wrapper from src/egress/gated-client.ts fits here.
+  agentInvoke(
+    input: string,
+    opts: { stream: boolean; agent?: string },
+    meta: EgressMeta,
+  ): Promise<unknown>;
   /** Optional: present when the connected client can prove an egress window. */
   egressProveWindow?(params: {
     since?: number;
@@ -97,6 +105,58 @@ export interface CollectedDiff {
   nonTextual: string[];
   /** True when git reported no changed files at all for this scope. */
   empty: boolean;
+}
+
+// A CollectedDiff, projected onto the pre-flight manifest. Paths here are
+// already redacted — collectDiff produces them through relativeOrBasename.
+export function collectedToFiles(collected: CollectedDiff, note: string): readonly EgressFile[] {
+  return collected.reviewed.map((name) => ({ name, note }));
+}
+
+// The manifest for the two editor-context commands (Generate Tests/Docstrings),
+// which send one file rather than a diff. Mirrors Quick Ask's rule: selection
+// when there is one, whole file otherwise.
+export function editorContextMeta(
+  input: { fileName: string; hasSelection: boolean; truncated: boolean },
+  action: string,
+): EgressMeta {
+  return {
+    action,
+    files: [
+      {
+        name: redactPath(input.fileName),
+        note: input.hasSelection ? "selected code" : "whole file",
+      },
+    ],
+    omissions: input.truncated
+      ? [`Context truncated at ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`]
+      : [],
+  };
+}
+
+// "What leaves" is incomplete without "and what didn't". These mirror the
+// toasts warnOmissions already raises, phrased for a manifest rather than a
+// notification.
+export function collectedToOmissions(collected: CollectedDiff): readonly string[] {
+  const plural = (n: number): string => (n === 1 ? "" : "s");
+  const out: string[] = [];
+  const { omittedTooLarge, skippedSecret, nonTextual } = collected;
+  if (omittedTooLarge.length > 0) {
+    out.push(
+      `${omittedTooLarge.length} file${plural(omittedTooLarge.length)} omitted (diff too large).`,
+    );
+  }
+  if (skippedSecret.length > 0) {
+    out.push(
+      `${skippedSecret.length} possible secret file${plural(skippedSecret.length)} skipped.`,
+    );
+  }
+  if (nonTextual.length > 0) {
+    out.push(
+      `${nonTextual.length} binary or non-textual file${plural(nonTextual.length)} not sent.`,
+    );
+  }
+  return out;
 }
 
 // List → classify/order → fetch each file's diff → budget-select → render.
@@ -244,6 +304,12 @@ export function createScmCommands(deps: ScmCommandDeps): {
       try {
         await body();
       } catch (e) {
+        // Cancelling at the pre-flight preview is a normal outcome, not a
+        // failure — stay silent, exactly as dismissing a Quick Pick does.
+        if (isEgressCancelled(e)) {
+          deps.log.debug(`nimbus.${internalName} cancelled at the pre-flight preview`);
+          return;
+        }
         deps.log.error(`nimbus.${internalName} failed: ${errMsg(e)}`);
         void deps.window.showErrorMessage(`Nimbus ${humanName} failed: ${errMsg(e)}`);
       }
@@ -253,6 +319,7 @@ export function createScmCommands(deps: ScmCommandDeps): {
     client: ScmClientLike,
     prompt: string,
     title: string,
+    meta: EgressMeta,
   ): Promise<string | undefined> => {
     const agent = deps.agent();
     const options: { stream: boolean; agent?: string } = { stream: false };
@@ -260,7 +327,7 @@ export function createScmCommands(deps: ScmCommandDeps): {
     deps.log.debug(`scm: sending ${prompt.length} chars to agentInvoke`);
     const result = await deps.window.withProgress(
       { location: PROGRESS_LOCATION_NOTIFICATION, title },
-      () => client.agentInvoke(prompt, options),
+      () => client.agentInvoke(prompt, options, meta),
     );
     const reply = extractReply(result);
     if (reply === undefined) {
@@ -348,7 +415,11 @@ export function createScmCommands(deps: ScmCommandDeps): {
       }
       const examples = filterStyleExamples(history, COMMIT_STYLE_EXAMPLES);
       const prompt = buildCommitPrompt({ diffBlock: collected.block, examples });
-      const reply = await invoke(client, prompt, "Nimbus: drafting commit message…");
+      const reply = await invoke(client, prompt, "Nimbus: drafting commit message…", {
+        action: "Generate Commit Message",
+        files: collectedToFiles(collected, "staged"),
+        omissions: collectedToOmissions(collected),
+      });
       if (reply === undefined) return;
       let message = sanitizeCommitMessage(reply);
       if (message.length === 0) {
@@ -413,6 +484,11 @@ export function createScmCommands(deps: ScmCommandDeps): {
         client,
         buildReviewPrompt(collected.block),
         "Nimbus: reviewing changes…",
+        {
+          action: "Review Changes",
+          files: collectedToFiles(collected, "staged + unstaged"),
+          omissions: collectedToOmissions(collected),
+        },
       );
       if (reply === undefined) return;
       // Untracked content is never sent — only counted and named here, so the
@@ -439,7 +515,12 @@ export function createScmCommands(deps: ScmCommandDeps): {
         languageId: ctx.languageId,
         ...(ctx.truncated ? { truncated: true } : {}),
       });
-      const reply = await invoke(client, prompt, "Nimbus: generating tests…");
+      const reply = await invoke(
+        client,
+        prompt,
+        "Nimbus: generating tests…",
+        editorContextMeta(ctx, "Generate Tests"),
+      );
       if (reply === undefined) return;
       // Untitled: nothing touches disk, and Save presents a location picker.
       await deps.openUntitled({
@@ -459,7 +540,12 @@ export function createScmCommands(deps: ScmCommandDeps): {
         languageId: ctx.languageId,
         ...(ctx.truncated ? { truncated: true } : {}),
       });
-      const reply = await invoke(client, prompt, "Nimbus: generating docstrings…");
+      const reply = await invoke(
+        client,
+        prompt,
+        "Nimbus: generating docstrings…",
+        editorContextMeta(ctx, "Generate Docstrings"),
+      );
       if (reply === undefined) return;
       const rewritten = extractCode(reply);
       const offsets = ctx.selectionOffsets;

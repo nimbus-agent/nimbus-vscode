@@ -1,4 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
+import { homedir, tmpdir } from "node:os";
 
 import { discoverSocketPath, type HitlRequest, NimbusClient } from "@nimbus-dev/client";
 import * as vscode from "vscode";
@@ -15,6 +16,11 @@ import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js"
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
+import { createEgressGate } from "./egress/gate.js";
+import { gateRawAgentInvoke, gateRawAskStream, isEgressCancelled } from "./egress/gated-client.js";
+import { droppedRoots } from "./egress/leak-check.js";
+import { renderFullEgress } from "./egress/preflight.js";
+import { createPreflightSkipStore } from "./egress/skip-store.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
@@ -124,6 +130,39 @@ export function activateWithDeps(
   log.info("Nimbus VS Code extension activating");
 
   const sessionStore = createSessionStore(ctx.workspaceState);
+
+  // Leak-check needles, resolved fresh each time so a folder opened mid-session
+  // is picked up. They are held locally and never sent.
+  //
+  // tmpdir() earns its place on macOS, where it is /var/folders/<hash>/T —
+  // long, specific, and NOT under homedir, so nothing else would catch it. On
+  // Windows it lives under homedir (redundant but harmless) and on Linux it is
+  // usually "/tmp", which leak-check drops for being too short to search for
+  // safely. Passing it unconditionally is therefore safe: the threshold, not
+  // this call site, decides whether it is specific enough to use.
+  const egressRoots = (): readonly string[] => {
+    const folders = deps.workspace.workspaceFolders ?? [];
+    return [...folders.map((f) => f.uri.fsPath), homedir(), tmpdir()];
+  };
+  // Narrowing coverage silently reads as "we checked everything". Say what was
+  // dropped, once, at activation.
+  const droppedNeedles = droppedRoots(egressRoots());
+  if (droppedNeedles.length > 0) {
+    log.debug(
+      `egress: leak check skipping ${droppedNeedles.length} short root(s): ${droppedNeedles.join(", ")}`,
+    );
+  }
+  const preflightSkips = createPreflightSkipStore(ctx.workspaceState);
+  const egressGate = createEgressGate({
+    window: deps.window,
+    // A small retention bound: a full outbound prompt is among the largest
+    // strings this extension builds, and the shared opener keeps 50.
+    openReadonly: deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx, 5),
+    skips: preflightSkips,
+    isTrusted: () => deps.workspace.isTrusted,
+    roots: egressRoots,
+    log,
+  });
 
   const openClient =
     deps.openClient ?? (async (socketPath: string) => await NimbusClient.open({ socketPath }));
@@ -261,8 +300,19 @@ export function activateWithDeps(
       return undefined;
     }
     const panel = chatPanelFactory.createOrReveal();
+    // Pass-through: the user typed this, so the gate records rather than
+    // prompts. Routing it anyway is what makes "no call site bypasses the
+    // seam" true rather than aspirational.
+    const full = nimbus();
+    const gatedChatClient =
+      full === undefined
+        ? c
+        : {
+            ...full,
+            askStream: gateRawAskStream(full, egressGate, "ask", "Ask panel"),
+          };
     chatController = createChatController({
-      client: c as unknown as Parameters<typeof createChatController>[0]["client"],
+      client: gatedChatClient as unknown as Parameters<typeof createChatController>[0]["client"],
       panel,
       sessionStore,
       registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
@@ -544,7 +594,7 @@ export function activateWithDeps(
       return client === undefined
         ? undefined
         : {
-            agentInvoke: (i, o) => client.agentInvoke(i, o),
+            agentInvoke: gateRawAgentInvoke(client, egressGate, "scm"),
             egressProveWindow: (p) => client.egressProveWindow(p),
           };
     },
@@ -799,9 +849,22 @@ export function activateWithDeps(
     const options: { stream: boolean; agent?: string } = { stream: false };
     if (agent.length > 0) options.agent = agent;
     try {
+      const invoke = gateRawAgentInvoke(client, egressGate, "quickAsk");
       const result = await deps.window.withProgress(
         { location: PROGRESS_LOCATION_NOTIFICATION, title: "Nimbus: asking…" },
-        () => client.agentInvoke(prompt, options),
+        () =>
+          invoke(prompt, options, {
+            action: "Quick Ask",
+            files: [
+              {
+                name: redactPath(editor.document.fileName),
+                note: hasSelection ? "selected code" : "whole file",
+              },
+            ],
+            omissions: truncated
+              ? [`Context truncated at ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`]
+              : [],
+          }),
       );
       const reply = extractReply(result);
       if (reply === undefined) {
@@ -810,9 +873,39 @@ export function activateWithDeps(
       }
       await openReadonlyJson("Nimbus reply.md", reply);
     } catch (e) {
+      // Cancelling at the preview is a normal outcome, like dismissing the
+      // Quick Pick above — say nothing.
+      if (isEgressCancelled(e)) {
+        log.debug("nimbus.quickAsk cancelled at the pre-flight preview");
+        return;
+      }
       log.error(`nimbus.quickAsk failed: ${errMsg(e)}`);
       void deps.window.showErrorMessage(`Nimbus quick ask failed: ${errMsg(e)}`);
     }
+  });
+
+  // The before-the-fact view's counterpart to the egress ledger: what the LAST
+  // send actually carried. In-memory only — the signed ledger is the durable
+  // record, and this must not become a second one.
+  register("nimbus.showLastOutbound", async () => {
+    const payload = egressGate.lastPayload();
+    if (payload === undefined) {
+      void deps.window.showInformationMessage(
+        "Nimbus: nothing has been sent to the agent in this window yet.",
+        {},
+      );
+      return;
+    }
+    await openReadonlyJson("Nimbus outbound.md", renderFullEgress(payload));
+  });
+
+  // The way back from an over-eager "Always send …".
+  register("nimbus.resetPreflightPrompts", async () => {
+    await preflightSkips.clearAll();
+    void deps.window.showInformationMessage(
+      "Nimbus: the send preview will be shown again in this workspace.",
+      {},
+    );
   });
 
   register("nimbus.newConversation", async () => {
@@ -1035,7 +1128,18 @@ export function activateWithDeps(
   });
 
   const participantDeps: ParticipantDeps = {
-    client: () => nimbus() as unknown as ParticipantClientLike | undefined,
+    // Pass-through, like the Ask panel: the user typed the prompt (plus any
+    // #file refs), so the gate records rather than prompts. Every other member
+    // — searchRanked, egressHead, the ops RPCs — still comes straight through.
+    client: () => {
+      const client = nimbus();
+      if (client === undefined) return undefined;
+      const gated = {
+        ...client,
+        askStream: gateRawAskStream(client, egressGate, "participant", "@nimbus chat"),
+      };
+      return gated as unknown as ParticipantClientLike;
+    },
     registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
     unregisterStreamWithHitl: (id) => {
       registeredHitlStreams.delete(id);
@@ -1051,7 +1155,23 @@ export function activateWithDeps(
   const registerLm = deps.registerLmTools ?? registerNimbusLmTools;
   ctx.subscriptions.push(
     registerLm({
-      deps: { client: () => nimbus(), askAgent: () => settings.askAgent(), log },
+      deps: {
+        // Another extension's agent drives this path, so it routes through the
+        // seam like every other. The user-facing confirmation happens upstream
+        // in prepareInvocation, which renders the same manifest.
+        client: () => {
+          const client = nimbus();
+          return client === undefined
+            ? undefined
+            : {
+                searchRanked: (p) => client.searchRanked(p),
+                agentInvoke: gateRawAgentInvoke(client, egressGate, "lmTool"),
+              };
+        },
+        askAgent: () => settings.askAgent(),
+        roots: egressRoots,
+        log,
+      },
     }),
   );
 
@@ -1138,13 +1258,16 @@ export function createInlineHitlSurface(args: {
 // The provider is registered lazily on first use; each call gets a unique URI
 // so VS Code re-resolves the content. The `.json` path extension drives syntax
 // highlighting. Injectable as deps.openReadonlyJson so tests don't touch vscode.
-function createReadonlyJsonOpener(
+export function createReadonlyJsonOpener(
   ctx: ExtensionContextLike,
-): (title: string, content: string) => Promise<void> {
-  const scheme = "nimbus-audit";
   // Bound retained content so a long session of opening entries can't grow the
   // map without limit (Map preserves insertion order → oldest evicts first).
-  const MAX_DOCS = 50;
+  // Callers that render large payloads (the egress preview) pass a small bound:
+  // a full outbound prompt is among the biggest strings this extension builds,
+  // and 50 of them would sit in memory for the whole session.
+  maxDocs = 50,
+): (title: string, content: string) => Promise<void> {
+  const scheme = "nimbus-audit";
   const docs = new Map<string, string>();
   let seq = 0;
   let registered = false;
@@ -1161,7 +1284,7 @@ function createReadonlyJsonOpener(
     seq += 1;
     const path = `/${seq}/${title}`;
     docs.set(path, content);
-    while (docs.size > MAX_DOCS) {
+    while (docs.size > maxDocs) {
       const oldest = docs.keys().next().value;
       if (oldest === undefined) break;
       docs.delete(oldest);
