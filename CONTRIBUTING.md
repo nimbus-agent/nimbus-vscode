@@ -2,6 +2,26 @@
 
 Thanks for helping improve the Nimbus VS Code extension!
 
+## Questions
+
+If the extension isn't doing what you expect — no answer comes back, the sidebar
+is empty, the status bar looks dead — the cause is usually the Gateway rather
+than the extension: it isn't running, or `nimbus.socketPath` is pointing
+somewhere else. Run **Nimbus: Troubleshoot Connection** from the command palette
+first. It tells you what it found and offers a one-click fix.
+
+Still stuck, or just want to ask something? Post in
+[Nimbus Discussions](https://github.com/nimbus-agent/Nimbus/discussions).
+Questions about any part of Nimbus get answered there, so you don't have to work
+out which repository yours belongs to, and a GitHub account is the whole of the
+process. That includes "would you accept a PR that does X?", which is worth
+asking before you build it.
+
+Found a real defect in the extension, or want a specific change made to it? Open
+an [issue](https://github.com/nimbus-agent/nimbus-vscode/issues) here — no need
+to ask permission first. Anything that looks like a security problem should not
+be posted publicly anywhere: follow [SECURITY.md](./SECURITY.md).
+
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+
