@@ -631,7 +631,7 @@
         "nimbus.quickAsk.presets": {
           "type": "array",
           "default": [],
-          "description": "Preset actions offered in a picker before the Quick Ask input box. Each item: { \"label\": string, \"prompt\": string, \"description\"?: string }. Empty uses the built-in defaults (Explain, Fix, Review, Docstring); a non-empty list replaces them.",
+          "description": "Preset actions offered in a picker before the Quick Ask input box. Each item: { \"label\": string, \"prompt\": string, \"description\"?: string }. Empty uses the built-in defaults (Explain, Fix, Review, Docstring, Write tests); a non-empty list replaces them.",
           "items": {
             "type": "object",
             "required": [

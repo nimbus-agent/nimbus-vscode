@@ -71,7 +71,7 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
   `description` (shown as picker detail). Picking one pre-fills the input box
   with its `prompt`, editable before you send; a **Custom question…** row keeps
   the free-form flow. Empty shows the built-in defaults (**Explain**, **Fix**,
-  **Review**, **Docstring**); a non-empty list **replaces** them.
+  **Review**, **Docstring**, **Write tests**); a non-empty list **replaces** them.
 - Replace semantics — to add one preset while keeping the defaults, start from
   this block:
 
@@ -80,7 +80,8 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
     { "label": "Explain", "prompt": "Explain what this code does, step by step." },
     { "label": "Fix", "prompt": "Identify and fix any bugs or issues in this code. Show the corrected code and explain the changes." },
     { "label": "Review", "prompt": "Review this code for correctness, clarity, and potential improvements." },
-    { "label": "Docstring", "prompt": "Write a docstring / doc comment for this code." }
+    { "label": "Docstring", "prompt": "Write a docstring / doc comment for this code." },
+    { "label": "Write tests", "prompt": "Write focused unit tests for this code, following the project's existing test framework and conventions." }
   ]
   ```
 
