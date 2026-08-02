@@ -64,6 +64,7 @@ describe("filePresetsFor", () => {
       ["/w/Dockerfile", "dockerfile"],
       ["/w/Dockerfile.dev", "plaintext"],
       ["/w/docker-compose.yml", "yaml"],
+      ["/w/docker-compose.prod.yml", "yaml"],
       ["/w/compose.yaml", "dockercompose"],
       ["/w/.gitlab-ci.yml", "yaml"],
       ["/w/.github/workflows/ci.yml", "yaml"],
