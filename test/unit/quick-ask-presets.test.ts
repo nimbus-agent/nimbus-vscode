@@ -57,12 +57,15 @@ describe("resolvePresets", () => {
 });
 
 describe("filePresetsFor", () => {
-  test("terraform, dockerfile, and workflow files get the ops presets", () => {
+  test("infrastructure files get the ops presets", () => {
     for (const [file, lang] of [
       ["/w/main.tf", "terraform"],
       ["/w/prod.tfvars", "plaintext"],
       ["/w/Dockerfile", "dockerfile"],
       ["/w/Dockerfile.dev", "plaintext"],
+      ["/w/docker-compose.yml", "yaml"],
+      ["/w/compose.yaml", "dockercompose"],
+      ["/w/.gitlab-ci.yml", "yaml"],
       ["/w/.github/workflows/ci.yml", "yaml"],
     ] as const) {
       const presets = filePresetsFor(file, lang);
@@ -79,6 +82,7 @@ describe("filePresetsFor", () => {
       filePresetsFor("/w/values.yaml", "yaml", "kind: Deployment\napiVersion: apps/v1").length,
     ).toBeGreaterThan(0);
     expect(filePresetsFor("/w/data.yaml", "yaml", "colors:\n - red")).toEqual([]);
+    expect(filePresetsFor("/w/packages/composer/config.yaml", "yaml")).toEqual([]);
   });
 
   test("windows-style paths are normalized", () => {
