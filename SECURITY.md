@@ -10,8 +10,9 @@ Please report security issues privately rather than opening a public issue:
 - Use GitHub's [private vulnerability reporting](https://github.com/nimbus-agent/nimbus-vscode/security/advisories/new) for this repository, or
 - Follow the disclosure process in the main [Nimbus security policy](https://github.com/nimbus-agent/Nimbus/security/policy).
 
-Please include reproduction steps and the extension version (`Nimbus Agent` in the
-Extensions view). We aim to acknowledge reports within a few business days.
+Please include reproduction steps and the extension version (`Nimbus — On-Call &
+Incident Agent` in the Extensions view). We aim to acknowledge reports within a
+few business days.
 
 ## Scope
 

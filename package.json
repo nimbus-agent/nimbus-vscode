@@ -699,20 +699,20 @@
     "clean": "node scripts/clean.mjs"
   },
   "dependencies": {
-    "dompurify": "^3.4.8",
-    "marked": "^18.0.5"
+    "dompurify": "^3.4.13",
+    "marked": "^18.0.9"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
-    "@nimbus-dev/client": "^0.14.0",
-    "@types/node": "^26.0.0",
-    "@types/vscode": "^1.95.0",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@biomejs/biome": "^2.5.7",
+    "@nimbus-dev/client": "^0.15.1",
+    "@types/node": "^26.1.2",
+    "@types/vscode": "^1.125.0",
+    "@vitest/coverage-v8": "^4.1.10",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.1",
-    "jsdom": "^29.1.1",
-    "ovsx": "^1.0.1",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "jsdom": "^30.0.1",
+    "ovsx": "^1.1.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }
