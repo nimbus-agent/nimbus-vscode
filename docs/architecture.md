@@ -64,11 +64,11 @@ CI runs it on every push/PR. If a dependency ever leaked out as a runtime
 ### 3. The `vscode` seam
 
 The `vscode` API is touched **only** through [`src/vscode-shim.ts`](../src/vscode-shim.ts).
-Everything else depends on narrow interfaces (e.g. `WorkspaceApi` in
-[`src/settings.ts`](../src/settings.ts)) rather than the global `vscode` module.
-That keeps the logic unit-testable: tests alias `vscode` to a stub
-(`test/unit/vscode-stub.ts`, wired in `vitest.config.ts`) and exercise the real
-code paths without a running editor. Keep `src/` and `test/` self-contained.
+Everything else depends on the narrow interfaces it declares (e.g. `WorkspaceApi`,
+consumed by [`src/settings.ts`](../src/settings.ts)) rather than the global
+`vscode` module. That keeps the logic unit-testable: tests alias `vscode` to a
+stub (`test/unit/vscode-stub.ts`, wired in `vitest.config.ts`) and exercise the
+real code paths without a running editor. Keep `src/` and `test/` self-contained.
 
 ## Module map
 
