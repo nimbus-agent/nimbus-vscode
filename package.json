@@ -713,6 +713,11 @@
           "default": true,
           "description": "Show the egress ledger badge (row count + a ledger-live check) in the status bar while connected."
         },
+        "nimbus.briefs.showHoverBlame": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show blame, PR and ticket for the line under the cursor on hover, with a link into the full 'Why is this here?' brief. Reads local git and the local index only — no model is involved."
+        },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",
           "default": false,

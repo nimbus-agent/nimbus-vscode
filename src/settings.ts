@@ -15,6 +15,7 @@ export interface Settings {
   scmSkipSecretFiles(): boolean;
   scmEgressProofTrailer(): boolean;
   showEgressStatusBarBadge(): boolean;
+  showHoverBlame(): boolean;
   hitlAlwaysModal(): boolean;
   logLevel(): LogLevel;
 }
@@ -33,6 +34,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     scmSkipSecretFiles: () => cfg().get<boolean>("scm.skipSecretFiles", true),
     scmEgressProofTrailer: () => cfg().get<boolean>("scm.egressProofTrailer", false),
     showEgressStatusBarBadge: () => cfg().get<boolean>("egress.showStatusBarBadge", true),
+    showHoverBlame: () => cfg().get<boolean>("briefs.showHoverBlame", true),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
     logLevel: () => {
       const lvl = cfg().get<string>("logLevel", "info");

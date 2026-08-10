@@ -4,6 +4,9 @@ import { homedir, tmpdir } from "node:os";
 import { discoverSocketPath, type HitlRequest, NimbusClient } from "@nimbus-dev/client";
 import * as vscode from "vscode";
 import { createBriefCommands } from "./briefs/commands.js";
+import { toRelativeRef, whyParams } from "./briefs/params.js";
+import { createPeekHover } from "./briefs/peek-hover.js";
+import { registerWhyPeekHover } from "./briefs/real-hover.js";
 import { type ChatController, createChatController } from "./chat/chat-controller.js";
 import type { ChatPanel, ChatPanelFactory } from "./chat/chat-panel.js";
 import { createRealChatPanelFactory } from "./chat/real-chat-panel.js";
@@ -643,6 +646,28 @@ export function activateWithDeps(
     window: deps.window,
     log,
   });
+
+  // whyPeek is NOT routed through the egress gate, and that exemption is on
+  // evidence: it takes no timeoutMs, returns synchronously, and carries no
+  // `brief` string or AgentBriefBase — it never reaches a model. See
+  // test/unit/egress-choke-point.test.ts, which asserts it is the ONLY one.
+  const peekHover = createPeekHover({
+    // Applied by the controller before anything is sent OR rendered, so the
+    // hover's "Why? →" link carries the same safe ref the RPC does.
+    relativise: (ref) => toRelativeRef(ref, egressRoots()),
+    peek: async (p) => {
+      const client = nimbus();
+      if (client === undefined) throw new Error("Nimbus: not connected to the Gateway.");
+      // `p.ref` is already relative; whyParams applies the remaining conversion,
+      // since the Gateway counts lines from 1 while VS Code counts from 0.
+      return await client.agentsWhyPeek(whyParams(p));
+    },
+    enabled: () => settings.showHoverBlame(),
+    settle: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+    log,
+  });
+  ctx.subscriptions.push(registerWhyPeekHover({ hover: peekHover, log }));
 
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 

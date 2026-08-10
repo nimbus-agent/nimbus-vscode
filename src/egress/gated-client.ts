@@ -129,7 +129,7 @@ export function gateRawAskStream<H, O>(
 // but a `file`/`ref` is exactly what the leak-check scans for, so these route
 // through the same seam and the same gate.
 //
-// Keeping the `.agentsX(` call shapes in THIS file is what lets
+// Keeping the agents* call shapes in THIS file is what lets
 // egress-choke-point.test.ts allowlist consumers that only ever hold the
 // injected GatedBriefs seam.
 
