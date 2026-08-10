@@ -107,8 +107,8 @@ describe("brief commands", () => {
   test("the manifest names the same line the params carry", async () => {
     const h = harness();
     await createBriefCommands(h.deps).why();
-    const files = (h.calls[0]?.meta as { files: Array<{ name: string }> }).files;
-    expect(files[0]?.name).toBe("src/a.ts:7");
+    const sent = h.calls[0]?.meta as { files: Array<{ name: string }> } | undefined;
+    expect(sent?.files[0]?.name).toBe("src/a.ts:7");
   });
 
   test("why prefers pre-resolved args over the active editor", async () => {
