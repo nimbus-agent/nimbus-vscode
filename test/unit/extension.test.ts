@@ -186,6 +186,8 @@ function makeFixture(opts: {
     selectionText?: string;
     fileName?: string;
     languageId?: string;
+    /** Zero-based cursor line, as VS Code reports it. Defaults to 0. */
+    line?: number;
   };
   panelVisible?: boolean;
   panelActive?: boolean;
@@ -304,7 +306,10 @@ function makeFixture(opts: {
       opts.activeEditor === undefined
         ? undefined
         : {
-            selection: { isEmpty: opts.activeEditor.empty ?? false },
+            selection: {
+              isEmpty: opts.activeEditor.empty ?? false,
+              active: { line: opts.activeEditor.line ?? 0 },
+            },
             document: {
               getText: (range?: unknown) =>
                 range === undefined
