@@ -1316,8 +1316,16 @@ export function createReadonlyJsonOpener(
   const docs = new Map<string, string>();
   let seq = 0;
   let registered = false;
+  // Keyed on the sequence number, NOT the title. The title is decorative — it
+  // names the tab — and is not URI-safe: `Uri.parse` reads `?` as the start of
+  // the query and `#` as the fragment, so a title containing either comes back
+  // TRUNCATED in `uri.path`, the lookup misses, and the tab renders silently
+  // EMPTY. Three brief titles end in "?" ("Why is this here?"), which is how
+  // this surfaced — in a real window, because the test stub's Uri.parse does not
+  // split the query and so cannot reproduce it. The sequence number is always
+  // the first path segment and survives both delimiters.
   const provider: vscode.TextDocumentContentProvider = {
-    provideTextDocumentContent: (uri) => docs.get(uri.path) ?? "",
+    provideTextDocumentContent: (uri) => docs.get(uri.path.split("/")[1] ?? "") ?? "",
   };
   return async (title, content) => {
     if (!registered) {
@@ -1327,8 +1335,10 @@ export function createReadonlyJsonOpener(
       registered = true;
     }
     seq += 1;
+    // The title still rides in the URI so VS Code names the tab and infers the
+    // language from the `.md` suffix; only the lookup key is the sequence.
     const path = `/${seq}/${title}`;
-    docs.set(path, content);
+    docs.set(String(seq), content);
     while (docs.size > maxDocs) {
       const oldest = docs.keys().next().value;
       if (oldest === undefined) break;
