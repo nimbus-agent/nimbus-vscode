@@ -116,7 +116,23 @@ export class ThemeIcon {
   constructor(public id: string) {}
 }
 export const Uri = {
-  parse: (s: string) => ({ toString: () => s, scheme: s.split(":")[0] ?? "" }),
+  // Splits the query and fragment, as the real vscode.Uri.parse does. This
+  // matters: a virtual-document path carrying "?" or "#" comes back TRUNCATED,
+  // and a content provider that keys its map on the untruncated path silently
+  // serves "". That shipped once — the brief titles end in "?", so their
+  // read-only tabs opened empty — precisely because this stub used to hand back
+  // the whole string as `path` and no unit test could reproduce it.
+  parse: (s: string) => {
+    const scheme = s.split(":")[0] ?? "";
+    const rest = s.slice(scheme.length + 1);
+    const hash = rest.indexOf("#");
+    const withoutFragment = hash >= 0 ? rest.slice(0, hash) : rest;
+    const fragment = hash >= 0 ? rest.slice(hash + 1) : "";
+    const q = withoutFragment.indexOf("?");
+    const path = q >= 0 ? withoutFragment.slice(0, q) : withoutFragment;
+    const query = q >= 0 ? withoutFragment.slice(q + 1) : "";
+    return { toString: () => s, scheme, path, query, fragment };
+  },
   file: (p: string) => ({ toString: () => p, fsPath: p, scheme: "file" }),
   joinPath: (base: { toString(): string }, ...segments: string[]) => ({
     toString: () => [base.toString(), ...segments].join("/"),

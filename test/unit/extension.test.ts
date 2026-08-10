@@ -2,13 +2,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
-import { commands, env, workspace as vscodeWorkspace } from "vscode";
+import { commands, env, Uri, workspace as vscodeWorkspace } from "vscode";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
 import {
   activateWithDeps,
+  createDiffOpener,
   createReadonlyJsonOpener,
   createSourceOpener,
 } from "../../src/extension.js";
@@ -2631,6 +2632,45 @@ describe("createReadonlyJsonOpener", () => {
     // "#" is the fragment delimiter and truncates the same way.
     await open("Nimbus — issue #42.md", "HASH BODY");
     expect(provider.provideTextDocumentContent({ path: "/2/Nimbus — issue " })).toBe("HASH BODY");
+    spy.mockRestore();
+  });
+});
+
+// Same defect class as the read-only opener above, fixed before it could bite:
+// this one's path segment is a redacted basename, and "?" is illegal in a
+// Windows filename, so it was latent rather than live. Issue #83.
+describe("createDiffOpener", () => {
+  test("resolves both sides even when the file name truncates the path", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    const openDiff = createDiffOpener(ctx);
+    await openDiff({ title: "T", left: "LEFT", right: "RIGHT", fileName: "we?ird.ts" });
+    const provider = spy.mock.calls[0]?.[1] as {
+      provideTextDocumentContent(uri: { path: string }): string;
+    };
+    // Derived through the stub's Uri.parse rather than hand-written, so this
+    // asserts against the same truncation a real Uri performs.
+    const left = Uri.parse("nimbus-diff:/1/original/we?ird.ts");
+    const right = Uri.parse("nimbus-diff:/1/nimbus/we?ird.ts");
+    expect(left.path).toBe("/1/original/we"); // proves the stub truncates
+    expect(provider.provideTextDocumentContent(left)).toBe("LEFT");
+    expect(provider.provideTextDocumentContent(right)).toBe("RIGHT");
+    spy.mockRestore();
+  });
+
+  test("keeps the two sides distinct within one sequence", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    const openDiff = createDiffOpener(ctx);
+    await openDiff({ title: "T", left: "L1", right: "R1", fileName: "a.ts" });
+    await openDiff({ title: "T", left: "L2", right: "R2", fileName: "a.ts" });
+    const provider = spy.mock.calls[0]?.[1] as {
+      provideTextDocumentContent(uri: { path: string }): string;
+    };
+    expect(provider.provideTextDocumentContent({ path: "/1/original/a.ts" })).toBe("L1");
+    expect(provider.provideTextDocumentContent({ path: "/1/nimbus/a.ts" })).toBe("R1");
+    expect(provider.provideTextDocumentContent({ path: "/2/original/a.ts" })).toBe("L2");
+    expect(provider.provideTextDocumentContent({ path: "/2/nimbus/a.ts" })).toBe("R2");
     spy.mockRestore();
   });
 });

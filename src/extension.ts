@@ -1390,7 +1390,7 @@ function createUntitledOpener(): (opts: { fileName: string; content: string }) =
 // Both virtual URIs end in the source's basename, so VS Code infers the
 // language from the extension natively — no setTextDocumentLanguage call, and
 // no language-change events fired at other extensions.
-function createDiffOpener(
+export function createDiffOpener(
   ctx: ExtensionContextLike,
 ): (opts: { title: string; left: string; right: string; fileName: string }) => Promise<void> {
   const scheme = "nimbus-diff";
@@ -1398,8 +1398,16 @@ function createDiffOpener(
   const docs = new Map<string, string>();
   let seq = 0;
   let registered = false;
+  // Keyed on "<seq>/<side>", NOT the full path. The trailing basename is
+  // decorative — it drives syntax highlighting — and is not URI-safe: Uri.parse
+  // reads `?` as the query delimiter and `#` as the fragment, so a name
+  // carrying either comes back TRUNCATED in uri.path, the lookup misses, and
+  // the pane renders silently EMPTY. Two segments rather than one because this
+  // opener stores two documents per sequence. Same defect that emptied the
+  // read-only tab for the brief titles ending in "?" — see issue #83.
+  const key = (path: string): string => path.split("/").slice(1, 3).join("/");
   const provider: vscode.TextDocumentContentProvider = {
-    provideTextDocumentContent: (uri) => docs.get(uri.path) ?? "",
+    provideTextDocumentContent: (uri) => docs.get(key(uri.path)) ?? "",
   };
   return async ({ title, left, right, fileName }) => {
     if (!registered) {
@@ -1412,8 +1420,8 @@ function createDiffOpener(
     // The trailing basename is what drives syntax highlighting.
     const leftPath = `/${seq}/original/${fileName}`;
     const rightPath = `/${seq}/nimbus/${fileName}`;
-    docs.set(leftPath, left);
-    docs.set(rightPath, right);
+    docs.set(key(leftPath), left);
+    docs.set(key(rightPath), right);
     while (docs.size > MAX_DOCS) {
       const oldest = docs.keys().next().value;
       if (oldest === undefined) break;
