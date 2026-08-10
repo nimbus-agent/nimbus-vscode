@@ -92,10 +92,15 @@ describe("agent-bound calls have exactly one choke point", () => {
     });
   }
 
-  test("extension.ts never touches the raw client's brief methods", () => {
+  // Checks member ACCESS, not just the call shape, so `client.agentsWhy.bind(…)`
+  // cannot sail past. The boundary matters: `.agentsWhy` is a PREFIX of
+  // `.agentsWhyPeek`, which extension.ts legitimately calls — whyPeek is the
+  // documented gate exemption. A bare substring check flagged it as a violation.
+  test("extension.ts never touches the raw client's gated brief methods", () => {
     const src = readFileSync(join(SRC, "extension.ts"), "utf8");
     for (const member of GATED_BRIEF_CALLS.map((c) => c.slice(0, -1))) {
-      expect(src).not.toContain(member);
+      const access = new RegExp(`${member.replace(".", "\\.")}(?![A-Za-z])`);
+      expect(access.test(src), `${member} must not be reached directly`).toBe(false);
     }
   });
 

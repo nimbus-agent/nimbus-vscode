@@ -115,6 +115,23 @@ export class ThemeColor {
 export class ThemeIcon {
   constructor(public id: string) {}
 }
+
+// Hover support. `isTrusted` is a plain field here, but it is load-bearing in
+// the real API: without it the `command:` link in a peek hover is inert.
+export class MarkdownString {
+  isTrusted = false;
+  constructor(public value: string = "") {}
+}
+
+export class Hover {
+  constructor(public contents: unknown) {}
+}
+
+export const languages = {
+  registerHoverProvider: (_selector: unknown, _provider: unknown) => ({
+    dispose: () => undefined,
+  }),
+};
 export const Uri = {
   // Splits the query and fragment, as the real vscode.Uri.parse does. This
   // matters: a virtual-document path carrying "?" or "#" comes back TRUNCATED,
