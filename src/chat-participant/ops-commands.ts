@@ -1,4 +1,5 @@
 import type { CatchupBrief, DoraMetricsResult, ExpertBrief, ImpactBrief } from "@nimbus-dev/client";
+import { gapsFooter } from "../briefs/render.js";
 import { errMsg } from "../logging.js";
 import type {
   ChatResponseSink,
@@ -14,13 +15,6 @@ const INCIDENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const EXPERT_LIMIT = 5;
 const SECTION_ITEM_LIMIT = 5;
 const SINCE_RE = /^\d+[dh]$/;
-
-type Gapped = { gaps: Array<{ detail: string }> };
-
-function gapsFooter(brief: Gapped): string {
-  if (brief.gaps.length === 0) return "";
-  return `\n\n_Data gaps: ${brief.gaps.map((g) => g.detail).join("; ")}_`;
-}
 
 function renderImpact(target: string, brief: ImpactBrief): string {
   if (brief.affected.length === 0) {
