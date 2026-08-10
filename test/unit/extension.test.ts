@@ -1754,10 +1754,13 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     const provider = f.treeProviders.get("nimbus.agentsView");
     if (provider === undefined) throw new Error("agents provider not registered");
-    const rows = await provider.getChildren(undefined);
-    // getChildren returns the raw SidebarItem rows (carrying iconId);
+    // The view is two groups now: built-in briefs first, configured agents
+    // second. getChildren returns the raw SidebarItem rows (carrying iconId);
     // applyThemeIcons maps iconId -> iconPath only inside getTreeItem (mirrors
     // the audit provider test).
+    const groups = (await provider.getChildren(undefined)) as Array<{ label: string }>;
+    expect(groups.map((g) => g.label)).toEqual(["Built-in briefs", "Configured agents"]);
+    const rows = await provider.getChildren(groups[1]);
     expect(rows[0]).toMatchObject({ label: "Researcher", iconId: "hubot" });
     const item = provider.getTreeItem(rows[0]);
     expect(item.iconPath).toBeDefined();
