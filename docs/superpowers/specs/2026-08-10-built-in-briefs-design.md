@@ -96,18 +96,37 @@ guard that already exists.
 ### What the manifest says
 
 Briefs have an asymmetry the other five surfaces do not, and the manifest must
-not overclaim:
+claim neither too much nor too little:
 
 ```
 prompt:  JSON.stringify(params, null, 2)   // verbatim — what goes over IPC
 action:  "Why is this here? (agents.why)"
 files:   [{ name: "src/auth/session.ts:42",
-            note: "path only — the Gateway reads the file locally" }]
+            note: "the extension sends this path, not the file's contents" }]
 ```
 
-Without that `note`, a modal reading "send `src/auth/session.ts`" says *we are
-uploading your file*, which is false. The gate's credibility depends on it not
-overstating what leaves.
+A modal reading "send `src/auth/session.ts`" would say *we are uploading your
+file*, which is false — the extension sends a path. But the obvious fix, a note
+reading *"path only — the Gateway reads the file locally"*, is **also false**,
+and this design carried it until review caught it.
+
+The extension cannot see past its own boundary, and the SDK shows material
+derived from file content travelling inside briefs regardless:
+`FederatedItemLite` — the projection carried by `GhostFinding.context` and every
+`HuddleContribution` — is `{title, snippet, service, modifiedAt}`. It carries a
+**snippet**. So a brief's findings contain indexed content, and whether the
+Gateway forwards any of it to a remote model while composing `brief: string` is
+Gateway behaviour this extension is forbidden to reach in and check.
+
+Hence the rule: **the gate describes the extension's boundary and stops.** It
+states what this process sends, in the present tense, about itself. What happens
+downstream is the **egress ledger's** job — `egressList`, `egressVerify`,
+`egressProveWindow` already ship for exactly this, and the ledger is the
+after-the-fact counterpart to the pre-flight gate. The modal's footer links to
+it rather than paraphrasing it.
+
+A gate that overstates its own reach is worse than no gate, because it converts
+a reviewable claim into a reassuring one.
 
 ### The decision table
 
@@ -165,16 +184,46 @@ already use (`openReadonlyJson`); the participant pipes the same strings to
 ## Surfaces
 
 **Hover** (`whyPeek`) — author, commit subject, PR and ticket for the line under
-the cursor, with a `[Why? →]` command link into the full `why` brief. Debounced,
-honours the `CancellationToken`, and behind `nimbus.briefs.showHoverBlame`
-(default on, following the egress-badge precedent — a provider that fires an IPC
-call on every mouse-rest wants an off switch).
+the cursor, with a `[Why? →]` command link into the full `why` brief. Behind
+`nimbus.briefs.showHoverBlame` (default on, following the egress-badge
+precedent — a provider that fires an IPC call on every mouse-rest wants an off
+switch).
+
+Three concrete rules, because "debounced" on its own is not a specification:
+
+- **150 ms settle before the call.** VS Code already waits for a mouse-rest
+  before invoking a hover provider, so this is a second-stage guard against
+  a cursor sweeping across a file; below ~100 ms it stops filtering anything and
+  above ~250 ms the hover feels broken.
+- **One in-flight call per document.** A newer hover supersedes an older one;
+  the older result is discarded rather than rendered late.
+- **The `CancellationToken` discards the result — it cannot abort the call.**
+  `agentsWhyPeek(p: WhyParams)` takes a single argument: no options object, no
+  timeout, no abort signal (`nimbus-client.d.ts:962`). So on cancellation the
+  provider returns `undefined` and drops the reply on arrival. The IPC round
+  trip still completes. That is a real limit, not an implementation detail to
+  discover later, and it is the reason the one-in-flight rule above matters —
+  it is the only backpressure available.
+
+Note the check is Gateway-side. The extension runs no git command and reads no
+index itself; a slow hover means a slow RPC, and the mitigation is the off
+switch, not local caching.
 
 **Editor context menu**, `when`-clamped to `editorTextFocus`:
 
 - *Why is this here?* → `agentsWhy({ref, line})` from the cursor
 - *Who knew this code?* → `agentsGhost({file})`
 - *Who else is touching this?* → `agentsConflicts({file})`
+
+**Every brief command takes optional pre-resolved args.** The signature is
+`nimbus.brief.why(args?: {ref, line})`: given args it uses them, and only when
+called bare does it fall back to the active editor and then to prompting. This
+is what makes one command serve three doorways — and specifically what stops the
+hover's `[Why? →]` link from re-asking for the location the user just clicked
+on. The link carries the exact `{ref, line}` the peek resolved, so the full
+brief answers about the same line even if the cursor has since moved. The
+sidebar rows for `janitor` and `preflight` pass no args and therefore prompt,
+which is correct: a tree row carries no editor context.
 
 **Command palette:**
 
@@ -227,6 +276,23 @@ Two new `nimbus.*` settings, both of which must land in `docs/settings.md` or
 the client types it optional there, and inventing a value would narrow results
 for no reason.
 
+**The prompt also remembers the last namespace used in this workspace**
+(`workspaceState`), which takes precedence over the setting when present. That
+is deterministic: it prefills a value the user typed and confirmed, so a
+second Preflight in the same repo is one Enter.
+
+**Deriving the namespace from the branch name is explicitly rejected.** The
+proposal — `feature/billing-setup` → `billing` — fails in a way the user cannot
+see. A wrong namespace does not error; `agentsPreflight` returns a perfectly
+confident `PreflightBrief` with `downstreams`, `anyFailed` and `anyIncomplete`
+computed **for the wrong namespace**, and the user reads a green preflight for
+something it never checked. A missing value costs one prompt; a plausible wrong
+value costs a bad deploy decision, and this brief exists to inform deploy
+decisions. The same objection applies to inferring it from `package.json` —
+a package name is a package name, and nothing establishes that the Gateway's
+namespace space is keyed on it. Guessing is only safe where being wrong is
+visible, and here it is not.
+
 ## Error handling
 
 The client's own header is explicit about the failure mode to avoid:
@@ -238,11 +304,20 @@ The client's own header is explicit about the failure mode to avoid:
 
 | Condition | Behaviour |
 |---|---|
-| `AgentBriefError` | Surface the Gateway's `detail` verbatim. Never flatten it into "something went wrong". |
-| `AgentTimeoutError` | Its own message, naming the 30 s `DEFAULT_AGENT_TIMEOUT_MS`. |
+| `AgentBriefError` | Surface the Gateway's `detail` verbatim, with a **Retry** action. Never flatten it into "something went wrong". |
+| `AgentTimeoutError` | Its own message, naming the 30 s `DEFAULT_AGENT_TIMEOUT_MS`, with a **Retry** action. |
 | `EgressCancelled` | Silent — no error toast, matching the SCM trio. |
 | Disconnected | Existing connection placeholder and troubleshooter path. |
 | Empty findings | Per-brief "nothing found" line, as `renderImpact` / `renderExperts` already do. |
+
+Failures surface as a **notification**, not in the read-only tab: a tab is a text
+document and cannot hold an action, and the tab is for results. Retry re-runs the
+command with the same pre-resolved args, so nothing is re-prompted for — and it
+**goes back through the gate** like any other send. It is a new outbound call and
+gets no bypass for having been attempted once; a user who ticked *Always send
+Agent Briefs here* sees no modal anyway, so the consistent rule costs nothing.
+Retry is safe to offer because every `agents*` call is read-only by contract
+(`agents.d.ts`: *"nine read-only, never-HITL built-in agents"*).
 
 `gaps: GapNote[]` renders as a footer on **every** brief, empty or not — the
 honesty affordance `gapsFooter` already established, and the thing that keeps a
@@ -288,3 +363,17 @@ every model-composed agent call in the extension does route through one seam.
 - **Acting on a brief.** Janitor names a `cleanupAction`; the extension renders
   it and never performs it. Output is a suggestion, never an applied edit — the
   rule the SCM trio already follows.
+- **An inline gear icon on the sidebar group headers.** Raised in review;
+  deferred as a duplicate path. The *Configure agents in settings…* row is
+  already a click target that opens the same settings, and it appears exactly
+  when it is needed. A second route would cost a `contextValue` on the group
+  node plus a `view/item/context` contribution to land the user in the same
+  place. Worth revisiting only if the group ever grows a real per-group action.
+- **Quick links to fix common prerequisites in a failed brief.** Raised in
+  review alongside Retry, which is in. This half is deferred because it requires
+  a taxonomy of Gateway error strings that no typed contract provides —
+  `AgentBriefError` carries a free-text `detail`. Pattern-matching prose to
+  decide which fix-it link to show is guesswork that breaks silently on the next
+  Gateway wording change. Revisit if the errors ever gain a typed `code`; the
+  `0.14.0` bump already preserved JSON-RPC `code`/`data` on rejected calls, so
+  the precedent exists.
