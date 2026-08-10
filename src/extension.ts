@@ -652,15 +652,15 @@ export function activateWithDeps(
   // `brief` string or AgentBriefBase — it never reaches a model. See
   // test/unit/egress-choke-point.test.ts, which asserts it is the ONLY one.
   const peekHover = createPeekHover({
+    // Applied by the controller before anything is sent OR rendered, so the
+    // hover's "Why? →" link carries the same safe ref the RPC does.
+    relativise: (ref) => toRelativeRef(ref, egressRoots()),
     peek: async (p) => {
       const client = nimbus();
       if (client === undefined) throw new Error("Nimbus: not connected to the Gateway.");
-      // real-hover.ts hands over the raw editor coordinates, so both conversions
-      // the command path applies happen here: never send an absolute path, and
-      // the Gateway counts lines from 1 while VS Code counts from 0.
-      return await client.agentsWhyPeek(
-        whyParams({ ref: toRelativeRef(p.ref, egressRoots()), line: p.line }),
-      );
+      // `p.ref` is already relative; whyParams applies the remaining conversion,
+      // since the Gateway counts lines from 1 while VS Code counts from 0.
+      return await client.agentsWhyPeek(whyParams(p));
     },
     enabled: () => settings.showHoverBlame(),
     settle: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),

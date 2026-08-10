@@ -17,6 +17,14 @@ export interface CancellationLike {
 export interface PeekHoverDeps {
   /** Throws when disconnected; the controller declines rather than surfacing it. */
   peek(params: { ref: string; line: number }): Promise<WhyPeek>;
+  /**
+   * Absolute editor path → a ref safe both to send AND to embed in the hover's
+   * command link. Applied ONCE here, deliberately: doing it inside `peek`
+   * instead left the raw path in the rendered link, so clicking "Why? →" handed
+   * the full machine path to nimbus.brief.why as pre-resolved args — which that
+   * command trusts over the editor. Caught in live verification, not by tests.
+   */
+  relativise(ref: string): string;
   /** nimbus.briefs.showHoverBlame. Read per hover so a toggle takes effect at once. */
   enabled(): boolean;
   /** Injected so tests do not wait in real time. */
@@ -42,8 +50,12 @@ export function createPeekHover(deps: PeekHoverDeps): PeekHover {
   const seqByDoc = new Map<string, number>();
 
   return {
-    provide: async ({ target, docKey, token }) => {
+    provide: async ({ target: raw, docKey, token }) => {
       if (!deps.enabled()) return undefined;
+
+      // One conversion, used for both the RPC and the rendered link, so the two
+      // can never disagree about what path leaves this machine.
+      const target: EditorTarget = { ref: deps.relativise(raw.ref), line: raw.line };
 
       const mine = (seqByDoc.get(docKey) ?? 0) + 1;
       seqByDoc.set(docKey, mine);

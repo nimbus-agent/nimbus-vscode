@@ -46,6 +46,7 @@ function harness(over: Partial<PeekHoverDeps> = {}): Harness {
       calls.push(p);
       return fullPeek();
     },
+    relativise: (ref) => ref,
     enabled: () => true,
     settle: async (ms) => {
       settles.push(ms);
@@ -80,6 +81,29 @@ describe("createPeekHover", () => {
     const out = await hover.provide({ target: TARGET, docKey: "d1", token: live() });
     expect(out).toContain("**Robin Hale**");
     expect(out).toContain("command:nimbus.brief.why?");
+  });
+
+  // Found in live verification, not here: the conversion used to live inside
+  // `peek`, so the RPC got a relative ref while renderPeek got the raw editor
+  // path — and the rendered "Why? →" link therefore carried the absolute path.
+  // Clicking it hands nimbus.brief.why pre-resolved args, which that command
+  // trusts over the editor, so the absolute path would have gone to the Gateway.
+  test("relativises once, for both the call and the rendered link", async () => {
+    const h = harness({ relativise: () => "src/a.ts" });
+    const hover = createPeekHover(h.deps);
+    const out =
+      (await hover.provide({
+        target: { ref: "c:\\gitrep\\nimbus-vscode\\src\\a.ts", line: 3 },
+        docKey: "d1",
+        token: live(),
+      })) ?? "";
+
+    expect(h.calls).toEqual([{ ref: "src/a.ts", line: 3 }]);
+    expect(out).toContain(
+      `command:nimbus.brief.why?${encodeURIComponent(JSON.stringify([{ ref: "src/a.ts", line: 3 }]))}`,
+    );
+    expect(out).not.toContain("gitrep");
+    expect(out).not.toContain("c%3A"); // the encoded "c:" drive prefix
   });
 
   test("a token cancelled during the settle skips the call entirely", async () => {
