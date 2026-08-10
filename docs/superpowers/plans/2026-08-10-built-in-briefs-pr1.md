@@ -610,7 +610,7 @@ Create `test/unit/briefs-params.test.ts`:
 ```ts
 import { describe, expect, test } from "vitest";
 
-import { fileParams, toRelativeRef, whyParams } from "../../src/briefs/params.js";
+import { fileParams, toOneBased, toRelativeRef, whyParams } from "../../src/briefs/params.js";
 
 describe("toRelativeRef", () => {
   const roots = ["/home/dev/proj"];
@@ -641,11 +641,31 @@ describe("toRelativeRef", () => {
   test("an empty root list still yields a basename", () => {
     expect(toRelativeRef("/home/dev/proj/src/a.ts", [])).toBe("a.ts");
   });
+
+  test("matches a root whose drive-letter case differs, as Windows reports it", () => {
+    expect(toRelativeRef("c:\\work\\proj\\src\\a.ts", ["C:\\work\\proj"])).toBe("src/a.ts");
+    expect(toRelativeRef("C:\\Work\\Proj\\src\\a.ts", ["c:\\work\\proj"])).toBe("src/a.ts");
+  });
+
+  test("preserves the real casing of the part it returns", () => {
+    expect(toRelativeRef("c:\\work\\proj\\src\\MyFile.ts", ["C:\\work\\proj"])).toBe(
+      "src/MyFile.ts",
+    );
+  });
 });
 
 describe("params", () => {
-  test("whyParams carries the ref and the line", () => {
-    expect(whyParams({ ref: "src/a.ts", line: 42 })).toEqual({ ref: "src/a.ts", line: 42 });
+  test("whyParams converts VS Code's 0-based line to 1-based", () => {
+    expect(whyParams({ ref: "src/a.ts", line: 41 })).toEqual({ ref: "src/a.ts", line: 42 });
+  });
+
+  test("the first line of a file is line 1, never line 0", () => {
+    expect(whyParams({ ref: "src/a.ts", line: 0 }).line).toBe(1);
+  });
+
+  test("toOneBased is the single conversion point", () => {
+    expect(toOneBased(0)).toBe(1);
+    expect(toOneBased(41)).toBe(42);
   });
 
   test("fileParams carries the file only", () => {
@@ -694,13 +714,36 @@ export function toRelativeRef(fileName: string, roots: readonly string[]): strin
   const sorted = [...roots].map(normalise).sort((a, b) => b.length - a.length);
   for (const root of sorted) {
     const prefix = root.endsWith("/") ? root : `${root}/`;
-    if (file.startsWith(prefix)) return file.slice(prefix.length);
+    // Compare case-insensitively: on Windows the editor's fileName and the
+    // workspace folder can disagree on drive-letter case ("C:/" vs "c:/"), and
+    // an exact compare would miss, silently degrading a useful repo-relative
+    // ref to a bare basename. Slice from the ORIGINAL string so real casing
+    // survives — the Gateway's index may be case-sensitive.
+    if (file.toLowerCase().startsWith(prefix.toLowerCase())) return file.slice(prefix.length);
   }
   return basename(file);
 }
 
+/**
+ * VS Code counts lines from 0; editor gutters, git blame, and every "file:line"
+ * a human reads count from 1. Everything that leaves this module — the RPC
+ * parameter and the egress manifest alike — goes through here, so the number in
+ * the modal, the number in the rendered brief, and the number in the gutter can
+ * never disagree.
+ *
+ * ASSUMPTION: `agentsWhy` expects 1-based lines. The client types `line?:
+ * number` with no stated base and the SDK fixture uses 42 for both `query.line`
+ * and `subject.lineNo`, so it settles nothing. 1-based is the convention git
+ * blame uses and the one the brief is rendered against. If verification (Task
+ * 10, step 4) shows the Gateway is 0-based, this function is the single line to
+ * change.
+ */
+export function toOneBased(line: number): number {
+  return line + 1;
+}
+
 export function whyParams(t: EditorTarget): { ref: string; line: number } {
-  return { ref: t.ref, line: t.line };
+  return { ref: t.ref, line: toOneBased(t.line) };
 }
 
 export function fileParams(t: EditorTarget): { file: string } {
@@ -764,7 +807,21 @@ to:
 - [ ] **Step 6: Run the full suite plus typecheck**
 
 Run: `bun run typecheck && bun run test`
-Expected: PASS. If typecheck reports another `TextEditorLike` literal missing `active`, add `active: { line: 0 }` to it — the grep in Step 5 covered the two that exist today.
+Expected: PASS.
+
+The two fixtures in Step 5 are the complete set — verified, not assumed. Every
+`activeTextEditor` occurrence in `test/` is one of:
+
+| Site | Shape | Needs `active`? |
+|---|---|---|
+| `extension.test.ts:303-307` | builds a `selection` | **yes** — Step 5 |
+| `scm-commands.test.ts:570-576` | builds a `selection` | **yes** — Step 5 |
+| `scm-commands.test.ts:89` | `activeTextEditor: undefined` | no |
+| `hitl-surfaces.test.ts:30` | `activeTextEditor: undefined` | no |
+
+There is no `test/helpers.ts` or shared editor-mock module in this repo; fixtures
+are local to each test file. If typecheck still reports a literal missing
+`active`, add `active: { line: 0 }` to it.
 
 - [ ] **Step 7: Commit**
 
@@ -789,6 +846,8 @@ Brief calls become a first-class, prompting, skippable egress surface. This is a
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
 - Produces: `interface RawBriefClient`; `interface GatedBriefs { why(p, meta, title); ghost(p, meta, title); conflicts(p, meta, title); huddle(p, meta, title) }`; `function gateRawBriefs(client: RawBriefClient, gate: EgressGate, withProgress?: ProgressRunner): GatedBriefs`.
+
+**`ProgressRunner` is not a `vscode` type and needs no new plumbing.** It is this repo's own alias, already declared at `src/egress/gated-client.ts:42` as `<R>(title: string, body: () => Promise<R>) => Promise<R>` — deliberately injected rather than imported so the module stays free of `vscode` and unit-testable. The single real implementation is `runWithProgress` at `src/extension.ts:175`, already passed to `gateRawAgentInvoke` at lines 610 and 865. Task 8 passes the same value, so no mismatch with VS Code's progress handling is possible.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1250,17 +1309,26 @@ function harness(over: Partial<BriefCommandDeps> = {}, fail?: Error): Harness {
 }
 
 describe("brief commands", () => {
-  test("why reads the cursor line and sends a repo-relative ref", async () => {
+  // The fixture editor's cursor sits on active.line 6 (VS Code, 0-based), which
+  // is line 7 in the gutter and therefore line 7 on the wire.
+  test("why reads the cursor line and sends a repo-relative, 1-based ref", async () => {
     const h = harness();
     await createBriefCommands(h.deps).why();
     expect(h.calls[0]?.brief).toBe("why");
-    expect(h.calls[0]?.params).toEqual({ ref: "src/a.ts", line: 6 });
+    expect(h.calls[0]?.params).toEqual({ ref: "src/a.ts", line: 7 });
+  });
+
+  test("the manifest names the same line the params carry", async () => {
+    const h = harness();
+    await createBriefCommands(h.deps).why();
+    const files = (h.calls[0]?.meta as { files: Array<{ name: string }> }).files;
+    expect(files[0]?.name).toBe("src/a.ts:7");
   });
 
   test("why prefers pre-resolved args over the active editor", async () => {
     const h = harness();
     await createBriefCommands(h.deps).why({ ref: "src/other.ts", line: 99 });
-    expect(h.calls[0]?.params).toEqual({ ref: "src/other.ts", line: 99 });
+    expect(h.calls[0]?.params).toEqual({ ref: "src/other.ts", line: 100 });
   });
 
   test("the manifest names the path and says contents are not sent", async () => {
@@ -1361,7 +1429,13 @@ import type { EgressMeta } from "../egress/preflight.js";
 import { errMsg, type Logger } from "../logging.js";
 import type { MessageOptionsLike, TextEditorLike } from "../vscode-shim.js";
 import { type BriefId, briefSpec } from "./catalog.js";
-import { type EditorTarget, fileParams, toRelativeRef, whyParams } from "./params.js";
+import {
+  type EditorTarget,
+  fileParams,
+  toOneBased,
+  toRelativeRef,
+  whyParams,
+} from "./params.js";
 import { renderConflicts, renderGhost, renderHuddle, renderWhy } from "./render.js";
 
 // What the manifest says about a brief's file. The extension sends a path; what
@@ -1406,7 +1480,10 @@ function meta(id: BriefId, target: EditorTarget | undefined): EgressMeta {
   const spec = briefSpec(id);
   const action = `${spec.label} (agents.${id})`;
   if (target === undefined) return { action, files: [], omissions: [] };
-  const name = spec.context === "fileAndLine" ? `${target.ref}:${target.line}` : target.ref;
+  // Same conversion the RPC parameter gets. A modal that named a different line
+  // from the one the brief answers about would be worse than no modal.
+  const name =
+    spec.context === "fileAndLine" ? `${target.ref}:${toOneBased(target.line)}` : target.ref;
   return { action, files: [{ name, note: BRIEF_FILE_NOTE }], omissions: [] };
 }
 
@@ -1749,6 +1826,8 @@ After the existing `register("nimbus.generateDocstrings", ...)` line (~1200), ad
   register("nimbus.brief.huddle", () => briefCommands.huddle());
 ```
 
+The `line` in those args is **0-based**, matching `EditorTarget` and VS Code's own convention; `toOneBased` converts at the params boundary. PR 2's hover link must therefore pass the raw hover position, not a pre-incremented one.
+
 - [ ] **Step 4: Run the full gate**
 
 Run: `bun run typecheck && bun run lint && bun run test`
@@ -1976,6 +2055,7 @@ This PR adds UI, so run the `verify-extension` skill. At minimum, confirm by han
 
 1. The Nimbus Agents view shows **Built-in briefs** with four rows on a fresh profile — not "No agents configured".
 2. Right-click in an editor → *Why is this here?* → the pre-flight modal appears, naming `agents.why` and the repo-relative path with the line.
+2a. **Settle the line-base assumption.** Put the cursor on a line whose history you know — ideally the first line of a file, where an off-by-one is unmissable — and check that the modal names the number shown in the gutter, and that the returned brief describes *that* line's history, not its neighbour's. If it is off by one, change `toOneBased` in `src/briefs/params.ts` to return `line` unchanged and update the four tests in `briefs-params.test.ts` that pin it. This is the one thing in this PR that unit tests cannot settle: the Gateway's convention is not in any typed contract, and the SDK fixture uses 42 for both `query.line` and `subject.lineNo`, so it proves nothing.
 3. *Show full text* renders the pretty-printed JSON params.
 4. Cancel → nothing happens, no error toast.
 5. Send → a read-only tab opens titled `Nimbus — Why is this here?.md`.
@@ -1999,3 +2079,4 @@ Checked against the spec:
 - **Covered:** module layout (Tasks 1-3, 6); hover-free surfaces (Tasks 6-7); the `"brief"` egress kind, decision table, manifest note, and generic wrapper (Task 4); choke-point growth (Task 5); two-group sidebar with the settings row (Task 9); error table with verbatim detail, distinct timeout message, silent cancel, and Retry-through-the-gate (Task 6); `MockNimbusClient`-shaped fixtures and the absolute-path test (Tasks 2-3); docs (Task 10).
 - **Deliberately deferred, matching the spec's PR split:** `whyPeek` and the hover, the catalog exemption guard, `janitor`/`preflight`, both new settings, and retro-routing the participant's three briefs. The choke-point list is correspondingly narrow — see Task 5's rationale.
 - **Not yet exercised:** `AgentTimeoutError` gets no dedicated branch in Task 6, because `errMsg(e)` already surfaces its message verbatim and the class carries its own text. If PR 2's hover work shows users cannot tell a timeout from a gateway error, add the branch then rather than speculatively now.
+- **One stated assumption, deliberately not resolvable here:** `agentsWhy` is assumed to take **1-based** lines (`toOneBased`, `src/briefs/params.ts`). Nothing in the typed client or the SDK fixtures settles it, so it is isolated to one function, pinned by four tests, and verified by hand in Task 10 step 2a. Everything that leaves — the RPC parameter and the egress manifest — goes through that one function, so the modal, the rendered brief, and the editor gutter cannot disagree with each other regardless of which base turns out to be right.
