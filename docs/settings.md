@@ -106,6 +106,10 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
 
 `boolean` (default `true`). Shows a second status-bar item while connected: the egress ledger row count plus a `$(check)` that means *the ledger head was read successfully* — not a cryptographic verification. Click it to open the Egress view; run **Verify Egress Ledger** for the offline chain check. Set to `false` to hide the badge. Poll cadence follows [`nimbus.statusBarPollMs`](#nimbusstatusbarpollms).
 
+### `nimbus.briefs.showHoverBlame`
+
+`boolean` (default `true`). Hovering a line shows who last changed it, when, the commit subject, and any linked PR or ticket — with a **Why? →** link that opens the full `Why is this here?` brief for that exact line. Backed by `agents.whyPeek`, which is a synchronous git-and-index lookup: it carries no model call, so it is not routed through the pre-flight egress gate. It does fire one IPC request per mouse-rest (after a 150 ms settle, one in flight per file); set to `false` to turn it off. Requires the repo root to be indexed — run `nimbus init` — or the hover finds nothing and stays hidden.
+
 ### `nimbus.hitlAlwaysModal`
 
 - **Type:** boolean · **Default:** `false`
