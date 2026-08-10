@@ -247,6 +247,10 @@ export function activateWithDeps(
     } catch (e) {
       if (mine !== egressPollSeq) return;
       log.warn(`egressHead poll failed: ${errMsg(e)}`);
+      // A restarted Gateway leaves this client bound to a dead pipe. Report it
+      // so the connection manager tears down and reconnects; otherwise every
+      // surface fails forever and only a window reload recovers (issue #82).
+      connection.noteTransportFailure(e);
       egressBadge.update({ ...base, error: errMsg(e) });
     }
   };
@@ -280,6 +284,9 @@ export function activateWithDeps(
     } catch (e) {
       if (mine !== connectorPollSeq) return;
       log.warn(`connectorListStatus poll failed: ${errMsg(e)}`);
+      // See the egress poll above — this one still runs when the egress badge
+      // is switched off, so it is the detection path that always exists.
+      connection.noteTransportFailure(e);
       connectorHealth = { count: 0, names: [] };
     }
     statusBar.update(statusInputs(lastRenderedConnection));
