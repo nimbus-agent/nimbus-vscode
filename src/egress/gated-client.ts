@@ -1,3 +1,14 @@
+import type {
+  ConflictBrief,
+  ConflictsParams,
+  GhostBrief,
+  GhostParams,
+  HuddleBrief,
+  HuddleParams,
+  WhyBrief,
+  WhyParams,
+} from "@nimbus-dev/client";
+
 import type { EgressGate } from "./gate.js";
 import type { EgressKind, EgressMeta } from "./preflight.js";
 
@@ -108,4 +119,61 @@ export function gateRawAskStream<H, O>(
   action: string,
 ): (input: string, opts?: O) => H {
   return gateAskStream((i, o) => client.askStream(i, o), gate, kind, action);
+}
+
+// ---------------------------------------------------------------------------
+// Briefs.
+//
+// The `agents*` family is agent-bound too: the Gateway composes a `brief`
+// string from a model. The params are structured rather than assembled prose,
+// but a `file`/`ref` is exactly what the leak-check scans for, so these route
+// through the same seam and the same gate.
+//
+// Keeping the `.agentsX(` call shapes in THIS file is what lets
+// egress-choke-point.test.ts allowlist consumers that only ever hold the
+// injected GatedBriefs seam.
+
+export interface RawBriefClient {
+  agentsWhy(p: WhyParams, o?: { timeoutMs?: number }): Promise<WhyBrief>;
+  agentsGhost(p: GhostParams, o?: { timeoutMs?: number }): Promise<GhostBrief>;
+  agentsConflicts(p: ConflictsParams, o?: { timeoutMs?: number }): Promise<ConflictBrief>;
+  agentsHuddle(p?: HuddleParams, o?: { timeoutMs?: number }): Promise<HuddleBrief>;
+}
+
+/** A brief call that has already passed the gate. Throws EgressCancelled if not. */
+export type GatedBrief<P, B> = (p: P, meta: EgressMeta, progressTitle: string) => Promise<B>;
+
+export interface GatedBriefs {
+  why: GatedBrief<WhyParams, WhyBrief>;
+  ghost: GatedBrief<GhostParams, GhostBrief>;
+  conflicts: GatedBrief<ConflictsParams, ConflictBrief>;
+  huddle: GatedBrief<HuddleParams, HuddleBrief>;
+}
+
+export function gateRawBriefs(
+  client: RawBriefClient,
+  gate: EgressGate,
+  withProgress: ProgressRunner = (_title, body) => body(),
+): GatedBriefs {
+  // The seam stringifies, so no call site can send a shape the manifest did not
+  // show. Pretty-printed because the modal's "Show full text" renders it raw.
+  const run = async <P, B>(
+    call: (p: P) => Promise<B>,
+    p: P,
+    meta: EgressMeta,
+    progressTitle: string,
+  ): Promise<B> => {
+    if ((await gate.check("brief", JSON.stringify(p, null, 2), meta)) === "cancel") {
+      throw new EgressCancelled();
+    }
+    return withProgress(progressTitle, () => call(p));
+  };
+
+  return {
+    why: (p, meta, title) => run((q: WhyParams) => client.agentsWhy(q), p, meta, title),
+    ghost: (p, meta, title) => run((q: GhostParams) => client.agentsGhost(q), p, meta, title),
+    conflicts: (p, meta, title) =>
+      run((q: ConflictsParams) => client.agentsConflicts(q), p, meta, title),
+    huddle: (p, meta, title) => run((q: HuddleParams) => client.agentsHuddle(q), p, meta, title),
+  };
 }

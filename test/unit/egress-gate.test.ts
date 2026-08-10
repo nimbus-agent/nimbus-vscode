@@ -161,3 +161,47 @@ describe("Restricted Mode", () => {
     expect(h.shown[0]?.items).toEqual(["Send", "Show full text"]);
   });
 });
+
+describe("the brief kind", () => {
+  const BRIEF_META: EgressMeta = {
+    action: "Why is this here? (agents.why)",
+    files: [
+      { name: "src/a.ts:42", note: "the extension sends this path, not the file's contents" },
+    ],
+    omissions: [],
+  };
+
+  test("prompts, like the other context-assembling surfaces", async () => {
+    const h = harness({ answers: ["Send"] });
+    const decision = await h.gate.check("brief", '{"ref":"src/a.ts","line":42}', BRIEF_META);
+    expect(decision).toBe("send");
+    expect(h.shown.length).toBe(1);
+    expect(h.shown[0]?.modal).toBe(true);
+  });
+
+  test("offers an Always-send button labelled for the surface", async () => {
+    const h = harness({ answers: ["Always send Agent Briefs here"] });
+    expect(await h.gate.check("brief", "{}", BRIEF_META)).toBe("send");
+    expect(h.deps.skips.isSkipped("brief")).toBe(true);
+  });
+
+  test("a stored skip suppresses the modal", async () => {
+    const h = harness({ answers: ["Send"] });
+    await h.deps.skips.setSkipped("brief");
+    expect(await h.gate.check("brief", "{}", BRIEF_META)).toBe("send");
+    expect(h.shown).toEqual([]);
+  });
+
+  test("fails closed when the modal is dismissed", async () => {
+    const h = harness({ answers: [undefined] });
+    expect(await h.gate.check("brief", "{}", BRIEF_META)).toBe("cancel");
+  });
+
+  test("Restricted Mode ignores a stored skip and withholds the Always button", async () => {
+    const h = harness({ answers: ["Send"], trusted: false });
+    await h.deps.skips.setSkipped("brief");
+    expect(await h.gate.check("brief", "{}", BRIEF_META)).toBe("send");
+    expect(h.shown.length).toBe(1);
+    expect(h.shown[0]?.items).not.toContain("Always send Agent Briefs here");
+  });
+});
