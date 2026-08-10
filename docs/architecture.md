@@ -89,6 +89,7 @@ real code paths without a running editor. Keep `src/` and `test/` self-contained
 | `src/settings.ts` | Typed accessors over `nimbus.*` configuration. |
 | `src/scm/` | Dev-workflow trio (Generate Commit Message, Review Changes, Generate Tests, Generate Docstrings): pure diff/commit-message/review/generate modules behind a `GitApiLike` seam, plus `commands.ts` and `real-git.ts` (see below). |
 | `src/egress/` | The pre-flight gate: every agent-bound call routes through `gated-client.ts` (see below). Pure `leak-check.ts` / `preflight.ts`, the `gate.ts` decision table, and the `skip-store.ts` memento wrapper. |
+| `src/briefs/` | The built-in agent briefs (`agentsWhy` / `agentsGhost` / `agentsConflicts` / `agentsHuddle`). Pure core — `catalog.ts` (the briefs as data), `render.ts` (brief → markdown, shared with the chat participant), `params.ts` (editor context → params, and the one place guaranteeing no absolute path becomes a parameter) — plus `commands.ts`, the only file here that touches the `vscode` shim. Every call routes through `gated-client.ts` under the `"brief"` egress kind, which prompts and is skippable per workspace. |
 
 ## The `src/egress/` choke point
 

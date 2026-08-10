@@ -573,7 +573,7 @@ function editorDeps(opts: FakeEditorOpts = {}): Partial<ScmCommandDeps> {
           fileName: opts.fileName ?? "/home/dev/proj/src/a.ts",
           languageId: opts.languageId ?? "typescript",
         },
-        selection: { isEmpty: selectionText === undefined },
+        selection: { isEmpty: selectionText === undefined, active: { line: 0 } },
       },
     } as unknown as ScmCommandDeps["window"],
   };

@@ -231,6 +231,26 @@
         "command": "nimbus.generateDocstrings",
         "title": "Generate Docstrings",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.why",
+        "title": "Why is this here?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.ghost",
+        "title": "Who knew this code?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.conflicts",
+        "title": "Who else is touching this?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.huddle",
+        "title": "Team huddle",
+        "category": "Nimbus"
       }
     ],
     "chatParticipants": [
@@ -379,6 +399,18 @@
     "menus": {
       "commandPalette": [
         {
+          "command": "nimbus.brief.why",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "nimbus.brief.ghost",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "nimbus.brief.conflicts",
+          "when": "editorIsOpen"
+        },
+        {
           "command": "nimbus.openAuditEntry",
           "when": "false"
         },
@@ -485,6 +517,21 @@
           "command": "nimbus.generateDocstrings",
           "when": "editorTextFocus",
           "group": "nimbus@6"
+        },
+        {
+          "command": "nimbus.brief.why",
+          "when": "editorTextFocus",
+          "group": "nimbus@7"
+        },
+        {
+          "command": "nimbus.brief.ghost",
+          "when": "editorTextFocus",
+          "group": "nimbus@8"
+        },
+        {
+          "command": "nimbus.brief.conflicts",
+          "when": "editorTextFocus",
+          "group": "nimbus@9"
         }
       ],
       "scm/title": [

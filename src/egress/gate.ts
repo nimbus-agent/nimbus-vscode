@@ -15,17 +15,19 @@ export type GateDecision = "send" | "cancel";
 export const SKIP_LABEL: Record<SkippableKind, string> = {
   quickAsk: "Quick Ask",
   scm: "Source Control",
+  brief: "Agent Briefs",
 };
 
 const SEND = "Send";
 const SHOW_FULL = "Show full text";
 const CANCEL = "Cancel";
 
-// Only the two surfaces where the EXTENSION assembles context prompt. Ask and
+// Only the surfaces where the EXTENSION decides what is sent prompt. Ask and
 // the participant are text the user just typed; the LM tool is confirmed
-// upstream by its own inline card.
+// upstream by its own inline card. Briefs prompt because the extension derives
+// their parameters from the editor, not from a user keystroke.
 function skippableKind(kind: EgressKind): SkippableKind | undefined {
-  if (kind === "quickAsk" || kind === "scm") return kind;
+  if (kind === "quickAsk" || kind === "scm" || kind === "brief") return kind;
   return undefined;
 }
 

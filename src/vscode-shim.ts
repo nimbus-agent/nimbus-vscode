@@ -81,7 +81,9 @@ export interface TreeDataProviderLike<T> {
 
 export interface TextEditorLike {
   document: { getText(range?: unknown): string; fileName: string; languageId: string };
-  selection: { isEmpty: boolean };
+  // `active` is the cursor end of the selection — zero-based, straight from
+  // vscode.Selection. agentsWhy({ref, line}) needs it; nothing else does yet.
+  selection: { isEmpty: boolean; active: { line: number } };
 }
 
 export interface MessageOptionsLike {

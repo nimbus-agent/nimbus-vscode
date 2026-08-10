@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 
 import { discoverSocketPath, type HitlRequest, NimbusClient } from "@nimbus-dev/client";
 import * as vscode from "vscode";
+import { createBriefCommands } from "./briefs/commands.js";
 import { type ChatController, createChatController } from "./chat/chat-controller.js";
 import type { ChatPanel, ChatPanelFactory } from "./chat/chat-panel.js";
 import { createRealChatPanelFactory } from "./chat/real-chat-panel.js";
@@ -20,6 +21,7 @@ import { createEgressGate } from "./egress/gate.js";
 import {
   gateRawAgentInvoke,
   gateRawAskStream,
+  gateRawBriefs,
   isEgressCancelled,
   type ProgressRunner,
 } from "./egress/gated-client.js";
@@ -622,6 +624,19 @@ export function activateWithDeps(
     log,
   });
 
+  const briefCommands = createBriefCommands({
+    briefs: () => {
+      const client = nimbus();
+      return client === undefined ? undefined : gateRawBriefs(client, egressGate, runWithProgress);
+    },
+    activeEditor: () => deps.window.activeTextEditor,
+    roots: egressRoots,
+    now: () => Date.now(),
+    openReadonly: openReadonlyJson,
+    window: deps.window,
+    log,
+  });
+
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 
   const register = (id: string, handler: (...args: unknown[]) => unknown): void => {
@@ -1199,6 +1214,22 @@ export function activateWithDeps(
   register("nimbus.generateTests", () => scm.generateTests());
   register("nimbus.generateDocstrings", () => scm.generateDocstrings());
 
+  // `args` is optional and 0-based, matching EditorTarget and VS Code's own
+  // convention; toOneBased converts at the params boundary. Supplied by the
+  // sidebar (never) and, from PR 2, by the hover's [Why?] link (the raw hover
+  // position). Absent, each command falls back to the active editor.
+  const briefArgs = (args: unknown): { ref: string; line: number } | undefined => {
+    if (typeof args !== "object" || args === null) return undefined;
+    const rec = args as { ref?: unknown; line?: unknown };
+    if (typeof rec.ref !== "string" || typeof rec.line !== "number") return undefined;
+    return { ref: rec.ref, line: rec.line };
+  };
+
+  register("nimbus.brief.why", (args) => briefCommands.why(briefArgs(args)));
+  register("nimbus.brief.ghost", (args) => briefCommands.ghost(briefArgs(args)));
+  register("nimbus.brief.conflicts", (args) => briefCommands.conflicts(briefArgs(args)));
+  register("nimbus.brief.huddle", () => briefCommands.huddle());
+
   void connection.start();
 
   log.info(`Nimbus extension activated; ${ctx.subscriptions.length} disposable(s) registered`);
@@ -1285,8 +1316,16 @@ export function createReadonlyJsonOpener(
   const docs = new Map<string, string>();
   let seq = 0;
   let registered = false;
+  // Keyed on the sequence number, NOT the title. The title is decorative — it
+  // names the tab — and is not URI-safe: `Uri.parse` reads `?` as the start of
+  // the query and `#` as the fragment, so a title containing either comes back
+  // TRUNCATED in `uri.path`, the lookup misses, and the tab renders silently
+  // EMPTY. Three brief titles end in "?" ("Why is this here?"), which is how
+  // this surfaced — in a real window, because the test stub's Uri.parse does not
+  // split the query and so cannot reproduce it. The sequence number is always
+  // the first path segment and survives both delimiters.
   const provider: vscode.TextDocumentContentProvider = {
-    provideTextDocumentContent: (uri) => docs.get(uri.path) ?? "",
+    provideTextDocumentContent: (uri) => docs.get(uri.path.split("/")[1] ?? "") ?? "",
   };
   return async (title, content) => {
     if (!registered) {
@@ -1296,8 +1335,10 @@ export function createReadonlyJsonOpener(
       registered = true;
     }
     seq += 1;
+    // The title still rides in the URI so VS Code names the tab and infers the
+    // language from the `.md` suffix; only the lookup key is the sequence.
     const path = `/${seq}/${title}`;
-    docs.set(path, content);
+    docs.set(String(seq), content);
     while (docs.size > maxDocs) {
       const oldest = docs.keys().next().value;
       if (oldest === undefined) break;

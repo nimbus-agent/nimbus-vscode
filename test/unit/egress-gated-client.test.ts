@@ -5,7 +5,9 @@ import {
   EgressCancelled,
   gateAgentInvoke,
   gateAskStream,
+  gateRawBriefs,
   isEgressCancelled,
+  type RawBriefClient,
 } from "../../src/egress/gated-client.js";
 import type { EgressMeta, EgressPayload } from "../../src/egress/preflight.js";
 
@@ -171,5 +173,88 @@ describe("gateAskStream", () => {
     );
     askStream("hi", opts);
     expect(seen).toEqual([["hi", opts]]);
+  });
+});
+
+describe("gateRawBriefs", () => {
+  const base = { agentVersion: 1 as const, generatedAt: 0, latencyMs: 1, gaps: [] };
+
+  function fakeClient(calls: unknown[]) {
+    return {
+      agentsWhy: async (p: unknown) => {
+        calls.push(["why", p]);
+        return {
+          ...base,
+          kind: "why",
+          query: { ref: "a", line: null },
+          subject: null,
+          findings: [],
+        };
+      },
+      agentsGhost: async (p: unknown) => {
+        calls.push(["ghost", p]);
+        return { ...base, kind: "ghost", query: { file: "a" }, startEntityId: null, findings: [] };
+      },
+      agentsConflicts: async (p: unknown) => {
+        calls.push(["conflicts", p]);
+        return {
+          ...base,
+          kind: "conflict",
+          query: { file: "a" },
+          startEntityId: null,
+          collisions: [],
+        };
+      },
+      agentsHuddle: async (p: unknown) => {
+        calls.push(["huddle", p]);
+        return { ...base, kind: "huddle", query: { sinceMs: 1 }, contributions: [] };
+      },
+    } as unknown as RawBriefClient;
+  }
+
+  test("sends the params as the verbatim prompt, pretty-printed, under the brief kind", async () => {
+    const gate = fakeGate("send");
+    const briefs = gateRawBriefs(fakeClient([]), gate);
+    await briefs.why({ ref: "src/a.ts", line: 42 }, META, "…");
+    expect(gate.recorded[0]?.kind).toBe("brief");
+    expect(gate.recorded[0]?.prompt).toBe('{\n  "ref": "src/a.ts",\n  "line": 42\n}');
+  });
+
+  test("throws EgressCancelled and never calls the client when the gate cancels", async () => {
+    const calls: unknown[] = [];
+    const briefs = gateRawBriefs(fakeClient(calls), fakeGate("cancel"));
+    await expect(briefs.ghost({ file: "src/a.ts" }, META, "…")).rejects.toBeInstanceOf(
+      EgressCancelled,
+    );
+    expect(calls).toEqual([]);
+  });
+
+  test("forwards each brief to its own client method", async () => {
+    const calls: unknown[] = [];
+    const briefs = gateRawBriefs(fakeClient(calls), fakeGate("send"));
+    await briefs.conflicts({ file: "src/a.ts" }, META, "…");
+    await briefs.huddle({}, META, "…");
+    expect(calls).toEqual([
+      ["conflicts", { file: "src/a.ts" }],
+      ["huddle", {}],
+    ]);
+  });
+
+  test("shows progress only after the gate clears", async () => {
+    const order: string[] = [];
+    const gate = fakeGate("send");
+    const wrapped: EgressGate = {
+      ...gate,
+      check: async (kind, prompt, meta) => {
+        order.push("gate");
+        return gate.check(kind, prompt, meta);
+      },
+    };
+    const briefs = gateRawBriefs(fakeClient([]), wrapped, async (_t, body) => {
+      order.push("progress");
+      return body();
+    });
+    await briefs.huddle({}, META, "…");
+    expect(order).toEqual(["gate", "progress"]);
   });
 });

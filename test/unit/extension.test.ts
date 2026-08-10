@@ -186,6 +186,8 @@ function makeFixture(opts: {
     selectionText?: string;
     fileName?: string;
     languageId?: string;
+    /** Zero-based cursor line, as VS Code reports it. Defaults to 0. */
+    line?: number;
   };
   panelVisible?: boolean;
   panelActive?: boolean;
@@ -304,7 +306,10 @@ function makeFixture(opts: {
       opts.activeEditor === undefined
         ? undefined
         : {
-            selection: { isEmpty: opts.activeEditor.empty ?? false },
+            selection: {
+              isEmpty: opts.activeEditor.empty ?? false,
+              active: { line: opts.activeEditor.line ?? 0 },
+            },
             document: {
               getText: (range?: unknown) =>
                 range === undefined
@@ -1749,10 +1754,13 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     const provider = f.treeProviders.get("nimbus.agentsView");
     if (provider === undefined) throw new Error("agents provider not registered");
-    const rows = await provider.getChildren(undefined);
-    // getChildren returns the raw SidebarItem rows (carrying iconId);
+    // The view is two groups now: built-in briefs first, configured agents
+    // second. getChildren returns the raw SidebarItem rows (carrying iconId);
     // applyThemeIcons maps iconId -> iconPath only inside getTreeItem (mirrors
     // the audit provider test).
+    const groups = (await provider.getChildren(undefined)) as Array<{ label: string }>;
+    expect(groups.map((g) => g.label)).toEqual(["Built-in briefs", "Configured agents"]);
+    const rows = await provider.getChildren(groups[1]);
     expect(rows[0]).toMatchObject({ label: "Researcher", iconId: "hubot" });
     const item = provider.getTreeItem(rows[0]);
     expect(item.iconPath).toBeDefined();
@@ -2598,6 +2606,31 @@ describe("createReadonlyJsonOpener", () => {
     expect(provider.provideTextDocumentContent({ path: "/1/a.md" })).toBe("");
     expect(provider.provideTextDocumentContent({ path: "/2/b.md" })).toBe("BBB");
     expect(provider.provideTextDocumentContent({ path: "/3/c.md" })).toBe("CCC");
+    spy.mockRestore();
+  });
+
+  // Found in a real Extension Development Host, not here: the brief titles end
+  // in "?" ("Nimbus — Why is this here?.md"), and a real `vscode.Uri.parse`
+  // treats everything from "?" onward as the QUERY — so the provider is handed
+  // a truncated path, the lookup misses, and the tab opens silently EMPTY.
+  // This stub's Uri.parse does not split the query, which is exactly why unit
+  // tests could not catch it. So the assertion feeds the provider the truncated
+  // path a real Uri would produce.
+  test("a title containing '?' still resolves, though Uri.parse truncates the path", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    const open = createReadonlyJsonOpener(ctx);
+    await open("Nimbus — Why is this here?.md", "WHY BODY");
+    const provider = spy.mock.calls[0]?.[1] as {
+      provideTextDocumentContent(uri: { path: string }): string;
+    };
+    // What a real Uri.parse hands back: "?.md" became the query.
+    expect(provider.provideTextDocumentContent({ path: "/1/Nimbus — Why is this here" })).toBe(
+      "WHY BODY",
+    );
+    // "#" is the fragment delimiter and truncates the same way.
+    await open("Nimbus — issue #42.md", "HASH BODY");
+    expect(provider.provideTextDocumentContent({ path: "/2/Nimbus — issue " })).toBe("HASH BODY");
     spy.mockRestore();
   });
 });
