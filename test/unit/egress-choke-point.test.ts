@@ -37,6 +37,19 @@ const CALLS = [".agentInvoke(", ".askStream("];
 // guard that passes for the wrong reason.
 const GATED_BRIEF_CALLS = [".agentsWhy(", ".agentsGhost(", ".agentsConflicts(", ".agentsHuddle("];
 
+// agents* calls that are deliberately NOT gated.
+//
+// `.agentsWhyPeek(` is the real exemption, and it is on evidence rather than
+// convenience: it takes no timeoutMs, returns synchronously, and carries no
+// `brief` string or AgentBriefBase — it never reaches a model, so there is
+// nothing for a pre-flight preview to show. Verified live: it answers in 1-5ms
+// with raw git-blame and index fields.
+//
+// The other three are NOT exempt, only unrouted: ops-commands.ts still calls
+// them on a raw client. PR 3 routes them and deletes them from this list.
+const UNGATED_BY_DESIGN = [".agentsWhyPeek("];
+const UNGATED_PENDING_PR3 = [".agentsCatchup(", ".agentsExpert(", ".agentsImpact("];
+
 function listTsFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -107,5 +120,26 @@ describe("agent-bound calls have exactly one choke point", () => {
   test("the choke point really does contain every gated brief call shape", () => {
     const gated = readFileSync(join(SRC, "egress", "gated-client.ts"), "utf8");
     for (const call of GATED_BRIEF_CALLS) expect(gated).toContain(call);
+  });
+
+  // Discovered, not listed: a new agents* call anywhere in src/ shows up here
+  // even if whoever added it never touched this file. That is the point — a
+  // hand-maintained list can only catch names someone remembered to add, which
+  // is exactly how an ungated agent call would slip in.
+  //
+  // It scans comments too, so prose must not spell a call shape literally.
+  // Write "agents*" in comments, not a dotted example with a paren.
+  test("whyPeek is the only agents* call exempt from the gate", () => {
+    const found = new Set<string>();
+    for (const file of listTsFiles(SRC)) {
+      for (const m of readFileSync(file, "utf8").matchAll(/\.agents[A-Z]\w*\(/g)) {
+        found.add(m[0]);
+      }
+    }
+    const unaccounted = [...found]
+      .filter((c) => !GATED_BRIEF_CALLS.includes(c))
+      .filter((c) => !UNGATED_PENDING_PR3.includes(c))
+      .sort();
+    expect(unaccounted).toEqual(UNGATED_BY_DESIGN);
   });
 });
