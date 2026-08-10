@@ -45,11 +45,13 @@ export function toRelativeRef(fileName: string, roots: readonly string[]): strin
  * the modal, the number in the rendered brief, and the number in the gutter can
  * never disagree.
  *
- * ASSUMPTION: `agentsWhy` expects 1-based lines. The client types `line?:
- * number` with no stated base and the SDK fixture uses 42 for both `query.line`
- * and `subject.lineNo`, so it settles nothing. 1-based is the convention git
- * blame uses and the one the brief is rendered against. If verification shows
- * the Gateway is 0-based, this function is the single line to change.
+ * VERIFIED 1-based against a live Gateway (2026-08-10), not assumed. The typed
+ * client says only `line?: number`, so this was settled by probing
+ * `agentsWhyPeek` — which shares WhyParams — against a file whose adjacent
+ * lines have different commits: `ops-commands.ts` 1-based line 2 is uniquely
+ * `caec0e0`, lines 1 and 3 are `475d24b`. Querying line 2 returned `caec0e0`,
+ * and `subject.lineNo` echoed 2. Passing VS Code's 0-based value straight
+ * through would have made every `why` answer about the line above.
  */
 export function toOneBased(line: number): number {
   return line + 1;

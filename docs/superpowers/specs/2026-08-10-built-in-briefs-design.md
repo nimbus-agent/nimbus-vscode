@@ -281,6 +281,14 @@ for no reason.
 is deterministic: it prefills a value the user typed and confirmed, so a
 second Preflight in the same repo is one Enter.
 
+**Line numbers are 1-based on the wire — verified, not assumed.** VS Code counts
+from 0; the Gateway counts from 1. `toOneBased` in `src/briefs/params.ts` is the
+single conversion point, used by both the RPC parameter and the egress manifest.
+Settled on 2026-08-10 by probing `agentsWhyPeek` (which shares `WhyParams`)
+against a file whose adjacent lines carry different commits: querying line 2 of
+`ops-commands.ts` returned the commit `git blame` puts on 1-based line 2, and
+`subject.lineNo` echoed 2.
+
 **Deriving the namespace from the branch name is explicitly rejected.** The
 proposal — `feature/billing-setup` → `billing` — fails in a way the user cannot
 see. A wrong namespace does not error; `agentsPreflight` returns a perfectly
