@@ -30,6 +30,13 @@ const ALLOWED = [
 ];
 const CALLS = [".agentInvoke(", ".askStream("];
 
+// The agents* briefs this PR routes through the gate. Deliberately NOT the full
+// family: ops-commands.ts still calls agentsImpact/agentsExpert/agentsCatchup
+// raw, and PR 3 routes them and extends this list in the same change. A name
+// listed here before it is routed would only force a bogus ALLOWED entry — a
+// guard that passes for the wrong reason.
+const GATED_BRIEF_CALLS = [".agentsWhy(", ".agentsGhost(", ".agentsConflicts(", ".agentsHuddle("];
+
 function listTsFiles(dir: string): string[] {
   const out: string[] = [];
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -72,5 +79,28 @@ describe("agent-bound calls have exactly one choke point", () => {
   test("the choke point really does contain both call shapes", () => {
     const gated = readFileSync(join(SRC, "egress", "gated-client.ts"), "utf8");
     for (const call of CALLS) expect(gated).toContain(call);
+  });
+
+  // The brief family. Same invariant, narrower list — see GATED_BRIEF_CALLS.
+  for (const call of GATED_BRIEF_CALLS) {
+    test(`${call} appears only in the choke point`, () => {
+      const offenders = listTsFiles(SRC)
+        .map(norm)
+        .filter((f) => readFileSync(join(REPO, f), "utf8").includes(call))
+        .filter((f) => !f.endsWith("egress/gated-client.ts"));
+      expect(offenders).toEqual([]);
+    });
+  }
+
+  test("extension.ts never touches the raw client's brief methods", () => {
+    const src = readFileSync(join(SRC, "extension.ts"), "utf8");
+    for (const member of GATED_BRIEF_CALLS.map((c) => c.slice(0, -1))) {
+      expect(src).not.toContain(member);
+    }
+  });
+
+  test("the choke point really does contain every gated brief call shape", () => {
+    const gated = readFileSync(join(SRC, "egress", "gated-client.ts"), "utf8");
+    for (const call of GATED_BRIEF_CALLS) expect(gated).toContain(call);
   });
 });
