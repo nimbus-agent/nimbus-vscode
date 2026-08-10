@@ -3,6 +3,7 @@ import { homedir, tmpdir } from "node:os";
 
 import { discoverSocketPath, type HitlRequest, NimbusClient } from "@nimbus-dev/client";
 import * as vscode from "vscode";
+import { createBriefCommands } from "./briefs/commands.js";
 import { type ChatController, createChatController } from "./chat/chat-controller.js";
 import type { ChatPanel, ChatPanelFactory } from "./chat/chat-panel.js";
 import { createRealChatPanelFactory } from "./chat/real-chat-panel.js";
@@ -20,6 +21,7 @@ import { createEgressGate } from "./egress/gate.js";
 import {
   gateRawAgentInvoke,
   gateRawAskStream,
+  gateRawBriefs,
   isEgressCancelled,
   type ProgressRunner,
 } from "./egress/gated-client.js";
@@ -622,6 +624,19 @@ export function activateWithDeps(
     log,
   });
 
+  const briefCommands = createBriefCommands({
+    briefs: () => {
+      const client = nimbus();
+      return client === undefined ? undefined : gateRawBriefs(client, egressGate, runWithProgress);
+    },
+    activeEditor: () => deps.window.activeTextEditor,
+    roots: egressRoots,
+    now: () => Date.now(),
+    openReadonly: openReadonlyJson,
+    window: deps.window,
+    log,
+  });
+
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 
   const register = (id: string, handler: (...args: unknown[]) => unknown): void => {
@@ -1198,6 +1213,22 @@ export function activateWithDeps(
   register("nimbus.reviewChanges", () => scm.reviewChanges());
   register("nimbus.generateTests", () => scm.generateTests());
   register("nimbus.generateDocstrings", () => scm.generateDocstrings());
+
+  // `args` is optional and 0-based, matching EditorTarget and VS Code's own
+  // convention; toOneBased converts at the params boundary. Supplied by the
+  // sidebar (never) and, from PR 2, by the hover's [Why?] link (the raw hover
+  // position). Absent, each command falls back to the active editor.
+  const briefArgs = (args: unknown): { ref: string; line: number } | undefined => {
+    if (typeof args !== "object" || args === null) return undefined;
+    const rec = args as { ref?: unknown; line?: unknown };
+    if (typeof rec.ref !== "string" || typeof rec.line !== "number") return undefined;
+    return { ref: rec.ref, line: rec.line };
+  };
+
+  register("nimbus.brief.why", (args) => briefCommands.why(briefArgs(args)));
+  register("nimbus.brief.ghost", (args) => briefCommands.ghost(briefArgs(args)));
+  register("nimbus.brief.conflicts", (args) => briefCommands.conflicts(briefArgs(args)));
+  register("nimbus.brief.huddle", () => briefCommands.huddle());
 
   void connection.start();
 
