@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 
 import {
   fileParams,
+  janitorParams,
+  preflightParams,
   rootFor,
   toOneBased,
   toRelativeRef,
@@ -78,5 +80,28 @@ describe("params", () => {
 
   test("fileParams carries the file only", () => {
     expect(fileParams({ ref: "src/a.ts", line: 42 })).toEqual({ file: "src/a.ts" });
+  });
+
+  test("janitorParams omits idleDays entirely when it was not supplied", () => {
+    expect(janitorParams({ resourceRef: "svc/legacy" })).toEqual({ resourceRef: "svc/legacy" });
+    expect("idleDays" in janitorParams({ resourceRef: "svc/legacy" })).toBe(false);
+  });
+
+  test("janitorParams passes idleDays through when supplied", () => {
+    expect(janitorParams({ resourceRef: "svc/legacy", idleDays: 30 })).toEqual({
+      resourceRef: "svc/legacy",
+      idleDays: 30,
+    });
+  });
+
+  test("janitorParams leaves a non-file resource ref untouched", () => {
+    expect(janitorParams({ resourceRef: "svc/legacy" }).resourceRef).toBe("svc/legacy");
+  });
+
+  test("preflightParams carries the ref and namespace verbatim", () => {
+    expect(preflightParams({ ref: "release-1.4", namespace: "billing" })).toEqual({
+      ref: "release-1.4",
+      namespace: "billing",
+    });
   });
 });

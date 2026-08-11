@@ -77,3 +77,30 @@ export function whyParams(t: EditorTarget): { ref: string; line: number } {
 export function fileParams(t: EditorTarget): { file: string } {
   return { file: t.ref };
 }
+
+/** What the Janitor prompt collects. `idleDays` omitted = the Gateway's default. */
+export interface JanitorTarget {
+  resourceRef: string;
+  idleDays?: number;
+}
+
+/**
+ * Deliberately NOT relativised: a resource ref is often not a file at all
+ * ("svc/legacy-billing"), so putting it through toRelativeRef would corrupt it.
+ * The prompt prefills a relative ref; anything else the user types is their
+ * choice, and the gate's manifest shows it — with a leak warning if it carries
+ * an absolute path — before it is sent.
+ */
+export function janitorParams(t: JanitorTarget): { resourceRef: string; idleDays?: number } {
+  return {
+    resourceRef: t.resourceRef,
+    ...(t.idleDays !== undefined ? { idleDays: t.idleDays } : {}),
+  };
+}
+
+export function preflightParams(t: { ref: string; namespace: string }): {
+  ref: string;
+  namespace: string;
+} {
+  return { ref: t.ref, namespace: t.namespace };
+}
