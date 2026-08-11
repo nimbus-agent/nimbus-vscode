@@ -524,12 +524,27 @@ import { join } from "node:path";
 
 export const VSCODE_VERSION = "1.104.0";
 
+// Corrected during execution. The first draft called process.exit() inside
+// this helper on a non-zero status — including for the extest run below. That
+// is wrong in a way that only shows up when it matters: process.exit()
+// terminates without unwinding pending `finally` blocks, so a FAILING ui suite
+// skipped gateway.stop() entirely, which is precisely the case the finally
+// exists to cover. Verified: `function run(){process.exit(3)}; try{run()}
+// finally{console.log("x")}` prints nothing.
+//
+// So this returns the status and lets the caller decide when to exit.
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { stdio: "inherit", shell: process.platform === "win32" });
-  if (r.status !== 0) process.exit(r.status ?? 1);
+  return r.status ?? 1;
 };
 
-run("bunx", ["tsc", "-p", "tsconfig.ui.json"]);
+const runOrExit = (cmd, args) => {
+  const status = run(cmd, args);
+  if (status !== 0) process.exit(status);
+};
+
+// Fail fast here: nothing is running yet, so there is nothing to clean up.
+runOrExit("bunx", ["tsc", "-p", "tsconfig.ui.json"]);
 
 const { createFakeGateway } = await import("../out/ui/fake-gateway.js");
 const gateway = createFakeGateway();
@@ -559,8 +574,12 @@ writeFileSync(
   )}\n`,
 );
 
+// NOT runOrExit: exiting here would skip the finally and leak the fake on
+// exactly the path that matters — a failing suite. Capture the status, let the
+// finally stop the gateway, then exit with it.
+let status = 1;
 try {
-  run("bunx", [
+  status = run("bunx", [
     "extest",
     "setup-and-run",
     "./out/ui/specs/**/*.test.js",
@@ -577,6 +596,7 @@ try {
 } finally {
   await gateway.stop();
 }
+process.exit(status);
 ```
 
 Add to `package.json` scripts, after `"test:coverage"`:
