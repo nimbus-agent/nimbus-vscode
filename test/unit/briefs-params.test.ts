@@ -1,6 +1,12 @@
 import { describe, expect, test } from "vitest";
 
-import { fileParams, toOneBased, toRelativeRef, whyParams } from "../../src/briefs/params.js";
+import {
+  fileParams,
+  rootFor,
+  toOneBased,
+  toRelativeRef,
+  whyParams,
+} from "../../src/briefs/params.js";
 
 describe("toRelativeRef", () => {
   const roots = ["/home/dev/proj"];
@@ -42,6 +48,18 @@ describe("toRelativeRef", () => {
       "src/MyFile.ts",
     );
   });
+});
+
+test("rootFor returns the containing root in its original casing", () => {
+  expect(rootFor("c:/proj/src/a.ts", ["C:/Proj"])).toBe("C:/Proj");
+});
+
+test("rootFor prefers the innermost of nested roots", () => {
+  expect(rootFor("/a/b/c/x.ts", ["/a", "/a/b"])).toBe("/a/b");
+});
+
+test("rootFor returns undefined when no root contains the file", () => {
+  expect(rootFor("/elsewhere/x.ts", ["/a"])).toBeUndefined();
 });
 
 describe("params", () => {

@@ -21,21 +21,34 @@ function basename(p: string): string {
   return segments.at(-1) ?? p;
 }
 
+/**
+ * The workspace root containing `fileName`, returned in the ORIGINAL casing the
+ * caller passed in, or undefined when none matches. Longest root first: with
+ * nested folders open the innermost is the useful one, and a shorter parent
+ * would otherwise win by appearing earlier.
+ *
+ * Compares case-insensitively because on Windows the editor's fileName and the
+ * workspace folder can disagree on drive-letter case ("C:/" vs "c:/").
+ */
+export function rootFor(fileName: string, roots: readonly string[]): string | undefined {
+  const file = normalise(fileName).toLowerCase();
+  const sorted = [...roots].sort((a, b) => normalise(b).length - normalise(a).length);
+  for (const root of sorted) {
+    const n = normalise(root);
+    const prefix = (n.endsWith("/") ? n : `${n}/`).toLowerCase();
+    if (file.startsWith(prefix)) return root;
+  }
+  return undefined;
+}
+
 export function toRelativeRef(fileName: string, roots: readonly string[]): string {
   const file = normalise(fileName);
-  // Longest root first: with nested folders open, the innermost is the useful
-  // one, and a shorter parent would otherwise win by appearing earlier.
-  const sorted = [...roots].map(normalise).sort((a, b) => b.length - a.length);
-  for (const root of sorted) {
-    const prefix = root.endsWith("/") ? root : `${root}/`;
-    // Compare case-insensitively: on Windows the editor's fileName and the
-    // workspace folder can disagree on drive-letter case ("C:/" vs "c:/"), and
-    // an exact compare would miss, silently degrading a useful repo-relative
-    // ref to a bare basename. Slice from the ORIGINAL string so real casing
-    // survives — the Gateway's index may be case-sensitive.
-    if (file.toLowerCase().startsWith(prefix.toLowerCase())) return file.slice(prefix.length);
-  }
-  return basename(file);
+  const root = rootFor(fileName, roots);
+  if (root === undefined) return basename(file);
+  const n = normalise(root);
+  // Slice from the ORIGINAL string so real casing survives — the Gateway's
+  // index may be case-sensitive.
+  return file.slice((n.endsWith("/") ? n : `${n}/`).length);
 }
 
 /**
