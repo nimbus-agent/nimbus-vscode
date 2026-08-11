@@ -1,23 +1,29 @@
 # The built-in briefs, surfaced — design
 
 **Date:** 2026-08-10
-**Status:** approved, ready for an implementation plan
-**Roadmap:** Phase 2 — `docs/ROADMAP.md:183` (the seven unreached briefs) and
-`docs/ROADMAP.md:184` (Agents view shows the built-ins), merged into one piece
-of work because they are the same work seen from two doorways.
+**Status:** approved, delivered across PRs 1–3 (see Delivery below)
+**Roadmap:** originally Phase 2's *the seven unreached briefs* and *Agents view
+shows the built-ins* rows — merged into one piece of work because they are the
+same work seen from two doorways. Both rows are now in `docs/ROADMAP.md`'s
+**Already shipped** table as **Built-in briefs** and **Agents view shows the
+built-ins**; the line numbers above are deliberately omitted since the Phase 2
+table reflows as items graduate out of it.
 
 ## What this is
 
-The Gateway ships eleven agents. The published client types ten of them. This
-extension calls three, all of them buried inside chat-participant slash
-commands, and the sidebar view named **Agents** renders "No agents configured"
-on a fresh install.
+The Gateway ships eleven agents. The published client types ten of them. Before
+this design, the extension called three, all of them buried inside
+chat-participant slash commands, and the sidebar view named **Agents**
+rendered "No agents configured" on a fresh install.
 
 This design wires the remaining seven to the surface that already holds the
-context they need, and makes the Agents view show what the product actually is.
+context they need, and makes the Agents view show what the product actually
+is. **Delivered:** the extension now calls all ten of the client's typed
+methods, and the Agents view shows the built-in briefs as their own group —
+see the Delivery table at the bottom of this document.
 
 No new RPC. No client bump. Everything here is capability that shipped in
-`@nimbus-dev/client 0.14.0` and has been sitting unreached.
+`@nimbus-dev/client 0.14.0`; before this design, it had been sitting unreached.
 
 ## The briefs are not uniform
 
@@ -151,12 +157,17 @@ kind is fixed at wiring time rather than chosen at the call site.
 - `gated-client.ts` gains one generic wrapper over `(params) => Promise<Brief>`,
   whose type requires the `EgressMeta` argument — so a raw client cannot satisfy
   the seam by accident, the same type-level guardrail `gateAgentInvoke` uses.
-- The choke-point test grows a `GATED_AGENT_CALLS` list of the nine `.agentsX(`
-  shapes. `chat-participant/ops-commands.ts` joins `ALLOWED`; it holds an
-  injected seam, never a real client.
-- **The exemption guard:** assert the catalog marks exactly one entry ungated
-  and that it is `whyPeek`. A tenth ungated brief must fail the build, not pass
-  quietly. An undocumented gap is how this kind of invariant rots.
+- The choke-point test grows a `GATED_BRIEF_CALLS` list of the nine `.agentsX(`
+  shapes (six briefs plus the participant's three). `chat-participant/ops-commands.ts`
+  never touches a raw `.agentsX(` shape at all — it calls the injected
+  `client.briefs.*` seam (`ParticipantBriefs`), so it needs no `ALLOWED` entry;
+  only `gated-client.ts` itself may contain any of the nine call shapes.
+- **The exemption guard:** every catalog entry is gated — `BRIEF_CATALOG` marks
+  none as ungated, and `whyPeek` is not a catalog entry at all, since it is a
+  hover, not a row. The choke-point test discovers every `.agentsX(` call
+  shape anywhere in `src/` and asserts `.agentsWhyPeek(` is the only one
+  outside the gate. A newly-added ungated brief call must fail the build, not
+  pass quietly. An undocumented gap is how this kind of invariant rots.
 
 ## Module layout
 
@@ -345,8 +356,11 @@ change surfaces as a test failure rather than as drift.
 - **`params.ts`** — an absolute path never survives into params.
 - **Catalog invariant** — every entry is gated; `whyPeek` is a hover, not a
   row, and its exemption is enforced by the choke-point test.
-- **Choke-point** — the nine `.agentsX(` shapes appear only in the choke point
-  and its allowlisted consumers.
+- **Choke-point** — the nine `.agentsX(` shapes appear only in `gated-client.ts`
+  itself; unlike the `agentInvoke`/`askStream` shapes, no other file is
+  allowlisted for the brief family, since every consumer (including
+  `chat-participant/ops-commands.ts`) calls through the injected
+  `client.briefs.*` seam rather than a raw `.agentsX(` shape.
 - **`commands.ts`** — driven through `test/unit/vscode-stub.ts`.
 
 All pure modules stay free of `vscode`, per the standing convention.
@@ -362,9 +376,10 @@ alone.
 | 2 | **`whyPeek` hover** — `peek.ts`, the debounced provider, the exemption guard, `showHoverBlame` |
 | 3 | **Delivered.** **janitor + preflight** with input prompts, `defaultNamespace`, retro-routing the participant's three briefs through the seam, and correcting `CLAUDE.md`'s "all five agent-bound paths" to describe what the seam then actually covers — the six-row catalog (why, ghost, conflicts, huddle, janitor, preflight), all gated |
 
-PR 1 alone fixes the empty Agents view and reaches four of the seven unreached
-briefs. PR 3 closes the gap `CLAUDE.md` currently overstates, by which point
-every model-composed agent call in the extension does route through one seam.
+PR 1 alone fixed the empty Agents view and reached four of the seven unreached
+briefs. PR 3 closed the gap `CLAUDE.md` had been overstating: every
+model-composed agent call in the extension now routes through one seam, and
+`CLAUDE.md` says so.
 
 ## Out of scope
 
