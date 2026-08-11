@@ -1,6 +1,13 @@
 # Built-in briefs, PR 3 — janitor, preflight, and one seam for every agent call
 
-**Status:** design, approved 2026-08-11.
+**Status:** design, approved 2026-08-11; revised the same day to absorb
+[2026-08-11-built-in-briefs-pr3-design-review.md](./2026-08-11-built-in-briefs-pr3-design-review.md).
+Four of its six findings changed the design (per-folder namespace memory,
+`idleDays` validation, the `file`-scheme prefill guard, and prompt-before-Retry
+ordering). One — the Restricted Mode and egress-policy question — changed no
+behaviour but is now answered explicitly and pinned by tests. One is declined,
+with its reasoning in *Out of scope*, alongside the one sub-point declined from
+an otherwise accepted finding.
 **Parent:** [2026-08-10-built-in-briefs-design.md](./2026-08-10-built-in-briefs-design.md)
 — read it first. This document is a delta, not a replacement: everything the
 parent settles (error handling, the read-only-tab result surface, the egress
@@ -108,17 +115,39 @@ janitorParams({ resourceRef, idleDays? }) → JanitorParams
 preflightParams({ ref, namespace })       → PreflightParams
 ```
 
-The prompting lives in `commands.ts`, behind a new `deps.window.showInputBox`
-seam (stubbed in `test/unit/vscode-stub.ts` like every other `vscode` touch).
+The prompting lives in `commands.ts`, over `WindowApi.showInputBox` — which the
+shim already exposes with `validateInput` (`vscode-shim.ts:113-118`), so this
+widens the commands' narrow `deps.window` type rather than the shim itself.
 
 **Janitor** — two prompts:
 
-1. `resourceRef`, prefilled with the active editor's relative ref when there is
-   one, since a file is a plausible resource and a prefill the user can
-   overwrite costs nothing. Empty or dismissed cancels.
+1. `resourceRef`, prefilled with the active editor's relative ref **when that
+   editor is a `file`-scheme document**. PR 2 already settled this question for
+   the hover, in the same words and for the same reason
+   (`real-hover.ts:10-12`): an untitled buffer has no path to blame, and a
+   virtual document — our own read-only brief tabs included — is not in any
+   repo. Prefilling from a settings editor or from a Nimbus result tab produces
+   a ref like `Untitled-1`, which is not a resource anyone can look up. Empty or
+   dismissed cancels.
 2. `idleDays`, optional. Empty means omit the parameter and let the Gateway use
-   its own default; a non-numeric answer is rejected by the input box's
-   `validateInput` rather than silently dropped.
+   its own default. When supplied it must be a **positive integer**
+   (`/^[1-9]\d*$/`), rejected in `validateInput` rather than silently dropped:
+   `JanitorParams.idleDays` is a `number` with no stated domain, and `-5` or
+   `2.5` would be accepted by a bare `Number.isNaN` check and sent to a Gateway
+   whose behaviour on them is undefined. No upper bound is imposed — see *Out of
+   scope*.
+
+The `file`-scheme test belongs at the **`deps.activeEditor()` seam**, wired in
+`extension.ts` where a real `vscode.TextEditor` is in hand, rather than on
+`TextEditorLike` — which carries `fileName` but no `uri`, and widening it would
+touch the stub and every test that constructs an editor for a reason unrelated
+to this PR.
+
+Putting it there also corrects `why` / `ghost` / `conflicts`, which today accept
+any active editor and will happily send `Untitled-1` as a ref. After this they
+report *"Open a file to run …"* instead — a visible behaviour change, small and
+in the direction of correctness, and called out here so it is not mistaken for
+a regression during review.
 
 **Preflight** — two prompts:
 
@@ -133,14 +162,52 @@ than inferred: a wrong namespace does not error, it returns a confidently green
 `PreflightBrief` computed for something the user never asked about.
 
 Remembering the namespace is a different thing from guessing it — it prefills a
-value the user typed and confirmed in this workspace, so a second Preflight in
-the same repo is one Enter. It lives in a small `src/briefs/namespace-store.ts`
-mirroring `src/egress/skip-store.ts`: `workspaceState`-backed, one getter, one
-setter, written only after a brief has actually been sent.
+value the user typed and confirmed **for this project**, so a second Preflight
+in the same repo is one Enter. It lives in a small
+`src/briefs/namespace-store.ts` mirroring `src/egress/skip-store.ts`:
+`workspaceState`-backed, one getter, one setter, written only after a brief has
+actually been sent.
+
+**The memory is keyed per workspace folder, not per window.** `workspaceState`
+is shared across the whole VS Code window, so in a multi-root workspace a single
+key would let a Preflight in project A prefill project B's prompt — and the
+parent spec's own argument then convicts it. A namespace remembered from another
+project is not "a value the user confirmed here"; it is a guess wearing a
+confirmation's clothes, and a wrong namespace does not error, it returns a
+confidently green `PreflightBrief` computed for something the user never asked
+about. That is precisely the failure the parent spec rejected branch-name
+derivation to avoid, so the same standard applies to a stale prefill.
+
+The key is `nimbus.briefs.namespace:${folder}`, where `folder` is the workspace
+folder containing the active editor, or the sole root when there is exactly one.
+When neither holds — no editor open and several roots — **nothing is recalled**
+and the prefill falls through to the setting. Failing to the safe side costs one
+typed namespace; the alternative costs a bad deploy decision.
 
 `meta()` widens for `"prompted"`: the manifest names the ref the user typed and
 keeps `BRIEF_FILE_NOTE` — the extension sends a path, and what the Gateway does
 afterwards is the egress ledger's business, not a claim this surface makes.
+
+### Prompt first, then guard — so Retry does not re-ask
+
+`commands.ts` wraps each brief in `contain(id, body)`, which on failure offers
+**Retry** and re-runs `body` verbatim. The parent spec promises Retry "re-runs
+the command with the same pre-resolved args, so nothing is re-prompted for".
+Putting the prompts inside `body` would break that promise the first time a
+Gateway call failed: the user would answer the same two questions again to
+retry a send they had already authorised.
+
+So the prompted briefs resolve their parameters **before** entering `contain`,
+and `contain` wraps only the send and the render. A dismissed prompt returns
+early and silently — a user who cancelled a prompt has not failed at anything
+and should not be shown an error with a Retry button.
+
+The same reordering fixes a smaller pre-existing slip in `why` / `ghost` /
+`conflicts`, which resolve `target(args)` *inside* `body` (`commands.ts:117-153`).
+When they are invoked bare, that re-reads the active editor on retry, so a
+cursor moved between the failure and the click silently redirects the retry to a
+different line. Hoisting the resolution out of `contain` makes the existing
+claim true for every brief, prompted or not.
 
 ## Renderers
 
@@ -186,6 +253,29 @@ notification over it would be noise.
 injected seam; `ops-commands.ts` calls `briefs.impact(...)` and friends. Its
 renderers and its degrade-honestly contract are untouched.
 
+### What `record` does and does not do
+
+Raised in review, and worth stating outright because the words "gate" and
+"policy" invite a stronger reading than the code supports: **the gate never
+blocks anything.** `check` prompts and obeys the answer; `record` does not even
+prompt. Neither consults a policy, and there is no rule set that could forbid a
+send — *Egress policy management* is a Phase 4 item precisely because no
+published client exposes the RPCs for it.
+
+Two consequences follow, and the tests should pin both:
+
+- **Restricted Mode does not change the ops three.** `deps.isTrusted()` is read
+  only inside `check` (`gate.ts:109-110`), where it suppresses a stored *skip*
+  and hides the *Always send here* button. `record` never reads it. An untrusted
+  workspace therefore behaves identically here — which is correct, since nothing
+  was being suppressed in the first place.
+- **The leak check gains reach rather than losing it.** `findLeakedRoots` has
+  never blocked a send; it adds a warning line to a rendered manifest
+  (`preflight.ts:59-66`). Today the ops three render no manifest at all, because
+  they bypass the seam entirely. After this change they are recorded, so
+  *Show Last Outbound Payload* renders them — leak warning included. The
+  no-prompt routing is strictly more visibility than the status quo, not less.
+
 The guard closes cleanly. Because the call shapes **move into**
 `gated-client.ts`, `egress-choke-point.test.ts` deletes `UNGATED_PENDING_PR3`
 and moves those three shapes into `GATED_BRIEF_CALLS` — no new `ALLOWED` entry
@@ -201,6 +291,10 @@ One new setting, which must land in `package.json`, `src/settings.ts`,
 | Setting | Type | Default | Why |
 |---|---|---|---|
 | `nimbus.briefs.defaultNamespace` | string | `""` | `agentsPreflight` requires `namespace` and the extension has no such concept. Prefills the prompt; never substitutes for it. |
+
+Declared at the default **window** scope, like every existing `nimbus.*` setting
+— none declares a `scope` today. Marking it `"scope": "resource"` was raised in
+review; see *Out of scope* for why it would not work yet.
 
 ## Documentation the PR must correct
 
@@ -229,13 +323,24 @@ Beyond the renderer and choke-point tests named above:
 - **Catalog** — six entries, all `gated: true`; every `command` unique and
   matching a `contributes.commands` id.
 - **`commands.ts`** — driven through `test/unit/vscode-stub.ts`: janitor with
-  and without `idleDays`; preflight cancelling on an empty namespace; the
-  prefill precedence (workspace memory → setting → blank); and the namespace
-  written to workspace memory only after a successful send.
+  and without `idleDays`; `validateInput` rejecting `-5`, `2.5` and `abc` while
+  accepting `30` and empty; preflight cancelling on an empty namespace; the
+  prefill precedence (workspace memory → setting → blank); the namespace written
+  to workspace memory only after a successful send; and a dismissed prompt
+  returning silently rather than as an error with a Retry.
+- **Retry does not re-prompt** — a failing send followed by Retry re-sends the
+  *same* parameters, with `showInputBox` called exactly as many times as the
+  first attempt. Extended to the editor briefs: a target resolved once is not
+  re-derived when the active editor changes between the failure and the retry.
+- **`namespace-store.ts`** — two folders keep two namespaces; recall returns
+  nothing when there is no active editor and more than one root.
+- **`activeEditor()` scheme filter** — a non-`file` document yields no editor, so
+  a prompted brief gets no prefill and an editor brief reports "Open a file…".
 - **Participant** — the ops three go through the injected seam and are
   **recorded, not prompted**; a test asserting `gate.check` is never called for
   kind `"participant"` is what stops a later refactor from quietly adding a
-  modal to a chat turn.
+  modal to a chat turn. A second asserting the behaviour is identical when
+  `isTrusted()` is false pins the Restricted Mode answer above.
 
 All pure modules stay free of `vscode`, per the standing convention.
 
@@ -251,3 +356,21 @@ decisions above:
   open.
 - **A prompting gate on the participant's briefs.** Rejected on the gate's own
   stated principle, not deferred for effort.
+- **`"scope": "resource"` on `nimbus.briefs.defaultNamespace`.** Raised in
+  review, and right in principle — a default namespace is project-specific. It
+  is declined because it would not work: `createSettings` reads every value
+  through `workspace.getConfiguration("nimbus")` with **no resource argument**
+  (`settings.ts:24`), and VS Code resolves a resource-scoped setting read that
+  way against the workspace, ignoring folder overrides. Declaring the scope
+  would let the settings UI and `.vscode/settings.json` accept a per-folder
+  value that the extension then silently ignores — worse than window scope,
+  because it advertises a capability that does not exist. It becomes correct the
+  day `createSettings` threads a resource URI, which is a cross-cutting change
+  to every `nimbus.*` setting and belongs in its own PR. Until then the
+  per-folder need is met by the namespace memory, which *is* keyed per folder.
+- **An upper bound on `idleDays`.** Raised in review (`> 3650`). Declined: no
+  typed contract states a maximum, so any number chosen here is the extension
+  inventing a Gateway limit — the same guessing the parent spec rejects
+  elsewhere. An absurd value costs a "not idle" answer, not a wrong one, so the
+  failure is visible and self-correcting. The positive-integer rule is kept
+  because `-5` and `2.5` are *malformed*, not merely large.
