@@ -31,6 +31,38 @@ async function waitForModal(): Promise<ModalDialog> {
   return dialog;
 }
 
+// A freshly-shown notification's action buttons are not reliably readable the
+// instant getNotifications() resolves: NotificationButton's label is read via
+// the element's own rendered text, and that text can still be empty a tick
+// after the toast appears. Poll the whole read — message AND action titles —
+// through the page objects' own API until both the detail text and the named
+// action show up, catching the transient read failure as "not yet" rather
+// than papering over a genuinely missing action: if `action` never appears,
+// driver.wait's TimeoutError propagates and the case fails.
+async function waitForNotification(
+  detail: string,
+  action: string,
+): Promise<{ messages: string[]; actionTitles: string[] }> {
+  let messages: string[] = [];
+  let actionTitles: string[] = [];
+  await VSBrowser.instance.driver.wait(
+    async () => {
+      try {
+        const notifications = await new Workbench().getNotifications();
+        messages = await Promise.all(notifications.map((n) => n.getMessage()));
+        const actionsByNotification = await Promise.all(notifications.map((n) => n.getActions()));
+        actionTitles = await Promise.all(actionsByNotification.flat().map((a) => a.getTitle()));
+      } catch {
+        return false;
+      }
+      return messages.some((m) => m.includes(detail)) && actionTitles.includes(action);
+    },
+    10000,
+    `no notification containing "${detail}" with a "${action}" action appeared`,
+  );
+  return { messages, actionTitles };
+}
+
 // Group B: briefs that DO reach the gate. The fake's recording is what proves
 // it — a modal appearing is not proof nothing was sent, and a rendered tab is
 // not proof of what the wire actually carried.
@@ -92,8 +124,10 @@ describe("briefs through the gate", () => {
     fake().queueError("agents.huddle", "no peers configured");
     await new Workbench().executeCommand("Nimbus: Team huddle");
     await (await waitForModal()).pushButton("Send");
-    const notifications = await new Workbench().getNotifications();
-    const messages = await Promise.all(notifications.map((n) => n.getMessage()));
+    // The title promises "with a Retry" — asserting on the message text alone
+    // would let a regression that dropped the action pass silently.
+    const { messages, actionTitles } = await waitForNotification("no peers configured", "Retry");
     expect(messages.join(" ")).to.contain("no peers configured");
+    expect(actionTitles).to.contain("Retry");
   });
 });
