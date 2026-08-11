@@ -4,7 +4,7 @@
 // The VS Code version is pinned HERE and nowhere else. CI keys its download
 // cache on the same value, so local and CI cannot silently diverge.
 import { spawnSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ExTester } from "vscode-extension-tester";
 
@@ -26,6 +26,11 @@ const run = (cmd, args) => {
 // correct when run locally.
 run("node", ["esbuild.mjs"]);
 
+// tsc does not remove outputs for sources that were since deleted or renamed,
+// so a stale compiled spec keeps running under its old name — already
+// observed producing 13 passing instead of 12 after a rename. A spec deleted
+// for being wrong must not keep passing locally.
+rmSync("out", { recursive: true, force: true });
 run("bunx", ["tsc", "-p", "tsconfig.ui.json"]);
 
 const { createFakeGateway } = await import("../out/ui/fake-gateway.js");
@@ -43,9 +48,18 @@ console.log(`[run-ui-tests] fake Gateway listening at ${gateway.socketPath}`);
 // runner". Keep this call in-process; do not swap back to the CLI form.
 globalThis.__nimbusFakeGateway = gateway;
 
-// The extension reads nimbus.socketPath from the fixture workspace's settings,
-// so the path has to be written before VS Code opens.
-const settingsPath = join("test", "ui", "fixture-workspace", ".vscode", "settings.json");
+// The extension reads nimbus.socketPath from settings, so the path has to be
+// written before VS Code opens. This file is generated into out/ (gitignored)
+// and installed at USER scope via ExTester's own `settings:` RunOption below
+// — NOT written into the fixture workspace's tracked .vscode/settings.json.
+// That file doesn't exist any more (deleted): writing a live pipe path into a
+// committed file left the worktree permanently dirty, and this exact mechanism
+// already put a personal path into a commit on this branch once (177ba5f).
+// A workspace-scope settings.json would also have been a trap the other way —
+// a workspace-scope `nimbus.socketPath: ""` overrides a user-scope value, so
+// keeping both would have made the fixture workspace's file win.
+mkdirSync("out", { recursive: true });
+const settingsPath = join("out", "ui-settings.json");
 writeFileSync(
   settingsPath,
   `${JSON.stringify(
@@ -60,6 +74,9 @@ writeFileSync(
       // object only drives the HTML one. The gate's whole surface is modal, so
       // every Group B spec would hang until it timed out, with a failure that
       // looks like a broken extension rather than a missing setting.
+      // (ExTester also defaults this to "custom" itself — see browser.js's
+      // defaultSettings — but it's pinned here explicitly rather than relying
+      // on an upstream default that could change.)
       "window.dialogStyle": "custom",
     },
     null,
@@ -85,6 +102,9 @@ try {
       config: ".mocharc.ui.js",
       // resources: the folder VS Code opens.
       resources: ["./test/ui/fixture-workspace"],
+      // Installed at USER scope (codeUtil.js's parseSettings, merged into
+      // browser.js's defaultSettings) — see the comment above settingsPath.
+      settings: settingsPath,
     },
   );
 } finally {

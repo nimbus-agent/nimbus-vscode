@@ -82,6 +82,28 @@ describe("briefs through the gate", () => {
 
   afterEach(async () => {
     fake().reset();
+    // Best-effort: a case that fails between waitForModal() and pushButton()
+    // leaves a modal open, which blocks closeAllEditors() below and cascades
+    // into every later case (including, with .mocharc.ui.js's retries: 2, the
+    // retried attempts of THIS case). A clean run never has a modal open here,
+    // so getMessage() throwing is the expected, silent path.
+    try {
+      const dialog = new ModalDialog();
+      await dialog.getMessage();
+      await dialog.pushButton("Cancel");
+    } catch {
+      // no modal open — the common case.
+    }
+    // Best-effort: an undismissed toast (e.g. this file's own "Retry" case)
+    // survives into the next case, and with retries: 2 a retried attempt's
+    // waitForNotification() can match that LEFTOVER toast and pass green even
+    // if the retried send never happened. Wrapped in try/catch so a clean run
+    // — nothing to clear — isn't destabilised by this cleanup.
+    try {
+      await (await new Workbench().openNotificationsCenter()).clearAllNotifications();
+    } catch {
+      // nothing to clear.
+    }
     await new EditorView().closeAllEditors();
   });
 
@@ -90,7 +112,21 @@ describe("briefs through the gate", () => {
     const dialog = await waitForModal();
     expect(await dialog.getDetails()).to.contain("src/session.ts");
     await dialog.pushButton("Cancel");
-    expect(fake().requests()).to.deep.equal([]);
+    // A leaked send would originate in the extension host and cross the same
+    // socket as everything else, so its absence can't be proven by reading
+    // immediately after the click resolves — that only proves the click was
+    // dispatched, not that the extension host finished reacting to it. Instead
+    // make the absence ORDERED: provoke a second, real send (confirmed through
+    // the gate) as a sentinel and assert the fake recorded ONLY that one. A
+    // leaked Cancel-send would have to arrive on the wire first, making this
+    // array longer than one entry and failing the deep-equal below.
+    await new Workbench().executeCommand("Nimbus: Why is this here?");
+    await (await waitForModal()).pushButton("Send");
+    expect(
+      fake()
+        .requests()
+        .map((r) => r.method),
+    ).to.deep.equal(["agents.why"]);
   });
 
   it("sends and renders the brief when the modal is confirmed", async () => {

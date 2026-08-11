@@ -1,7 +1,0 @@
-{
-  "nimbus.socketPath": "",
-  "nimbus.autoStartGateway": false,
-  "nimbus.egress.showStatusBarBadge": false,
-  "nimbus.briefs.showHoverBlame": false,
-  "window.dialogStyle": "custom"
-}

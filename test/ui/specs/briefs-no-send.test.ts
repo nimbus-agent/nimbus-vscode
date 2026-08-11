@@ -1,5 +1,5 @@
 import { expect } from "chai";
-import { EditorView, InputBox, VSBrowser, Workbench } from "vscode-extension-tester";
+import { EditorView, InputBox, ModalDialog, VSBrowser, Workbench } from "vscode-extension-tester";
 
 import { fake } from "../helpers/gateway.js";
 
@@ -22,14 +22,61 @@ async function waitForMessage(input: InputBox, contains: string): Promise<string
   return last;
 }
 
+// Same rationale as briefs-gated.test.ts's copy: ModalDialog's getters do a
+// single findElement with no built-in wait.
+async function waitForModal(): Promise<ModalDialog> {
+  let dialog: ModalDialog | undefined;
+  await VSBrowser.instance.driver.wait(
+    async () => {
+      const candidate = new ModalDialog();
+      try {
+        await candidate.getMessage();
+      } catch {
+        return false;
+      }
+      dialog = candidate;
+      return true;
+    },
+    10000,
+    "no pre-flight modal appeared",
+  );
+  if (dialog === undefined) throw new Error("no pre-flight modal appeared");
+  return dialog;
+}
+
 async function runCommand(name: string): Promise<void> {
   await new Workbench().executeCommand(name);
+}
+
+const FIXTURE_FILE = "test/ui/fixture-workspace/src/session.ts";
+
+// A "sends nothing" assertion taken immediately after a cancel races the
+// process boundary: a leaked send originates in the extension host and has
+// to cross the socket to the fake in THIS process, so reading the fake right
+// after a click resolves only proves the click was dispatched, not that the
+// extension host finished reacting to it. Provoke a second, real send
+// (confirmed through the gate) as a sentinel instead, and assert the fake
+// recorded ONLY that one — ordering on a single connection means a leaked
+// send from the cancelled flow would have to arrive first, making the
+// recorded list longer than one entry and failing the caller's deep-equal.
+//
+// The sentinel itself derives its ref from the active editor, and this
+// file's afterEach — unlike briefs-gated.test.ts's — never closes editors
+// between cases (closeAllEditors only runs once, in the final `after`). A
+// PRIOR sentinel's own read-only result tab is therefore still the most
+// recently focused editor by the time a LATER case runs, which is not the
+// fixture file — so re-focus it explicitly first, or the sentinel silently
+// has no valid ref and no modal ever appears.
+async function sendSentinel(): Promise<void> {
+  await VSBrowser.instance.openResources(FIXTURE_FILE);
+  await runCommand("Nimbus: Who knew this code?");
+  await (await waitForModal()).pushButton("Send");
 }
 
 describe("briefs that never send", () => {
   before(async () => {
     await VSBrowser.instance.waitForWorkbench();
-    await VSBrowser.instance.openResources("test/ui/fixture-workspace/src/session.ts");
+    await VSBrowser.instance.openResources(FIXTURE_FILE);
   });
 
   // Reset AFTER each case, not before: a failing test leaves the fake's state
@@ -47,7 +94,12 @@ describe("briefs that never send", () => {
     const input = await InputBox.create();
     expect(await input.getText()).to.equal("src/session.ts");
     await input.cancel();
-    expect(fake().requests()).to.deep.equal([]);
+    await sendSentinel();
+    expect(
+      fake()
+        .requests()
+        .map((r) => r.method),
+    ).to.deep.equal(["agents.ghost"]);
   });
 
   it("rejects a negative idle-days value with an inline message", async () => {
@@ -60,7 +112,12 @@ describe("briefs that never send", () => {
     const message = await waitForMessage(days, "whole number of days");
     expect(message).to.contain("whole number of days");
     await days.cancel();
-    expect(fake().requests()).to.deep.equal([]);
+    await sendSentinel();
+    expect(
+      fake()
+        .requests()
+        .map((r) => r.method),
+    ).to.deep.equal(["agents.ghost"]);
   });
 
   it("accepts a blank idle-days value", async () => {
@@ -70,7 +127,12 @@ describe("briefs that never send", () => {
     await ref.confirm();
     const days = await InputBox.create();
     expect(await days.getMessage()).to.not.contain("whole number");
-    await days.cancel();
+    // Confirm the blank value rather than escaping it — escaping proves
+    // nothing about whether blank was ACCEPTED, only that Escape cancels
+    // (already covered below). Reaching the pre-flight modal is the proof
+    // that a blank idle-days value passed validation.
+    await days.confirm();
+    await (await waitForModal()).pushButton("Cancel");
   });
 
   // The behaviour the unit tests pin, proven here against a real input box:
@@ -82,7 +144,12 @@ describe("briefs that never send", () => {
     await ref.confirm();
     const days = await InputBox.create();
     await days.cancel();
-    expect(fake().requests()).to.deep.equal([]);
+    await sendSentinel();
+    expect(
+      fake()
+        .requests()
+        .map((r) => r.method),
+    ).to.deep.equal(["agents.ghost"]);
   });
 
   it("cancels preflight when the namespace is left empty", async () => {
@@ -93,6 +160,11 @@ describe("briefs that never send", () => {
     const ns = await InputBox.create();
     await ns.setText("");
     await ns.confirm();
-    expect(fake().requests()).to.deep.equal([]);
+    await sendSentinel();
+    expect(
+      fake()
+        .requests()
+        .map((r) => r.method),
+    ).to.deep.equal(["agents.ghost"]);
   });
 });
