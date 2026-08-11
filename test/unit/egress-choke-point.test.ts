@@ -35,7 +35,14 @@ const CALLS = [".agentInvoke(", ".askStream("];
 // raw, and PR 3 routes them and extends this list in the same change. A name
 // listed here before it is routed would only force a bogus ALLOWED entry — a
 // guard that passes for the wrong reason.
-const GATED_BRIEF_CALLS = [".agentsWhy(", ".agentsGhost(", ".agentsConflicts(", ".agentsHuddle("];
+const GATED_BRIEF_CALLS = [
+  ".agentsWhy(",
+  ".agentsGhost(",
+  ".agentsConflicts(",
+  ".agentsHuddle(",
+  ".agentsJanitor(",
+  ".agentsPreflight(",
+];
 
 // agents* calls that are deliberately NOT gated.
 //

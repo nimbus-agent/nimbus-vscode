@@ -5,6 +5,10 @@ import type {
   GhostParams,
   HuddleBrief,
   HuddleParams,
+  JanitorBrief,
+  JanitorParams,
+  PreflightBrief,
+  PreflightParams,
   WhyBrief,
   WhyParams,
 } from "@nimbus-dev/client";
@@ -138,6 +142,8 @@ export interface RawBriefClient {
   agentsGhost(p: GhostParams, o?: { timeoutMs?: number }): Promise<GhostBrief>;
   agentsConflicts(p: ConflictsParams, o?: { timeoutMs?: number }): Promise<ConflictBrief>;
   agentsHuddle(p?: HuddleParams, o?: { timeoutMs?: number }): Promise<HuddleBrief>;
+  agentsJanitor(p: JanitorParams, o?: { timeoutMs?: number }): Promise<JanitorBrief>;
+  agentsPreflight(p: PreflightParams, o?: { timeoutMs?: number }): Promise<PreflightBrief>;
 }
 
 /** A brief call that has already passed the gate. Throws EgressCancelled if not. */
@@ -148,6 +154,8 @@ export interface GatedBriefs {
   ghost: GatedBrief<GhostParams, GhostBrief>;
   conflicts: GatedBrief<ConflictsParams, ConflictBrief>;
   huddle: GatedBrief<HuddleParams, HuddleBrief>;
+  janitor: GatedBrief<JanitorParams, JanitorBrief>;
+  preflight: GatedBrief<PreflightParams, PreflightBrief>;
 }
 
 export function gateRawBriefs(
@@ -175,5 +183,8 @@ export function gateRawBriefs(
     conflicts: (p, meta, title) =>
       run((q: ConflictsParams) => client.agentsConflicts(q), p, meta, title),
     huddle: (p, meta, title) => run((q: HuddleParams) => client.agentsHuddle(q), p, meta, title),
+    janitor: (p, meta, title) => run((q: JanitorParams) => client.agentsJanitor(q), p, meta, title),
+    preflight: (p, meta, title) =>
+      run((q: PreflightParams) => client.agentsPreflight(q), p, meta, title),
   };
 }

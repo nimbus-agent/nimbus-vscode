@@ -1,3 +1,4 @@
+import type { JanitorParams, PreflightParams } from "@nimbus-dev/client";
 import { describe, expect, test } from "vitest";
 
 import type { EgressGate, GateDecision } from "../../src/egress/gate.js";
@@ -209,6 +210,30 @@ describe("gateRawBriefs", () => {
         calls.push(["huddle", p]);
         return { ...base, kind: "huddle", query: { sinceMs: 1 }, contributions: [] };
       },
+      agentsJanitor: async (p: unknown) => {
+        calls.push(["janitor", p]);
+        return {
+          ...base,
+          kind: "janitor",
+          query: { resourceRef: "a", idleDays: 30 },
+          idle: false,
+          proposalSuppressed: false,
+          cleanupAction: null,
+          peersClear: 0,
+          peersTouched: [],
+        };
+      },
+      agentsPreflight: async (p: unknown) => {
+        calls.push(["preflight", p]);
+        return {
+          ...base,
+          kind: "preflight",
+          query: { ref: "a", namespace: "a" },
+          downstreams: [],
+          anyFailed: false,
+          anyIncomplete: false,
+        };
+      },
     } as unknown as RawBriefClient;
   }
 
@@ -226,6 +251,23 @@ describe("gateRawBriefs", () => {
     await expect(briefs.ghost({ file: "src/a.ts" }, META, "…")).rejects.toBeInstanceOf(
       EgressCancelled,
     );
+    expect(calls).toEqual([]);
+  });
+
+  test("janitor passes its params through the gate before sending", async () => {
+    const gate = fakeGate("send");
+    const briefs = gateRawBriefs(fakeClient([]), gate);
+    const params: JanitorParams = { resourceRef: "svc/legacy", idleDays: 30 };
+    await briefs.janitor(params, META, "…");
+    expect(gate.recorded[0]?.kind).toBe("brief");
+    expect(gate.recorded[0]?.prompt).toBe('{\n  "resourceRef": "svc/legacy",\n  "idleDays": 30\n}');
+  });
+
+  test("a cancelled preflight never reaches the client", async () => {
+    const calls: unknown[] = [];
+    const briefs = gateRawBriefs(fakeClient(calls), fakeGate("cancel"));
+    const params: PreflightParams = { ref: "release-1.4", namespace: "billing" };
+    await expect(briefs.preflight(params, META, "…")).rejects.toBeInstanceOf(EgressCancelled);
     expect(calls).toEqual([]);
   });
 
