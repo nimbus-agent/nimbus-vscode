@@ -41,7 +41,7 @@ Checked against `@nimbus-dev/client` 0.15.1 while writing this plan:
 - `test/ui/fixture-workspace/.vscode/settings.json` — points `nimbus.socketPath` at the fake.
 - `test/ui/specs/smoke.test.ts`, `briefs-no-send.test.ts`, `briefs-gated.test.ts`, `participant.test.ts`
 - `test/unit/ui-fake-gateway.test.ts` — vitest tests for the fake itself (lives in `test/unit/` so `bun run test` runs it)
-- `tsconfig.ui.json`, `.mocharc.ui.cjs`, `scripts/run-ui-tests.mjs`
+- `tsconfig.ui.json`, `.mocharc.ui.js`, `scripts/run-ui-tests.mjs`
 
 **Modify**
 - `package.json` — devDependencies + `test:ui` script
@@ -445,7 +445,7 @@ git commit -m "test(ui): a fake Gateway speaking the real wire protocol"
 This is the riskiest task in the plan: it is where the harness either boots or does not. Its deliverable is one spec proving VS Code launches with the extension loaded and connected to the fake.
 
 **Files:**
-- Create: `tsconfig.ui.json`, `.mocharc.ui.cjs`, `scripts/run-ui-tests.mjs`, `test/ui/fixture-workspace/src/session.ts`, `test/ui/fixture-workspace/src/auth.ts`, `test/ui/fixture-workspace/.vscode/settings.json`, `test/ui/specs/smoke.test.ts`
+- Create: `tsconfig.ui.json`, `.mocharc.ui.js`, `scripts/run-ui-tests.mjs`, `test/ui/fixture-workspace/src/session.ts`, `test/ui/fixture-workspace/src/auth.ts`, `test/ui/fixture-workspace/.vscode/settings.json`, `test/ui/specs/smoke.test.ts`
 - Modify: `package.json`, `.gitignore`
 
 **Interfaces:**
@@ -479,7 +479,6 @@ Create `tsconfig.ui.json`. ExTester runs Mocha over compiled JavaScript, and Moc
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "module": "CommonJS",
-    "moduleResolution": "node",
     "noEmit": false,
     "outDir": "out/ui",
     "rootDir": "test/ui",
@@ -489,7 +488,7 @@ Create `tsconfig.ui.json`. ExTester runs Mocha over compiled JavaScript, and Moc
 }
 ```
 
-Create `.mocharc.ui.cjs`:
+Create `.mocharc.ui.js`. **The extension must be `.js`, not `.cjs`** — corrected during execution: ExTester 8.23.0's config loader accepts only `.js`, `.json`, `.yml` and `.yaml` (`vscode-extension-tester/out/suite/runner.js:180`), and silently skips anything else with a log line. A `.cjs` file means the timeout and retry settings below never apply at all.
 
 ```js
 // Retries absorb Selenium races; a genuine regression still fails all three
@@ -568,7 +567,7 @@ try {
     "-c",
     VSCODE_VERSION,
     "-m",
-    ".mocharc.ui.cjs",
+    ".mocharc.ui.js",
     "-s",
     "./test-resources",
     // -r / --open_resource: the folder VS Code opens. NOT -o.
@@ -672,7 +671,7 @@ If the workbench never appears, check in this order: the compile step wrote `out
 Run: `bun run typecheck && bun run lint && bun run test`
 
 ```bash
-git add package.json bun.lock .gitignore tsconfig.ui.json .mocharc.ui.cjs scripts/run-ui-tests.mjs test/ui/
+git add package.json bun.lock .gitignore tsconfig.ui.json .mocharc.ui.js scripts/run-ui-tests.mjs test/ui/
 git commit -m "test(ui): boot a real VS Code against the fake Gateway"
 ```
 
@@ -1020,7 +1019,7 @@ git commit -m "ci: run the UI suite on every PR"
 
 ## Self-Review
 
-**Spec coverage.** Fake Gateway + NDJSON + two-step + recording + queued errors → Task 1. Platform-aware socket path and PID-keyed collision avoidance → Task 1. Fixture workspace and `nimbus.socketPath` wiring → Task 2. Pinned VS Code version in one place, cache keyed on it → Tasks 2 and 6. Page objects only → used throughout Tasks 3-5 (no raw selectors appear; `test/ui/helpers/selectors.ts` is deliberately NOT created, per YAGNI — add it only when a page object genuinely cannot reach something). `fake.reset()` in a root `afterEach` → Tasks 3-5. Group A/B/C coverage → Tasks 3/4/5. Mocha retries of 2 and explicit waits → Task 2's `.mocharc.ui.cjs`. CI job with xvfb and its own timeout → Task 6. Typed fixtures as the drift guard → Task 1, enforced by the root tsconfig already including `test/**/*`.
+**Spec coverage.** Fake Gateway + NDJSON + two-step + recording + queued errors → Task 1. Platform-aware socket path and PID-keyed collision avoidance → Task 1. Fixture workspace and `nimbus.socketPath` wiring → Task 2. Pinned VS Code version in one place, cache keyed on it → Tasks 2 and 6. Page objects only → used throughout Tasks 3-5 (no raw selectors appear; `test/ui/helpers/selectors.ts` is deliberately NOT created, per YAGNI — add it only when a page object genuinely cannot reach something). `fake.reset()` in a root `afterEach` → Tasks 3-5. Group A/B/C coverage → Tasks 3/4/5. Mocha retries of 2 and explicit waits → Task 2's `.mocharc.ui.js`. CI job with xvfb and its own timeout → Task 6. Typed fixtures as the drift guard → Task 1, enforced by the root tsconfig already including `test/**/*`.
 
 **Plan review dispositions** ([2026-08-11-ui-test-harness-review.md](./2026-08-11-ui-test-harness-review.md)) — all four accepted:
 
