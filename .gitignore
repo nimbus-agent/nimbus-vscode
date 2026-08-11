@@ -13,3 +13,6 @@ coverage/
 
 # Superpowers brainstorming mockups (local, per-session)
 .superpowers/brainstorm/
+
+# Subagent-driven-development scratch: per-plan ledger, briefs, review packages
+.superpowers/sdd/

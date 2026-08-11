@@ -6,7 +6,7 @@
 
 **Architecture:** Everything rides the seams PR 1 built. `src/briefs/` gains two renderers, two parameter builders, a per-folder namespace memory and two prompted commands; `src/egress/gated-client.ts` gains the two new brief calls (prompting, kind `"brief"`) plus a second constructor for the participant's three (recording, kind `"participant"`). No new RPCs, no client bump.
 
-**Tech Stack:** TypeScript (strict), Vitest, Biome, esbuild, `@nimbus-dev/client` ^0.14.0.
+**Tech Stack:** TypeScript (strict), Vitest, Biome, esbuild, `@nimbus-dev/client` ^0.15.1 (what `package.json` actually declares — `CLAUDE.md` and `docs/ROADMAP.md` still say `0.14.0`, which is stale; correcting that prose is a deferred minor, not this PR's job). Verified against both SDK 1.10.0 (this branch's lock) and 1.16.0 (the in-flight `refresh-sdk-transitive` branch): `agentsJanitor`, `agentsPreflight` and `agentsWhyPeek` are typed in both, and `JanitorParams`, `PreflightParams`, `JanitorBrief` and `PreflightBrief` are identical across them.
 
 **Spec:** [docs/superpowers/specs/2026-08-11-built-in-briefs-pr3-design.md](../specs/2026-08-11-built-in-briefs-pr3-design.md). Read it before starting; it carries the reasoning this plan only executes.
 
