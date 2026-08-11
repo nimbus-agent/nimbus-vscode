@@ -759,6 +759,7 @@
     "lint": "biome check .",
     "test": "bunx vitest run",
     "test:coverage": "bunx vitest run --coverage",
+    "test:ui": "node scripts/run-ui-tests.mjs",
     "check-bundle": "node scripts/check-bundle.mjs",
     "check-vsix-contents": "node scripts/check-vsix-contents.mjs",
     "check-settings-docs": "node scripts/check-settings-docs.mjs",
@@ -772,14 +773,19 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
     "@nimbus-dev/client": "^0.15.1",
+    "@types/chai": "5",
+    "@types/mocha": "10",
     "@types/node": "^26.1.2",
     "@types/vscode": "^1.95.0",
     "@vitest/coverage-v8": "^4.1.10",
     "@vscode/vsce": "^3.9.2",
+    "chai": "5",
     "esbuild": "^0.28.1",
     "jsdom": "^30.0.1",
+    "mocha": "11",
     "ovsx": "^1.1.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vscode-extension-tester": "8.23.0"
   }
 }

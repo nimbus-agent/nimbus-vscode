@@ -4,6 +4,10 @@ media/
 dist-vsix/
 coverage/
 *.vsix
+
+# UI test harness: compiled specs, and ExTester's downloaded VS Code + chromedriver
+out/
+test-resources/
 *.tsbuildinfo
 .DS_Store
 
