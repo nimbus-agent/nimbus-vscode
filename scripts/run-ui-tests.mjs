@@ -17,6 +17,15 @@ const run = (cmd, args) => {
   if (r.status !== 0) process.exit(r.status ?? 1);
 };
 
+// The extension under test is what `dist/extension.js` (package.json's
+// `main`) actually contains — esbuild has to run before the specs do, or the
+// suite silently exercises whatever was last built rather than the code
+// under test. This is separate from CI's own `Build` step (ci.yml), which
+// still runs immediately before `test:ui` there — redundant in CI, but that
+// keeps the job readable, and it is the only thing that makes this script
+// correct when run locally.
+run("node", ["esbuild.mjs"]);
+
 run("bunx", ["tsc", "-p", "tsconfig.ui.json"]);
 
 const { createFakeGateway } = await import("../out/ui/fake-gateway.js");
