@@ -68,4 +68,14 @@ describe("Settings", () => {
     const s = createSettings(makeWorkspace({ logLevel: "trace" }));
     expect(s.logLevel()).toBe("info");
   });
+
+  test("defaultNamespace is empty by default", () => {
+    const s = createSettings(makeWorkspace({}));
+    expect(s.defaultNamespace()).toBe("");
+  });
+
+  test("defaultNamespace reads briefs.defaultNamespace", () => {
+    const s = createSettings(makeWorkspace({ "briefs.defaultNamespace": "billing" }));
+    expect(s.defaultNamespace()).toBe("billing");
+  });
 });
