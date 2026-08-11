@@ -181,7 +181,9 @@ Expected: FAIL — cannot resolve `../ui/fake-gateway.js`.
 
 - [ ] **Step 3: Write the fixtures**
 
-Create `test/ui/fixtures/briefs.ts`. Type each constant with its real SDK type — that is what makes a client bump fail `typecheck` instead of passing against a fiction:
+Create `test/ui/fixtures/briefs.ts`. Type each constant with its real SDK type — that is what makes a client bump fail `typecheck` instead of passing against a fiction.
+
+**Do not add an `as WhyBrief`-style cast to these constants.** The type annotation is the entire drift guard; a trailing `as X` suppresses precisely the errors it exists to raise, and the fixture would then pass against a shape the SDK no longer has. (`test/unit/briefs-render.test.ts` does use that cast, because its fixtures are deliberately partial — these are complete, so they do not need it.) If a fixture will not compile without a cast, the fixture is wrong: fix the fixture to match the real type rather than silencing the compiler. The code below is written without casts for this reason.
 
 ```ts
 import type {
@@ -204,7 +206,7 @@ export const WHY_BRIEF: WhyBrief = {
   findings: [
     { lane: "pull_request", title: "PR #42 — add session cache", detail: "merged", url: null },
   ],
-} as WhyBrief;
+};
 
 export const GHOST_BRIEF: GhostBrief = {
   ...BASE,
@@ -214,7 +216,7 @@ export const GHOST_BRIEF: GhostBrief = {
   findings: [
     { peerId: "p1", expert: "Dana", rank: "high", context: [], suggestedContact: "dana@example.com" },
   ],
-} as GhostBrief;
+};
 
 export const CONFLICT_BRIEF: ConflictBrief = {
   ...BASE,
@@ -222,14 +224,14 @@ export const CONFLICT_BRIEF: ConflictBrief = {
   query: { file: "src/session.ts" },
   startEntityId: null,
   collisions: [],
-} as ConflictBrief;
+};
 
 export const HUDDLE_BRIEF: HuddleBrief = {
   ...BASE,
   kind: "huddle",
   query: { sinceMs: 86_400_000 },
   contributions: [],
-} as HuddleBrief;
+};
 
 export const JANITOR_BRIEF: JanitorBrief = {
   ...BASE,
@@ -240,7 +242,7 @@ export const JANITOR_BRIEF: JanitorBrief = {
   cleanupAction: null,
   peersClear: 0,
   peersTouched: [],
-} as JanitorBrief;
+};
 
 export const PREFLIGHT_BRIEF: PreflightBrief = {
   ...BASE,
@@ -249,7 +251,7 @@ export const PREFLIGHT_BRIEF: PreflightBrief = {
   downstreams: [],
   anyFailed: false,
   anyIncomplete: false,
-} as PreflightBrief;
+};
 
 export const WHY_PEEK: WhyPeek = {
   subject: { repoRoot: "/fixture", filePath: "src/session.ts", lineNo: 3 },
