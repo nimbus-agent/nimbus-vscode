@@ -80,7 +80,13 @@ export interface TreeDataProviderLike<T> {
 }
 
 export interface TextEditorLike {
-  document: { getText(range?: unknown): string; fileName: string; languageId: string };
+  document: {
+    getText(range?: unknown): string;
+    fileName: string;
+    languageId: string;
+    /** Scheme only. Briefs run against files in a repo; see real-hover.ts. */
+    uri: { scheme: string };
+  };
   // `active` is the cursor end of the selection — zero-based, straight from
   // vscode.Selection. agentsWhy({ref, line}) needs it; nothing else does yet.
   selection: { isEmpty: boolean; active: { line: number } };

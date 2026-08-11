@@ -82,6 +82,7 @@ import type {
   DisposableLike,
   ExtensionContextLike,
   QuickPickItemLike,
+  TextEditorLike,
   WindowApi,
   WorkspaceApi,
 } from "./vscode-shim.js";
@@ -637,12 +638,22 @@ export function activateWithDeps(
 
   const briefNamespaces = createNamespaceStore(ctx.workspaceState);
 
+  // Briefs answer questions about a file in a repo. An untitled buffer, a
+  // settings editor, or one of our own read-only brief tabs is not one, and a
+  // ref like "Untitled-1" is not something the Gateway can look up. The hover
+  // already draws this line (real-hover.ts SELECTOR); this is the same rule for
+  // the commands.
+  const activeFileEditor = (): TextEditorLike | undefined => {
+    const editor = deps.window.activeTextEditor;
+    return editor?.document.uri.scheme === "file" ? editor : undefined;
+  };
+
   const briefCommands = createBriefCommands({
     briefs: () => {
       const client = nimbus();
       return client === undefined ? undefined : gateRawBriefs(client, egressGate, runWithProgress);
     },
-    activeEditor: () => deps.window.activeTextEditor,
+    activeEditor: activeFileEditor,
     roots: egressRoots,
     now: () => Date.now(),
     openReadonly: openReadonlyJson,

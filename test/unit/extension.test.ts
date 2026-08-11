@@ -189,6 +189,9 @@ function makeFixture(opts: {
     languageId?: string;
     /** Zero-based cursor line, as VS Code reports it. Defaults to 0. */
     line?: number;
+    /** document.uri.scheme. Defaults to "file"; set to e.g. "untitled" or a
+     *  virtual scheme to exercise the brief commands' real-file filter. */
+    scheme?: string;
   };
   panelVisible?: boolean;
   panelActive?: boolean;
@@ -318,6 +321,7 @@ function makeFixture(opts: {
                   : (opts.activeEditor?.selectionText ?? opts.activeEditor?.text ?? ""),
               fileName: opts.activeEditor?.fileName ?? "untitled",
               languageId: opts.activeEditor?.languageId ?? "plaintext",
+              uri: { scheme: opts.activeEditor?.scheme ?? "file" },
             },
           },
     withProgress: (async (_opts: unknown, task: () => Promise<unknown>) =>
@@ -557,6 +561,24 @@ describe("activateWithDeps", () => {
     ]) {
       expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
     }
+  });
+
+  test("a non-file editor is not offered to the brief commands", async () => {
+    // Same rule real-hover.ts already applies to the hover: an untitled
+    // buffer has no path to blame, and a virtual document — our own
+    // read-only brief tabs included — is not in any repo.
+    const f = makeFixture({
+      activeEditor: {
+        text: "",
+        fileName: "Nimbus — Why is this here?.md",
+        languageId: "markdown",
+        scheme: "nimbus-readonly",
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.brief.why")();
+    expect(f.infoMessages).toContain('Nimbus: Open a file to run "Why is this here?".');
   });
 
   test("nimbus.generateTests opens a fresh untitled document on each invocation", async () => {

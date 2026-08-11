@@ -121,7 +121,12 @@ function harness(
         }),
       }) as never,
     activeEditor: () => ({
-      document: { getText: () => "", fileName: "/home/dev/proj/src/a.ts", languageId: "ts" },
+      document: {
+        getText: () => "",
+        fileName: "/home/dev/proj/src/a.ts",
+        languageId: "ts",
+        uri: { scheme: "file" },
+      },
       selection: { isEmpty: true, active: { line: 6 } },
     }),
     roots: () => ["/home/dev/proj"],
