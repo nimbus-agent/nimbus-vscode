@@ -56,6 +56,8 @@
 
 **Note on fixtures:** the spec mentions testing against the published mock's fixtures. Only `WHY_BRIEF_FIXTURE` exists (`mock-client.d.ts:180`) — there is no janitor or preflight fixture — so build typed literals exactly as `briefs-render.test.ts` already does for the other four.
 
+**Note on `idleDays`:** the request and the response disagree, and only one of them is optional. `JanitorParams.idleDays` is `number | undefined` — the extension may omit it. `JanitorBrief["query"].idleDays` is a **required** `number`: the Gateway echoes back the window it actually used, resolving its own default when none was sent. So the renderer states the window unconditionally and needs no `undefined` branch. Do not add one — it would be dead code guarding against a shape the type forbids.
+
 - [ ] **Step 1: Write the failing tests**
 
 Append to `test/unit/briefs-render.test.ts` (and add `JanitorBrief`, `PreflightBrief` to the type import on line 1, `renderJanitor`, `renderPreflight` to the import from `render.js`):
@@ -858,6 +860,17 @@ describe("janitor", () => {
     expect(h.errors).toEqual([]);
   });
 
+  // showInputBox returns undefined for Escape and "" for Enter-on-blank. Those
+  // mean opposite things here, and collapsing them would send a brief the user
+  // was trying to cancel — with no modal to catch it if they ticked
+  // "Always send Agent Briefs here".
+  test("escaping the idle-days prompt cancels instead of sending the default", async () => {
+    const h = harness({}, undefined, ["svc/legacy", undefined]);
+    await createBriefCommands(h.deps).janitor();
+    expect(h.calls).toEqual([]);
+    expect(h.errors).toEqual([]);
+  });
+
   test("idleDays rejects anything that is not a positive whole number", async () => {
     const h = harness({}, undefined, ["svc/legacy", ""]);
     await createBriefCommands(h.deps).janitor();
@@ -1026,43 +1039,72 @@ Add the prompt helpers inside `createBriefCommands`, above the returned object:
   const IDLE_DAYS_ERROR =
     "Enter a whole number of days greater than zero, or leave blank for the Gateway default.";
 
-  const ask = async (prompt: string, opts: { value?: string; validate?: (v: string) => string | undefined } = {}): Promise<string | undefined> => {
+  // showInputBox has THREE outcomes, not two, and collapsing them sends
+  // something the user tried to cancel. Escape returns undefined; Enter on a
+  // blank box returns "". Those mean opposite things on the idleDays prompt —
+  // abort the command, versus accept the Gateway's default — so the type keeps
+  // them apart rather than the call sites guessing.
+  type Answer = { kind: "dismissed" } | { kind: "value"; value: string };
+
+  const ask = async (
+    prompt: string,
+    opts: { value?: string; validate?: (v: string) => string | undefined } = {},
+  ): Promise<Answer> => {
     const answer = await deps.window.showInputBox({
       prompt,
       ...(opts.value !== undefined && opts.value.length > 0 ? { value: opts.value } : {}),
       ...(opts.validate !== undefined ? { validateInput: opts.validate } : {}),
     });
-    // Dismissed, or answered with nothing. Either way the user did not fail at
-    // anything, so this is silent — no error, no Retry.
-    const trimmed = answer?.trim();
-    return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+    if (answer === undefined) return { kind: "dismissed" };
+    return { kind: "value", value: answer.trim() };
+  };
+
+  /** A required answer: dismissed or blank both cancel, and both do so silently. */
+  const askRequired = async (
+    prompt: string,
+    opts: { value?: string } = {},
+  ): Promise<string | undefined> => {
+    const answer = await ask(prompt, opts);
+    if (answer.kind === "dismissed" || answer.value.length === 0) return undefined;
+    return answer.value;
   };
 
   const askJanitor = async (): Promise<JanitorTarget | undefined> => {
     const editor = deps.activeEditor();
     const prefill =
       editor === undefined ? undefined : toRelativeRef(editor.document.fileName, deps.roots());
-    const resourceRef = await ask("Resource to check for idleness", {
+    const resourceRef = await askRequired("Resource to check for idleness", {
       ...(prefill !== undefined ? { value: prefill } : {}),
     });
     if (resourceRef === undefined) return undefined;
+
     const days = await ask("Idle for how many days? (blank = Gateway default)", {
-      validate: (v) => (v.trim().length === 0 || POSITIVE_INT.test(v.trim()) ? undefined : IDLE_DAYS_ERROR),
+      validate: (v) =>
+        v.trim().length === 0 || POSITIVE_INT.test(v.trim()) ? undefined : IDLE_DAYS_ERROR,
     });
-    return days === undefined ? { resourceRef } : { resourceRef, idleDays: Number(days) };
+    // Escape aborts the whole command. Blank means "use the Gateway default",
+    // which is a decision, not an abort. Treating Escape as blank would send a
+    // brief the user was trying to cancel — and a user who ticked "Always send
+    // Agent Briefs here" gets no modal to catch it.
+    if (days.kind === "dismissed") return undefined;
+    return days.value.length === 0
+      ? { resourceRef }
+      : { resourceRef, idleDays: Number(days.value) };
   };
 
   const askPreflight = async (): Promise<
     { ref: string; namespace: string; folder: string | undefined } | undefined
   > => {
-    const ref = await ask("Ref to pre-flight (branch, tag or commit)");
+    const ref = await askRequired("Ref to pre-flight (branch, tag or commit)");
     if (ref === undefined) return undefined;
     const editor = deps.activeEditor();
     const folder = memoryFolder(editor?.document.fileName, deps.roots());
     // Remembered first, then the setting. Never derived: a wrong namespace does
     // not error, it answers confidently about the wrong thing.
     const prefill = deps.namespaces.recall(folder) ?? deps.defaultNamespace();
-    const namespace = await ask("Namespace to pre-flight against", { value: prefill });
+    // Required, so an empty answer cancels rather than sending a guess — the
+    // same outcome as Escape, which is why this one uses askRequired.
+    const namespace = await askRequired("Namespace to pre-flight against", { value: prefill });
     if (namespace === undefined) return undefined;
     return { ref, namespace, folder };
   };
@@ -1759,6 +1801,13 @@ feat(briefs): reach the last two briefs, and route every agent call through one 
 ## Self-Review
 
 **Spec coverage.** Catalog + `prompted` context → T7. Parameter builders → T4. Prompts, prefill order, required namespace, `idleDays` validation → T6. `file`-scheme prefill guard → T8. Namespace memory keyed per folder → T3. Prompt-before-Retry → T6. Renderers → T1. `gateRawParticipantBriefs` + `ParticipantClientLike` + choke-point → T9. Restricted Mode / `record` assertions → T9. Setting → T2. Doc corrections → T10. Every testing bullet in the spec maps to a step above.
+
+**Plan review dispositions** ([2026-08-11-built-in-briefs-pr3-review.md](./2026-08-11-built-in-briefs-pr3-review.md)):
+
+- **Escape versus blank on the prompts — fixed** (Task 6). The original `ask` helper collapsed `undefined` (Escape) and `""` (Enter on a blank box) into one value. On the `idleDays` prompt those mean opposite things, so Escape would have sent a janitor brief the user was cancelling. `ask` now returns a discriminated `Answer`, and `askRequired` wraps the three prompts where dismissed and blank genuinely do mean the same thing.
+- **`idleDays` needs an `undefined` branch in `renderJanitor` — declined.** The finding reads `JanitorParams.idleDays?: number`, which is the **request**. The renderer takes a `JanitorBrief`, whose `query.idleDays` is a required `number` (`brief-composites.d.ts`) — the Gateway echoes back the window it actually used, resolving its own default when none was sent. A fallback branch would be unreachable code guarding a shape the type forbids. Task 1 now states this explicitly so it is not re-introduced.
+- **Normalise `root` before the `endsWith("/")` check — already done.** The finding proposes the exact two lines Task 3 already specifies. No change; noted so a reader does not go looking for a diff.
+- **Forward-compatible `changedSurface` on `preflightParams` — declined (YAGNI).** No caller has a changed surface to pass: the extension has no such concept, exactly as it has no namespace concept, and a parameter builder that accepts a value nothing produces is dead surface area. It becomes worth building when a caller can genuinely supply it — the SCM diff knows which files changed, which would be a feature with its own design, not a passthrough.
 
 **Known deviations from the spec, both deliberate:**
 - The spec says renderers test against the published mock's fixtures. Only `WHY_BRIEF_FIXTURE` exists, so T1 uses typed literals in the style `briefs-render.test.ts` already established.
