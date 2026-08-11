@@ -26,6 +26,7 @@ import {
   gateRawAgentInvoke,
   gateRawAskStream,
   gateRawBriefs,
+  gateRawParticipantBriefs,
   isEgressCancelled,
   type ProgressRunner,
 } from "./egress/gated-client.js";
@@ -1211,11 +1212,13 @@ export function activateWithDeps(
     client: () => {
       const client = nimbus();
       if (client === undefined) return undefined;
-      const gated = {
+      return {
         ...client,
         askStream: gateRawAskStream(client, egressGate, "participant", "@nimbus chat"),
-      };
-      return gated as unknown as ParticipantClientLike;
+        // Recorded, not prompted: a slash-command argument is text the user
+        // just typed, and a modal must not interrupt a chat turn.
+        briefs: gateRawParticipantBriefs(client, egressGate),
+      } as unknown as ParticipantClientLike;
     },
     registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
     unregisterStreamWithHitl: (id) => {

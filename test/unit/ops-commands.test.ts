@@ -6,6 +6,7 @@ import type {
   ParticipantClientLike,
   ParticipantRequest,
 } from "../../src/chat-participant/participant-types.js";
+import type { ParticipantBriefs } from "../../src/egress/gated-client.js";
 
 function sinkCapture(): { sink: ChatResponseSink; md: string[]; all: () => string } {
   const md: string[] = [];
@@ -21,20 +22,28 @@ function sinkCapture(): { sink: ChatResponseSink; md: string[]; all: () => strin
   };
 }
 
-function client(over: Partial<ParticipantClientLike>): ParticipantClientLike {
+// `over.briefs` overrides individual brief methods; the rest stay as
+// never-called stubs, same shape as the pre-seam ...over spread this replaces.
+function client(
+  over: Partial<Omit<ParticipantClientLike, "briefs">> & { briefs?: Partial<ParticipantBriefs> },
+): ParticipantClientLike {
+  const { briefs, ...rest } = over;
   return {
     askStream: () => {
       throw new Error("askStream must not be called by ops commands");
     },
     searchRanked: async () => [],
-    agentsExpert: async () => {
-      throw new Error("not faked");
-    },
-    agentsImpact: async () => {
-      throw new Error("not faked");
-    },
-    agentsCatchup: async () => {
-      throw new Error("not faked");
+    briefs: {
+      expert: async () => {
+        throw new Error("not faked");
+      },
+      impact: async () => {
+        throw new Error("not faked");
+      },
+      catchup: async () => {
+        throw new Error("not faked");
+      },
+      ...briefs,
     },
     metricsDora: async () => {
       throw new Error("not faked");
@@ -42,7 +51,7 @@ function client(over: Partial<ParticipantClientLike>): ParticipantClientLike {
     egressHead: async () => {
       throw new Error("not faked");
     },
-    ...over,
+    ...rest,
   };
 }
 
@@ -54,9 +63,15 @@ const noWarn = { warn: () => undefined };
 
 const briefBase = { agentVersion: 1 as const, generatedAt: 1, latencyMs: 5, gaps: [] };
 
+// The exact EgressMeta each handler passes — asserted alongside params so a
+// call is proven to have gone through client.briefs.*, not some other path.
+const IMPACT_META = { action: "Blast radius (agents.impact)", files: [], omissions: [] };
+const EXPERT_META = { action: "Who owns this (agents.expert)", files: [], omissions: [] };
+const CATCHUP_META = { action: "Catch me up (agents.catchup)", files: [], omissions: [] };
+
 describe("/blast", () => {
   test("renders impact findings for the prompt-named target", async () => {
-    const agentsImpact = vi.fn(async () => ({
+    const impact = vi.fn(async () => ({
       ...briefBase,
       kind: "impact" as const,
       query: { fileOrPrUrl: "src/pay.ts" },
@@ -74,50 +89,75 @@ describe("/blast", () => {
     }));
     const c = sinkCapture();
     await runOpsCommand(
-      client({ agentsImpact }),
+      client({ briefs: { impact } }),
       req({ command: "blast", prompt: "src/pay.ts" }),
       c.sink,
       noWarn,
     );
-    expect(agentsImpact).toHaveBeenCalledWith({ fileOrPrUrl: "src/pay.ts" });
+    expect(impact).toHaveBeenCalledWith({ fileOrPrUrl: "src/pay.ts" }, IMPACT_META);
     expect(c.all()).toContain("billing-api");
     expect(c.all()).toContain("2 hop");
     expect(c.all()).toContain("pay.ts → checkout → billing-api");
   });
 
-  test("falls back to the active selection's file and reports empty honestly with gaps", async () => {
-    const agentsImpact = vi.fn(async () => ({
+  test("falls back to the active selection's file, redacted to a basename, and reports empty honestly with gaps", async () => {
+    const impact = vi.fn(async () => ({
       ...briefBase,
       gaps: [{ category: "missing_connector" as const, detail: "no CI connector indexed" }],
       kind: "impact" as const,
-      query: { fileOrPrUrl: "/w/a.tf" },
+      query: { fileOrPrUrl: "a.tf" },
       startEntityId: null,
       affected: [],
     }));
     const c = sinkCapture();
     await runOpsCommand(
-      client({ agentsImpact }),
+      client({ briefs: { impact } }),
       req({ command: "blast", selection: { path: "/w/a.tf", languageId: "terraform", code: "x" } }),
       c.sink,
       noWarn,
     );
-    expect(agentsImpact).toHaveBeenCalledWith({ fileOrPrUrl: "/w/a.tf" });
+    expect(impact).toHaveBeenCalledWith({ fileOrPrUrl: "a.tf" }, IMPACT_META);
     expect(c.all()).toContain("No downstream dependents");
     expect(c.all()).toContain("no CI connector indexed");
   });
 
+  test("with no argument sends a basename, never the absolute local path", async () => {
+    const sent: unknown[] = [];
+    const impact = vi.fn(async (p: unknown) => {
+      sent.push(p);
+      return {
+        ...briefBase,
+        kind: "impact" as const,
+        query: { fileOrPrUrl: "session.ts" },
+        startEntityId: null,
+        affected: [],
+      };
+    });
+    const c = sinkCapture();
+    await runOpsCommand(
+      client({ briefs: { impact } }),
+      req({
+        command: "blast",
+        selection: { path: "/home/dev/proj/src/session.ts", languageId: "ts", code: "" },
+      }),
+      c.sink,
+      noWarn,
+    );
+    expect(sent[0]).toEqual({ fileOrPrUrl: "session.ts" });
+  });
+
   test("without a target renders usage, calling nothing", async () => {
-    const agentsImpact = vi.fn();
+    const impact = vi.fn();
     const c = sinkCapture();
     await runOpsCommand(client({}), req({ command: "blast" }), c.sink, noWarn);
-    expect(agentsImpact).not.toHaveBeenCalled();
+    expect(impact).not.toHaveBeenCalled();
     expect(c.all()).toContain("/blast");
   });
 });
 
 describe("/owns", () => {
   test("renders ranked experts with confidence and signal counts", async () => {
-    const agentsExpert = vi.fn(async () => ({
+    const expert = vi.fn(async () => ({
       ...briefBase,
       kind: "expert" as const,
       query: { topicOrFile: "billing" },
@@ -142,21 +182,45 @@ describe("/owns", () => {
     }));
     const c = sinkCapture();
     await runOpsCommand(
-      client({ agentsExpert }),
+      client({ briefs: { expert } }),
       req({ command: "owns", prompt: "billing" }),
       c.sink,
       noWarn,
     );
-    expect(agentsExpert).toHaveBeenCalledWith({ topicOrFile: "billing", limit: 5 });
+    expect(expert).toHaveBeenCalledWith({ topicOrFile: "billing", limit: 5 }, EXPERT_META);
     expect(c.all()).toContain("Dana K");
     expect(c.all()).toContain("high confidence");
     expect(c.all()).toContain("1 signal");
+  });
+
+  test("with no argument sends a basename, never the absolute local path", async () => {
+    const sent: unknown[] = [];
+    const expert = vi.fn(async (p: unknown) => {
+      sent.push(p);
+      return {
+        ...briefBase,
+        kind: "expert" as const,
+        query: { topicOrFile: "session.ts" },
+        ranked: [],
+      };
+    });
+    const c = sinkCapture();
+    await runOpsCommand(
+      client({ briefs: { expert } }),
+      req({
+        command: "owns",
+        selection: { path: "/home/dev/proj/src/session.ts", languageId: "ts", code: "" },
+      }),
+      c.sink,
+      noWarn,
+    );
+    expect(sent[0]).toEqual({ topicOrFile: "session.ts", limit: 5 });
   });
 });
 
 describe("/incident", () => {
   test("renders per-service sections for the last 24h, scoping to a named service", async () => {
-    const agentsCatchup = vi.fn(async () => ({
+    const catchup = vi.fn(async () => ({
       ...briefBase,
       kind: "catchup" as const,
       query: { sinceMs: 86_400_000 },
@@ -185,12 +249,15 @@ describe("/incident", () => {
     }));
     const c = sinkCapture();
     await runOpsCommand(
-      client({ agentsCatchup }),
+      client({ briefs: { catchup } }),
       req({ command: "incident", prompt: "pagerduty" }),
       c.sink,
       noWarn,
     );
-    expect(agentsCatchup).toHaveBeenCalledWith({ sinceMs: 86_400_000, service: "pagerduty" });
+    expect(catchup).toHaveBeenCalledWith(
+      { sinceMs: 86_400_000, service: "pagerduty" },
+      CATCHUP_META,
+    );
     expect(c.all()).toContain("pagerduty");
     expect(c.all()).toContain("SEV2: checkout 500s");
     expect(c.all()).toContain("incident open");
@@ -232,13 +299,16 @@ describe("/deploys", () => {
 describe("failure path", () => {
   test("a thrown brief error becomes markdown and a warning", async () => {
     const warnings: string[] = [];
-    const agentsImpact = vi.fn(async () => {
+    const impact = vi.fn(async () => {
       throw new Error("agent timed out");
     });
     const c = sinkCapture();
-    await runOpsCommand(client({ agentsImpact }), req({ command: "blast", prompt: "x" }), c.sink, {
-      warn: (m: string) => warnings.push(m),
-    });
+    await runOpsCommand(
+      client({ briefs: { impact } }),
+      req({ command: "blast", prompt: "x" }),
+      c.sink,
+      { warn: (m: string) => warnings.push(m) },
+    );
     expect(c.all()).toContain("agent timed out");
     expect(warnings).toHaveLength(1);
   });

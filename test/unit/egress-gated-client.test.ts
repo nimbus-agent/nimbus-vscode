@@ -7,8 +7,10 @@ import {
   gateAgentInvoke,
   gateAskStream,
   gateRawBriefs,
+  gateRawParticipantBriefs,
   isEgressCancelled,
   type RawBriefClient,
+  type RawParticipantBriefClient,
 } from "../../src/egress/gated-client.js";
 import type { EgressMeta, EgressPayload } from "../../src/egress/preflight.js";
 
@@ -298,5 +300,57 @@ describe("gateRawBriefs", () => {
     });
     await briefs.huddle({}, META, "…");
     expect(order).toEqual(["gate", "progress"]);
+  });
+});
+
+describe("gateRawParticipantBriefs", () => {
+  test("participant briefs record without ever prompting", async () => {
+    const recorded: Array<{ kind: string; prompt: string }> = [];
+    let checked = false;
+    const gate = {
+      check: async () => {
+        checked = true;
+        return "send";
+      },
+      record: (kind: string, prompt: string) => {
+        recorded.push({ kind, prompt });
+      },
+      lastPayload: () => undefined,
+    } as unknown as EgressGate;
+    const client = {
+      agentsImpact: async () => ({ kind: "impact" }),
+    } as unknown as RawParticipantBriefClient;
+
+    await gateRawParticipantBriefs(client, gate).impact(
+      { fileOrPrUrl: "session.ts" },
+      { action: "Blast radius (agents.impact)", files: [], omissions: [] },
+    );
+
+    expect(checked).toBe(false);
+    expect(recorded[0]?.kind).toBe("participant");
+    expect(recorded[0]?.prompt).toContain('"fileOrPrUrl": "session.ts"');
+  });
+
+  // Restricted Mode changes nothing here: isTrusted is read only inside check,
+  // where it suppresses a stored skip. record never reads it, and nothing was
+  // being suppressed.
+  test("an untrusted workspace does not change participant brief routing", async () => {
+    let checked = false;
+    const gate = {
+      check: async () => {
+        checked = true;
+        return "send";
+      },
+      record: () => undefined,
+      lastPayload: () => undefined,
+    } as unknown as EgressGate;
+    const client = {
+      agentsCatchup: async () => ({ kind: "catchup" }),
+    } as unknown as RawParticipantBriefClient;
+    await gateRawParticipantBriefs(client, gate).catchup(
+      { sinceMs: 1 },
+      { action: "a", files: [], omissions: [] },
+    );
+    expect(checked).toBe(false);
   });
 });

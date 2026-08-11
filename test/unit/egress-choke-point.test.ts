@@ -30,11 +30,9 @@ const ALLOWED = [
 ];
 const CALLS = [".agentInvoke(", ".askStream("];
 
-// The agents* briefs this PR routes through the gate. Deliberately NOT the full
-// family: ops-commands.ts still calls agentsImpact/agentsExpert/agentsCatchup
-// raw, and PR 3 routes them and extends this list in the same change. A name
-// listed here before it is routed would only force a bogus ALLOWED entry — a
-// guard that passes for the wrong reason.
+// Every agents* call in src/ that is gated. The built-in briefs and the
+// participant's three ops briefs alike — the only shape allowed to appear
+// outside the choke point is the one documented exemption below.
 const GATED_BRIEF_CALLS = [
   ".agentsWhy(",
   ".agentsGhost(",
@@ -42,20 +40,19 @@ const GATED_BRIEF_CALLS = [
   ".agentsHuddle(",
   ".agentsJanitor(",
   ".agentsPreflight(",
+  ".agentsCatchup(",
+  ".agentsExpert(",
+  ".agentsImpact(",
 ];
 
 // agents* calls that are deliberately NOT gated.
 //
-// `.agentsWhyPeek(` is the real exemption, and it is on evidence rather than
+// `.agentsWhyPeek(` is the only one, and it is on evidence rather than
 // convenience: it takes no timeoutMs, returns synchronously, and carries no
 // `brief` string or AgentBriefBase — it never reaches a model, so there is
 // nothing for a pre-flight preview to show. Verified live: it answers in 1-5ms
 // with raw git-blame and index fields.
-//
-// The other three are NOT exempt, only unrouted: ops-commands.ts still calls
-// them on a raw client. PR 3 routes them and deletes them from this list.
 const UNGATED_BY_DESIGN = [".agentsWhyPeek("];
-const UNGATED_PENDING_PR3 = [".agentsCatchup(", ".agentsExpert(", ".agentsImpact("];
 
 function listTsFiles(dir: string): string[] {
   const out: string[] = [];
@@ -143,10 +140,7 @@ describe("agent-bound calls have exactly one choke point", () => {
         found.add(m[0]);
       }
     }
-    const unaccounted = [...found]
-      .filter((c) => !GATED_BRIEF_CALLS.includes(c))
-      .filter((c) => !UNGATED_PENDING_PR3.includes(c))
-      .sort();
+    const unaccounted = [...found].filter((c) => !GATED_BRIEF_CALLS.includes(c)).sort();
     expect(unaccounted).toEqual(UNGATED_BY_DESIGN);
   });
 });
