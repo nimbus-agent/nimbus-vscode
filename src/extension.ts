@@ -1266,6 +1266,8 @@ export function activateWithDeps(
   register("nimbus.brief.ghost", (args) => briefCommands.ghost(briefArgs(args)));
   register("nimbus.brief.conflicts", (args) => briefCommands.conflicts(briefArgs(args)));
   register("nimbus.brief.huddle", () => briefCommands.huddle());
+  register("nimbus.brief.janitor", () => briefCommands.janitor());
+  register("nimbus.brief.preflight", () => briefCommands.preflight());
 
   void connection.start();
 

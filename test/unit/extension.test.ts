@@ -543,6 +543,22 @@ describe("activateWithDeps", () => {
     }
   });
 
+  test("registers the six brief commands", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    for (const id of [
+      "nimbus.brief.why",
+      "nimbus.brief.ghost",
+      "nimbus.brief.conflicts",
+      "nimbus.brief.huddle",
+      "nimbus.brief.janitor",
+      "nimbus.brief.preflight",
+    ]) {
+      expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
+    }
+  });
+
   test("nimbus.generateTests opens a fresh untitled document on each invocation", async () => {
     // Regression guard: deriveTestFileName is deterministic, so running
     // Generate Tests twice on the same source used to reuse the exact same
