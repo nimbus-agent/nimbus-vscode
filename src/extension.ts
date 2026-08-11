@@ -655,7 +655,7 @@ export function activateWithDeps(
   const briefNamespaces = createNamespaceStore(ctx.workspaceState);
 
   // Briefs answer questions about a file in a repo. An untitled buffer, a
-  // settings editor, or one of our own read-only brief tabs is not one, and a
+  // virtual document, or one of our own read-only brief tabs is not one, and a
   // ref like "Untitled-1" is not something the Gateway can look up. The hover
   // already draws this line (real-hover.ts SELECTOR); this is the same rule for
   // the commands.

@@ -264,6 +264,28 @@ describe("brief commands", () => {
     expect(h.actions).toContain("Retry");
   });
 
+  test("a post-send failure does not report the brief as failed", async () => {
+    const logErrors: string[] = [];
+    const h = harness({
+      log: {
+        error: (m: string) => logErrors.push(m),
+        warn: () => undefined,
+        info: () => undefined,
+        debug: () => undefined,
+      } as unknown as Logger,
+      openReadonly: async () => {
+        throw new Error("tab failed to open");
+      },
+    });
+    await createBriefCommands(h.deps).why();
+    // The send itself succeeded — this must not look like a send failure: no
+    // "failed" message, no Retry offered (a retry here would re-send an
+    // already-successful brief). The failure is logged instead.
+    expect(h.errors).toEqual([]);
+    expect(h.actions).toEqual([]);
+    expect(logErrors[0]).toContain("tab failed to open");
+  });
+
   test("Retry re-runs with the same resolved args, so nothing is re-derived", async () => {
     const seen: unknown[] = [];
     let attempts = 0;

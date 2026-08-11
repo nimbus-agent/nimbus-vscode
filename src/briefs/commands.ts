@@ -109,17 +109,20 @@ export function createBriefCommands(deps: BriefCommandDeps): BriefCommands {
     };
   };
 
-  // One place for the whole failure story: cancelled is silent, everything else
-  // shows the message verbatim with a Retry that re-runs the SAME resolved
-  // args. Retry goes back through the gate — it is a new send and gets no
-  // bypass for having been attempted once.
-  const contain = async (id: BriefId, body: () => Promise<void>): Promise<void> => {
+  // One place for the whole SEND failure story: cancelled is silent,
+  // everything else shows the message verbatim with a Retry that re-runs the
+  // SAME resolved args. Retry goes back through the gate — it is a new send
+  // and gets no bypass for having been attempted once. Wraps only the send —
+  // callers do whatever comes after (rendering, remembering a namespace)
+  // outside this, via `afterSend`, so a post-send failure can never be
+  // mistaken for a send failure or trigger a re-send.
+  const contain = async <T>(id: BriefId, body: () => Promise<T>): Promise<T | undefined> => {
     try {
-      await body();
+      return await body();
     } catch (e) {
       if (isEgressCancelled(e)) {
         deps.log.debug(`nimbus.brief.${id} cancelled at the pre-flight preview`);
-        return;
+        return undefined;
       }
       deps.log.error(`nimbus.brief.${id} failed: ${errMsg(e)}`);
       const answer = await deps.window.showErrorMessage(
@@ -127,7 +130,20 @@ export function createBriefCommands(deps: BriefCommandDeps): BriefCommands {
         {},
         RETRY,
       );
-      if (answer === RETRY) await contain(id, body);
+      return answer === RETRY ? contain(id, body) : undefined;
+    }
+  };
+
+  // Runs after a successful send. The brief already reached the Gateway, so a
+  // failure here — opening the read-only tab, a render throw, a workspaceState
+  // write — is not a send failure: it must not produce the "failed" message
+  // (the user would retry a brief that already succeeded, causing a needless
+  // second send) and it is not a success worth announcing either. Logged only.
+  const afterSend = async (id: BriefId, fn: () => Promise<void>): Promise<void> => {
+    try {
+      await fn();
+    } catch (e) {
+      deps.log.error(`nimbus.brief.${id} succeeded but the follow-up failed: ${errMsg(e)}`);
     }
   };
 
@@ -231,82 +247,71 @@ export function createBriefCommands(deps: BriefCommandDeps): BriefCommands {
     why: async (args) => {
       const t = needTarget("why", args);
       if (t === undefined) return;
-      await contain("why", async () => {
-        const briefs = connected();
-        if (briefs === undefined) return;
-        const brief = await briefs.why(whyParams(t), meta("why", t), "Nimbus: asking why…");
-        await show("why", renderWhy(brief));
-      });
+      const brief = await contain("why", async () =>
+        connected()?.why(whyParams(t), meta("why", t), "Nimbus: asking why…"),
+      );
+      if (brief === undefined) return;
+      await afterSend("why", () => show("why", renderWhy(brief)));
     },
 
     ghost: async (args) => {
       const t = needTarget("ghost", args);
       if (t === undefined) return;
-      await contain("ghost", async () => {
-        const briefs = connected();
-        if (briefs === undefined) return;
-        const brief = await briefs.ghost(
-          fileParams(t),
-          meta("ghost", t),
-          "Nimbus: finding who knew this…",
-        );
-        await show("ghost", renderGhost(brief));
-      });
+      const brief = await contain("ghost", async () =>
+        connected()?.ghost(fileParams(t), meta("ghost", t), "Nimbus: finding who knew this…"),
+      );
+      if (brief === undefined) return;
+      await afterSend("ghost", () => show("ghost", renderGhost(brief)));
     },
 
     conflicts: async (args) => {
       const t = needTarget("conflicts", args);
       if (t === undefined) return;
-      await contain("conflicts", async () => {
-        const briefs = connected();
-        if (briefs === undefined) return;
-        const brief = await briefs.conflicts(
+      const brief = await contain("conflicts", async () =>
+        connected()?.conflicts(
           fileParams(t),
           meta("conflicts", t),
           "Nimbus: checking for collisions…",
-        );
-        await show("conflicts", renderConflicts(brief, deps.now()));
-      });
+        ),
+      );
+      if (brief === undefined) return;
+      await afterSend("conflicts", () => show("conflicts", renderConflicts(brief, deps.now())));
     },
 
-    huddle: () =>
-      contain("huddle", async () => {
-        const briefs = connected();
-        if (briefs === undefined) return;
-        const brief = await briefs.huddle(
-          {},
-          meta("huddle", undefined),
-          "Nimbus: gathering the huddle…",
-        );
-        await show("huddle", renderHuddle(brief, deps.now()));
-      }),
+    huddle: async () => {
+      const brief = await contain("huddle", async () =>
+        connected()?.huddle({}, meta("huddle", undefined), "Nimbus: gathering the huddle…"),
+      );
+      if (brief === undefined) return;
+      await afterSend("huddle", () => show("huddle", renderHuddle(brief, deps.now())));
+    },
 
     janitor: async () => {
       const target = await askJanitor();
       if (target === undefined) return;
-      await contain("janitor", async () => {
-        const briefs = connected();
-        if (briefs === undefined) return;
-        const brief = await briefs.janitor(
+      const brief = await contain("janitor", async () =>
+        connected()?.janitor(
           janitorParams(target),
           promptedMeta("janitor", target.resourceRef),
           "Nimbus: checking whether this is idle…",
-        );
-        await show("janitor", renderJanitor(brief));
-      });
+        ),
+      );
+      if (brief === undefined) return;
+      await afterSend("janitor", () => show("janitor", renderJanitor(brief)));
     },
 
     preflight: async () => {
       const answers = await askPreflight();
       if (answers === undefined) return;
-      await contain("preflight", async () => {
-        const briefs = connected();
-        if (briefs === undefined) return;
-        const brief = await briefs.preflight(
+      const brief = await contain("preflight", async () =>
+        connected()?.preflight(
           preflightParams(answers),
           promptedMeta("preflight", answers.ref),
           "Nimbus: pre-flighting…",
-        );
+        ),
+      );
+      if (brief === undefined) return;
+      await afterSend("preflight", async () => {
         // Only after a successful send: a namespace that never reached the
         // Gateway is not a value worth prefilling next time.
         await deps.namespaces.remember(answers.folder, answers.namespace);

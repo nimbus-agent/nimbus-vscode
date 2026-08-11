@@ -85,14 +85,15 @@ rather than *offered*, exactly as above.
   catchup, conflicts, expert, ghost, glossary, huddle, impact, janitor,
   preflight, why, why-peek — and dispatches all eleven over the `agents.*` IPC
   namespace (`packages/gateway/src/ipc/agents-rpc.ts`).
-- The published client (`0.14.0`) types **ten** of them — all but glossary,
+- The published client (`0.15.1`) types **ten** of them — all but glossary,
   which is a client-packaging gap, not a missing Gateway method — as
   `agentsCatchup`, `agentsConflicts`, `agentsExpert`, `agentsGhost`,
   `agentsHuddle`, `agentsImpact`, `agentsJanitor`, `agentsPreflight`,
   `agentsWhy`, `agentsWhyPeek`.
 - This extension now calls **all ten** of the client's typed methods (every
   `.agentsX(` shape the choke-point test discovers in `src/`, verified against
-  `src/extension.ts`, `src/briefs/`, and `src/chat-participant/ops-commands.ts`).
+  `src/egress/gated-client.ts` — nine of the ten call sites — and
+  `src/extension.ts`, which calls the tenth, `agentsWhyPeek`, directly).
   `agentsGlossary` is the one Gateway agent left unreached, and it stays
   Phase 4 until a client release types it. The Agents sidebar view shows two
   groups: the built-in briefs, populated from `BRIEF_CATALOG` and never empty,
