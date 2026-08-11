@@ -8,7 +8,11 @@ import { createNamespaceStore } from "./briefs/namespace-store.js";
 import { toRelativeRef, whyParams } from "./briefs/params.js";
 import { createPeekHover } from "./briefs/peek-hover.js";
 import { registerWhyPeekHover } from "./briefs/real-hover.js";
-import { type ChatController, createChatController } from "./chat/chat-controller.js";
+import {
+  type ChatClientLike,
+  type ChatController,
+  createChatController,
+} from "./chat/chat-controller.js";
 import type { ChatPanel, ChatPanelFactory } from "./chat/chat-panel.js";
 import { createRealChatPanelFactory } from "./chat/real-chat-panel.js";
 import { createSessionStore } from "./chat/session-store.js";
@@ -331,16 +335,27 @@ export function activateWithDeps(
     // Pass-through: the user typed this, so the gate records rather than
     // prompts. Routing it anyway is what makes "no call site bypasses the
     // seam" true rather than aspirational.
+    //
+    // NimbusClient is a class — every method lives on its prototype, not as an
+    // own property — so `{ ...full }` would copy none of them (only `ipc`
+    // survives the spread). Each member ChatClientLike needs is named and
+    // forwarded explicitly instead, with `this` preserved by wrapping in an
+    // arrow rather than passing the method off `full` directly.
     const full = nimbus();
-    const gatedChatClient =
+    const gatedChatClient: ChatClientLike =
       full === undefined
-        ? c
+        ? // Defensive only: full is derived from the same connection.client()
+          // as c, so this is unreachable given the `c === undefined` guard
+          // above. c's type is the minimal NimbusClientLike (just `close`), so
+          // the cast stands in for a branch that never actually runs.
+          (c as unknown as ChatClientLike)
         : {
-            ...full,
             askStream: gateRawAskStream(full, egressGate, "ask", "Ask panel"),
+            cancelStream: (streamId) => full.cancelStream(streamId),
+            getSessionTranscript: (params) => full.getSessionTranscript(params),
           };
     chatController = createChatController({
-      client: gatedChatClient as unknown as Parameters<typeof createChatController>[0]["client"],
+      client: gatedChatClient,
       panel,
       sessionStore,
       registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
@@ -1207,18 +1222,29 @@ export function activateWithDeps(
 
   const participantDeps: ParticipantDeps = {
     // Pass-through, like the Ask panel: the user typed the prompt (plus any
-    // #file refs), so the gate records rather than prompts. Every other member
-    // — searchRanked, egressHead, the ops RPCs — still comes straight through.
+    // #file refs), so the gate records rather than prompts. searchRanked and
+    // egressHead are forwarded untouched below; the ops RPCs are routed
+    // through gateRawParticipantBriefs.
+    //
+    // NimbusClient is a class — every method lives on its prototype, not as an
+    // own property — so `{ ...client }` copies none of them (only `ipc`
+    // survives the spread). Each member ParticipantClientLike needs is named
+    // and forwarded explicitly instead, with `this` preserved by wrapping in
+    // an arrow rather than passing the method off `client` directly. That also
+    // lets this object satisfy ParticipantClientLike for real, with no cast.
     client: () => {
       const client = nimbus();
       if (client === undefined) return undefined;
-      return {
-        ...client,
+      const participantClient: ParticipantClientLike = {
         askStream: gateRawAskStream(client, egressGate, "participant", "@nimbus chat"),
+        searchRanked: (params) => client.searchRanked(params),
         // Recorded, not prompted: a slash-command argument is text the user
         // just typed, and a modal must not interrupt a chat turn.
         briefs: gateRawParticipantBriefs(client, egressGate),
-      } as unknown as ParticipantClientLike;
+        metricsDora: (params) => client.metricsDora(params),
+        egressHead: () => client.egressHead(),
+      };
+      return participantClient;
     },
     registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
     unregisterStreamWithHitl: (id) => {
