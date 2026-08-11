@@ -20,7 +20,8 @@
 - Never hand-edit `CHANGELOG.md` — Release Please writes it from the Conventional-Commit PR title.
 - Every new `nimbus.*` setting must appear in `package.json`, `src/settings.ts`, `docs/settings.md` and `test/unit/settings.test.ts`, or `bun run check-settings-docs` fails.
 - Branch is `feat/briefs-pr3`, already created and holding the two design commits. Commit after every task.
-- Per-task verification is `bun run test <file>` plus `bun run typecheck`. The **full** gate (`test`, `typecheck`, `lint`, `build`, `check-bundle`, `check-vsix-contents`, `check-settings-docs`) runs once in Task 10 — use the `verify-extension` skill for it.
+- Per-task verification is `bun run test <file>`, `bun run typecheck`, **and `bun run lint`**. Lint is whole-repo Biome and takes seconds; running it per task stops nine tasks' worth of style errors from surfacing at once in Task 10. Test stubs must satisfy Biome too — cast with `as unknown as X` or `as never` in the style the existing test files already use, never `any`.
+- The **full** gate (`test`, `typecheck`, `lint`, `build`, `check-bundle`, `check-vsix-contents`, `check-settings-docs`) runs once in Task 10 — use the `verify-extension` skill for it.
 
 ## File Structure
 
