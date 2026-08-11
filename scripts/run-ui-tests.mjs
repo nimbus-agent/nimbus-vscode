@@ -6,7 +6,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { ExTester } from "vscode-extension-tester";
+import { ExTester, ReleaseQuality } from "vscode-extension-tester";
 
 export const VSCODE_VERSION = "1.104.0";
 
@@ -93,7 +93,18 @@ writeFileSync(
 // `globalThis.__nimbusFakeGateway` set above.
 let status = 0;
 try {
-  const extest = new ExTester("./test-resources");
+  // The third argument, extensionsDir, matters: omitting it makes
+  // installExt run `--force --install-extension <vsix>` with no
+  // `--extensions-dir` against the downloaded stable VS Code, whose default
+  // extensions directory is the SAME `~/.vscode/extensions` a developer's own
+  // editor uses — every run would force-install this locally-packaged build
+  // over whatever they had there. Pointing it at test-resources/extensions
+  // also makes "which copy is under test" deterministic.
+  const extest = new ExTester(
+    "./test-resources",
+    ReleaseQuality.Stable,
+    "./test-resources/extensions",
+  );
   status = await extest.setupAndRunTests(
     ["./out/ui/specs/**/*.test.js"],
     VSCODE_VERSION,
