@@ -18,7 +18,8 @@
 - The `vscode` API is touched **only** through `src/vscode-shim.ts`. Pure modules (`render.ts`, `params.ts`, `catalog.ts`, `namespace-store.ts`) import nothing from `vscode`.
 - Tests live in `test/unit/`, run with `bun run test`. `vscode` is aliased to `test/unit/vscode-stub.ts` by `vitest.config.ts`.
 - Never hand-edit `CHANGELOG.md` — Release Please writes it from the Conventional-Commit PR title.
-- Every new `nimbus.*` setting must appear in `package.json`, `src/settings.ts`, `docs/settings.md` and `test/unit/settings.test.ts`, or `bun run check-settings-docs` fails.
+- Every new `nimbus.*` setting must appear in **five** places, or `bun run check-settings-docs` fails: `package.json`, `src/settings.ts`, `docs/settings.md` (a `### ` section), the **README settings table** (`scripts/check-settings-docs.mjs:38` requires a row per key), and `test/unit/settings.test.ts`.
+- `createSettings` calls `getConfiguration("nimbus")`, so config keys read in `settings.ts` are RELATIVE — `briefs.defaultNamespace`, never `nimbus.briefs.defaultNamespace`. A doubled prefix silently returns the default forever.
 - Branch is `feat/briefs-pr3`, already created and holding the two design commits. Commit after every task.
 - Per-task verification is `bun run test <file>`, `bun run typecheck`, **and `bun run lint`**. Lint is whole-repo Biome and takes seconds; running it per task stops nine tasks' worth of style errors from surfacing at once in Task 10. Test stubs must satisfy Biome too — cast with `as unknown as X` or `as never` in the style the existing test files already use, never `any`.
 - The **full** gate (`test`, `typecheck`, `lint`, `build`, `check-bundle`, `check-vsix-contents`, `check-settings-docs`) runs once in Task 10 — use the `verify-extension` skill for it.
