@@ -279,6 +279,7 @@ export const BRIEF_BY_AGENT: Record<string, unknown> = {
 Create `test/ui/fake-gateway.ts`:
 
 ```ts
+import { existsSync, unlinkSync } from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -373,6 +374,20 @@ export function createFakeGateway(): FakeGateway {
     socketPath,
     start: () =>
       new Promise((resolve, reject) => {
+        // Unlink a leftover socket before listening. This is safe precisely
+        // BECAUSE the path carries our PID: a live process cannot own a socket
+        // named for this PID, so anything here is debris from a crashed run.
+        // Without it, PID reuse on a long-lived machine surfaces as EADDRINUSE
+        // — a failure with no relationship to the change under test.
+        // Windows named pipes are kernel objects that vanish with the process,
+        // so there is nothing to unlink there.
+        if (process.platform !== "win32" && existsSync(socketPath)) {
+          try {
+            unlinkSync(socketPath);
+          } catch {
+            // Losing the race with another cleanup is fine; listen() will tell us.
+          }
+        }
         server = net.createServer((sock) => {
           sockets.add(sock);
           sock.on("close", () => sockets.delete(sock));
@@ -477,8 +492,16 @@ Create `.mocharc.ui.cjs`:
 ```js
 // Retries absorb Selenium races; a genuine regression still fails all three
 // attempts. Timeouts are generous because each case drives a real VS Code.
+//
+// 120s rather than 60s, raised in review: a cold CI run pays for the workbench
+// coming up for the first time, and that latency lands inside the `before`
+// hook. The VS Code download itself happens in `extest setup-and-run` BEFORE
+// mocha starts, so it is not on this clock — but workbench init is. The cost of
+// this number is that a genuinely hung test burns 120s x 3 retries before it
+// fails, which is why a test that hangs is a bug to fix rather than a number to
+// raise again.
 module.exports = {
-  timeout: 60000,
+  timeout: 120000,
   retries: 2,
   reporter: "spec",
 };
@@ -522,6 +545,13 @@ writeFileSync(
       "nimbus.autoStartGateway": false,
       "nimbus.egress.showStatusBarBadge": false,
       "nimbus.briefs.showHoverBlame": false,
+      // WITHOUT THIS, TASK 4 CANNOT WORK. VS Code renders a modal
+      // showWarningMessage as a NATIVE OS dialog by default, and Selenium
+      // cannot see, read or click a native dialog — ExTester's ModalDialog page
+      // object only drives the HTML one. The gate's whole surface is modal, so
+      // every Group B spec would hang until it timed out, with a failure that
+      // looks like a broken extension rather than a missing setting.
+      "window.dialogStyle": "custom",
     },
     null,
     2,
@@ -584,11 +614,14 @@ export function isAuthorized(userId: string): boolean {
   "nimbus.socketPath": "",
   "nimbus.autoStartGateway": false,
   "nimbus.egress.showStatusBarBadge": false,
-  "nimbus.briefs.showHoverBlame": false
+  "nimbus.briefs.showHoverBlame": false,
+  "window.dialogStyle": "custom"
 }
 ```
 
-The three non-socket settings suppress noise: no attempt to spawn a real Gateway, no status-bar polling, and no hover firing an RPC on every mouse rest.
+Three of these suppress noise: no attempt to spawn a real Gateway, no status-bar polling, and no hover firing an RPC on every mouse rest.
+
+`window.dialogStyle` is different — it is **load-bearing**. VS Code renders a modal `showWarningMessage` as a native OS dialog by default, and Selenium cannot see or click a native dialog; ExTester's `ModalDialog` drives only the HTML one. Since the pre-flight gate is entirely modal, every Group B spec would hang without it. Keep it in both this committed file and the runner's generated version — the runner overwrites this file, so a setting present in only one of them is a setting that does not apply.
 
 - [ ] **Step 5: Write the smoke spec**
 
@@ -946,13 +979,17 @@ Append a `ui-test` job after `build-test`, matching that job's hardened style ex
       - name: Install
         run: bun install --frozen-lockfile
 
-      # Keyed on the VS Code version pinned in scripts/run-ui-tests.mjs, so a
-      # bump invalidates the cache in the same commit that makes it.
+      # Keyed on BOTH the pinned VS Code version (in run-ui-tests.mjs) and
+      # package.json, which carries the ExTester version. Raised in review:
+      # keying on the script alone means bumping vscode-extension-tester leaves
+      # a cached chromedriver that its new version may not accept, and the
+      # resulting CI failure looks like a test bug. Over-invalidating costs one
+      # re-download; under-invalidating costs an afternoon.
       - name: Cache VS Code + chromedriver
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: test-resources
-          key: ${{ runner.os }}-extest-${{ hashFiles('scripts/run-ui-tests.mjs') }}
+          key: ${{ runner.os }}-extest-${{ hashFiles('scripts/run-ui-tests.mjs', 'package.json') }}
 
       - name: Build
         run: bun run build
@@ -982,6 +1019,13 @@ git commit -m "ci: run the UI suite on every PR"
 ## Self-Review
 
 **Spec coverage.** Fake Gateway + NDJSON + two-step + recording + queued errors → Task 1. Platform-aware socket path and PID-keyed collision avoidance → Task 1. Fixture workspace and `nimbus.socketPath` wiring → Task 2. Pinned VS Code version in one place, cache keyed on it → Tasks 2 and 6. Page objects only → used throughout Tasks 3-5 (no raw selectors appear; `test/ui/helpers/selectors.ts` is deliberately NOT created, per YAGNI — add it only when a page object genuinely cannot reach something). `fake.reset()` in a root `afterEach` → Tasks 3-5. Group A/B/C coverage → Tasks 3/4/5. Mocha retries of 2 and explicit waits → Task 2's `.mocharc.ui.cjs`. CI job with xvfb and its own timeout → Task 6. Typed fixtures as the drift guard → Task 1, enforced by the root tsconfig already including `test/**/*`.
+
+**Plan review dispositions** ([2026-08-11-ui-test-harness-review.md](./2026-08-11-ui-test-harness-review.md)) — all four accepted:
+
+- **`window.dialogStyle: "custom"` — fixed, and it was a blocker.** VS Code renders a modal `showWarningMessage` as a native OS dialog by default; Selenium cannot see one, and ExTester's `ModalDialog` drives only the HTML variant. Since the pre-flight gate is entirely modal, every Group B spec would have hung until timeout, presenting as a broken extension rather than a missing setting. Added to both the committed fixture settings and the runner's generated copy.
+- **CI cache key — fixed.** Now hashes `package.json` as well as the runner, so bumping `vscode-extension-tester` cannot leave a cached chromedriver its new version rejects.
+- **Unlink a stale socket — fixed.** Added, with the reasoning that makes it safe rather than reckless: the path carries our PID, so a live process cannot own it and anything present is debris from a crashed run. PID reuse on a long-lived machine is the real scenario, and `EADDRINUSE` is a maximally confusing way to discover it.
+- **Cold-start timeout — fixed.** Mocha's timeout raised 60s → 120s. Worth noting for anyone reading the number later: the VS Code download happens in `extest setup-and-run` *before* mocha starts and is not on this clock; workbench init is.
 
 **Known risks, stated rather than hidden:**
 - **Task 2 is the real risk.** Everything after it is incremental; if the harness will not boot, the plan stops there. Its smoke spec exists to make that failure obvious and early rather than tangled up with a brief assertion.
