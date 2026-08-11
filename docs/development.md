@@ -24,6 +24,7 @@ bun install
 | `bun run lint` | `biome check .` (the whole repo — `src/`, `test/`, `scripts/`) |
 | `bun run test` | `vitest run` (unit tests) |
 | `bun run test:coverage` | tests with V8 coverage |
+| `bun run test:ui` | ExTester/Selenium UI suite against a real VS Code — see "UI tests" below |
 | `bun run build` | esbuild bundles into `dist/` + `media/` |
 | `bun run watch` | `build --watch` — rebuild on save |
 | `bun run check-bundle` | assert the bundle keeps `vscode` as its only external (run after `build`) |
@@ -59,6 +60,25 @@ the command palette, or right-click a selection → *Ask About Selection* /
 - Extension-host logs go to the **Nimbus** output channel
   ([`src/logging.ts`](../src/logging.ts)) — set `nimbus.logLevel` to `debug` for
   the most detail. See [settings.md](./settings.md).
+
+## UI tests
+
+`bun run test:ui` drives a real VS Code (via [ExTester](https://github.com/redhat-developer/vscode-extension-tester)/Selenium) against a fake Gateway
+(`test/ui/fake-gateway.ts`) that records every request, to prove the built-in
+briefs' modal-gate and no-send flows against actual UI, not a `vscode` stub.
+It needs a desktop session — on headless Linux, run it under `xvfb-run -a bun
+run test:ui` (see `.github/workflows/ci.yml`'s `ui-test` job). The first run
+downloads a full copy of VS Code plus a matching chromedriver (~200 MB,
+cached into the gitignored `test-resources/`); later runs reuse the cache.
+It rebuilds the extension itself before running, so it always exercises the
+current `src/`, not a stale `dist/`.
+
+**What it does not cover:** the `@nimbus` chat participant — including
+`/blast`'s basename redaction — because ExTester 8.23.0 ships no Chat-view
+page object; VS Code's built-in Chat view is reachable only by typing into
+it, which the harness's page-objects-only rules can't drive. That surface
+stays manual-only (see the `verify-extension` skill) and is proven at the
+unit level (`src/chat-participant/` tests) instead.
 
 ## Tests
 

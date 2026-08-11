@@ -20,7 +20,7 @@ Extracted from the Nimbus monorepo (`packages/vscode-extension`) on 2026-06-22 s
 - `esbuild.mjs` — build
 - `scripts/` — Node ESM maintenance helpers: `clean.mjs`, `check-bundle.mjs` (guards the no-runtime-dep bundling invariant), `check-vsix-contents.mjs` (guards what the `.vsix` ships), `check-settings-docs.mjs` (guards settings-doc drift); plus `secret-health.ts`, the tested classifier behind `secret-health.yml` that keeps a rejected publish token apart from one merely approaching a known expiry. See `scripts/README.md`.
 - `docs/` — contributor/maintainer reference: `architecture.md`, `development.md`, `settings.md`, `releasing.md`. See `docs/README.md`.
-- `.github/workflows/ci.yml` — typecheck + lint + check-settings-docs + test + build + check-bundle + check-vsix-contents on PR/push (Ubuntu), plus a lean Windows job (typecheck + test + build + the two bundle guards)
+- `.github/workflows/ci.yml` — typecheck + lint + check-settings-docs + test + build + check-bundle + check-vsix-contents on PR/push (Ubuntu), plus a separate `ui-test` job (build + the ExTester/Selenium suite under `xvfb-run`) and a lean Windows job (typecheck + test + build + the two bundle guards)
 - `.github/workflows/publish.yml` — on a `v*` tag: Marketplace + Open VSX + GitHub Release
 - `.github/workflows/dependabot-lockfile.yml` — one of the two `pull_request_target` workflows here (a write-capable token over a PR author's tree); the other is `.github/workflows/cla.yml`, which is likewise write-capable (`actions: write`, `pull-requests: write`, `statuses: write`). Its four defences — the `dependabot[bot]` actor gate, `bun install --ignore-scripts`, `persist-credentials: false`, and a `head.sha`-pinned checkout — are pinned by `test/unit/dependabot-lockfile-workflow.test.ts`; change one and that test tells you.
 
@@ -31,6 +31,7 @@ bun install
 bun run typecheck     # tsc --noEmit (strict)
 bun run lint          # biome check . (whole repo)
 bun run test          # vitest run
+bun run test:ui       # ExTester/Selenium UI suite against a real VS Code (needs a desktop session, or xvfb-run on Linux)
 bun run build         # esbuild bundles
 bun run watch         # esbuild bundles, rebuild on save
 bun run check-bundle  # assert vscode is the bundle's only external (run after build)
