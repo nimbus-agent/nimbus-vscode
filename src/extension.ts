@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { discoverSocketPath, type HitlRequest, NimbusClient } from "@nimbus-dev/client";
 import * as vscode from "vscode";
 import { createBriefCommands } from "./briefs/commands.js";
+import { createNamespaceStore } from "./briefs/namespace-store.js";
 import { toRelativeRef, whyParams } from "./briefs/params.js";
 import { createPeekHover } from "./briefs/peek-hover.js";
 import { registerWhyPeekHover } from "./briefs/real-hover.js";
@@ -634,6 +635,8 @@ export function activateWithDeps(
     log,
   });
 
+  const briefNamespaces = createNamespaceStore(ctx.workspaceState);
+
   const briefCommands = createBriefCommands({
     briefs: () => {
       const client = nimbus();
@@ -643,6 +646,8 @@ export function activateWithDeps(
     roots: egressRoots,
     now: () => Date.now(),
     openReadonly: openReadonlyJson,
+    namespaces: briefNamespaces,
+    defaultNamespace: () => settings.defaultNamespace(),
     window: deps.window,
     log,
   });
