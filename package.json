@@ -251,6 +251,16 @@
         "command": "nimbus.brief.huddle",
         "title": "Team huddle",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.janitor",
+        "title": "Is this idle?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.preflight",
+        "title": "Safe to deploy?",
+        "category": "Nimbus"
       }
     ],
     "chatParticipants": [

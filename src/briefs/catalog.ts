@@ -2,10 +2,11 @@
 // the label, icon and command id, so the sidebar row, the editor menu entry and
 // the egress manifest can never disagree about what a brief is called.
 //
-// PR 1 carries four. `whyPeek` (PR 2) and `janitor`/`preflight` (PR 3) join
-// later; see docs/superpowers/specs/2026-08-10-built-in-briefs-design.md.
+// PR 1 carried four; PR 3 adds `janitor`/`preflight`. `whyPeek` is a hover, not
+// a row, and stays out of this catalog — see
+// docs/superpowers/specs/2026-08-10-built-in-briefs-design.md.
 
-export type BriefId = "why" | "ghost" | "conflicts" | "huddle";
+export type BriefId = "why" | "ghost" | "conflicts" | "huddle" | "janitor" | "preflight";
 
 /** What the caller must supply before the brief can run. */
 export type BriefContext =
@@ -14,7 +15,12 @@ export type BriefContext =
   /** agentsGhost / agentsConflicts — need the file only. */
   | "file"
   /** agentsHuddle — every parameter is optional. */
-  | "none";
+  | "none"
+  /**
+   * agentsJanitor / agentsPreflight — the caller supplies a resource ref or a
+   * git ref plus a namespace. Neither is an editor path, so these prompt.
+   */
+  | "prompted";
 
 export interface BriefSpec {
   readonly id: BriefId;
@@ -66,6 +72,22 @@ export const BRIEF_CATALOG: readonly BriefSpec[] = [
     context: "none",
     gated: true,
   },
+  {
+    id: "janitor",
+    label: "Is this idle?",
+    iconId: "trash",
+    command: "nimbus.brief.janitor",
+    context: "prompted",
+    gated: true,
+  },
+  {
+    id: "preflight",
+    label: "Safe to deploy?",
+    iconId: "rocket",
+    command: "nimbus.brief.preflight",
+    context: "prompted",
+    gated: true,
+  },
 ];
 
 // Throws rather than returning undefined: every caller has a compile-time
@@ -74,4 +96,12 @@ export function briefSpec(id: BriefId): BriefSpec {
   const spec = BRIEF_CATALOG.find((b) => b.id === id);
   if (spec === undefined) throw new Error(`unknown brief: ${id}`);
   return spec;
+}
+
+// Briefs whose parameters come from the editor, and which therefore belong in
+// the editor context menu and are palette-gated on an open editor. The prompted
+// briefs ask for everything they need, so gating them on an editor would hide
+// them exactly when the sidebar or the palette is the entry point.
+export function needsEditor(spec: BriefSpec): boolean {
+  return spec.context === "file" || spec.context === "fileAndLine";
 }
