@@ -93,6 +93,40 @@ else:
 It is a test fixture, not a Gateway simulator. It does not index, rank, or
 reason; it returns shapes.
 
+#### It listens on a Unix socket **or** a Windows named pipe
+
+Raised in review, and more load-bearing than it first appears: this repo's
+primary developer works on Windows. A fake that only binds a Unix socket would
+mean the person who asked for these tests cannot run them on their own machine —
+the manual pass would survive locally and only CI would be automated.
+
+`net.createServer` binds a named pipe transparently given a `\\.\pipe\<name>`
+path, and the client's transport already speaks both (`dist/ipc-transport.js`
+imports `platform` from `node:os` for exactly this). **Verified on win32 during
+this design**, not assumed: a named pipe carried the full NDJSON two-step
+exchange — request → `{sessionId}` → `janitor.briefReady` — end to end.
+
+So the path is chosen by platform:
+
+```ts
+const socketPath = process.platform === "win32"
+  ? `\\\\.\\pipe\\nimbus-ui-${process.pid}`
+  : join(tmpdir(), `nimbus-ui-${process.pid}.sock`);
+```
+
+#### Lifecycle, and why the path carries the PID
+
+Also raised in review. The runner owns the fake: it starts before the ExTester
+session and is killed in a `finally`, so a crashed or interrupted run cannot
+leave one behind.
+
+The **PID in the path is the real defence**, not the cleanup. A fixed path plus a
+stale socket file is `EADDRINUSE`, and the failure mode is miserable — the next
+run fails for a reason that has nothing to do with the change under test. A
+per-process path makes a leftover harmless. On POSIX the runner also unlinks its
+own socket file on exit; Windows named pipes are kernel objects and disappear
+with the process, so there is nothing to unlink there.
+
 ### `test/ui/fixture-workspace/`
 
 A checked-in workspace ExTester opens: two or three small source files to run
@@ -106,6 +140,23 @@ ExTester ([`vscode-extension-tester`](https://github.com/redhat-developer/vscode
 8.23.0) specs, driving VS Code through Selenium at the DOM level: `InputBox`,
 `QuickPick`, notifications, modal dialogs, the editor, and the activity-bar
 tree.
+
+**Page objects only.** Specs use ExTester's own page objects (`InputBox`,
+`QuickPick`, `ActivityBar`, `Notification`, `ModalDialog`) and never raw CSS or
+XPath. Raised in review and worth making a rule rather than a preference: a raw
+selector is a bet on VS Code's internal DOM, and losing that bet looks like a
+product regression rather than a broken locator. Where a page object genuinely
+cannot reach something, the selector is isolated in
+`test/ui/helpers/selectors.ts` — one file to fix when an upgrade moves the DOM,
+instead of a search across the suite.
+
+**One pinned VS Code version, in one place.** Also from review, and it matters
+because a VS Code upgrade is the single most likely cause of a Selenium suite
+breaking overnight. The version is pinned once — in the `test:ui` script's
+ExTester invocation — and both local runs and CI read it from there. CI's
+download cache is keyed on that same value, so a bump invalidates the cache in
+the same commit that changes the version, and local and CI can never silently
+diverge.
 
 ## Coverage
 
@@ -181,6 +232,12 @@ one gates merges. Three rules from the start, not after the first bad week:
    three times; a race usually does not.
 3. **Keep it tight.** If a case is better covered by a unit test, it belongs in
    `test/unit/`. This suite exists for what only a real VS Code can prove.
+4. **`fake.reset()` in a root `afterEach`.** Raised in review. The fake carries
+   two pieces of mutable state — the recorded requests and any queued error — and
+   both leak across tests if not cleared. A leaked queued error is the worse of
+   the two: it surfaces as a *later, unrelated* brief failing, which reads as a
+   product bug and is expensive to chase. Resetting in `afterEach` rather than
+   `beforeEach` also leaves the state intact for inspection when a test fails.
 
 A test that flakes twice in a week gets deleted or fixed, not retried harder.
 
@@ -202,8 +259,17 @@ the specs by group, then the CI job.
   Reachable with the same harness later; including them now would make the test
   infrastructure larger than the feature it ships beside.
 - **A real Gateway anywhere in CI.** See *Drift*.
-- **Windows UI runs.** The lean Windows job stays lean; named-pipe support in
-  the fake is not built until something needs it.
+- **Windows UI runs *in CI*.** The lean Windows job stays lean and runs no UI
+  tests. Local Windows runs are explicitly *in* scope — see the named-pipe
+  section above; this exclusion is about CI cost, not developer platform.
+- **A `--headless` flag.** Raised in review, and declined on feasibility rather
+  than effort. VS Code is an Electron app with no supported headless mode, so
+  there is nothing for such a flag to bind to on Windows or macOS — the two
+  platforms the suggestion was meant to help. On Linux the answer already exists
+  and is what CI uses: run the suite under `xvfb-run`, which needs no flag from
+  us. Adding a `--headless` option that works on one platform and silently does
+  nothing on the others would be worse than not having it. Documenting the
+  `xvfb-run` invocation for Linux developers covers the real need.
 - **Replacing any unit test.** This suite is additive. Nothing in `test/unit/`
   is deleted because a UI test now covers it — they fail for different reasons
   and that is the point.
