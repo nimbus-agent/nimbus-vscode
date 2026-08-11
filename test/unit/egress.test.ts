@@ -155,19 +155,52 @@ describe("buildProofDocument", () => {
         hitlStatus: "approved",
       },
     ],
-    completeness: { tier: "authorized-actions", outboundEgressEvents: 1 },
+    completeness: {
+      coverage: { task: "per-call", mcp: "per-call", http: "per-call", sync: "per-run" },
+      outboundEgressEvents: 1,
+      indeterminate: false,
+    },
     verify: { ok: true, verifiedRows: 42 },
     receipt: { sigB64: "c2ln", pubkeyB64: "cGti", digest: "abc123" },
   };
 
-  test("emits a self-contained .html artifact with tier, receipt, and verify guidance", () => {
+  test("emits a self-contained .html artifact with coverage, receipt, and verify guidance", () => {
     const doc = buildProofDocument(result, 1_700_000_000_000);
     expect(doc.filename).toBe("egress-proof-1700000000000.html");
-    expect(doc.content).toContain("authorized-actions");
+    expect(doc.content).toContain("1</strong> authorized outbound event");
     expect(doc.content).toContain("abc123");
     expect(doc.content).toContain("nimbus egress verify");
     // Self-contained: no external fetches of any kind.
     expect(doc.content).not.toMatch(/(src|href)="https?:/);
+  });
+
+  test("names the observed classes and marks the rest NOT observed", () => {
+    const doc = buildProofDocument(result, 1);
+    // The four the gateway actually watches...
+    for (const cls of ["task", "mcp", "http", "sync"]) {
+      expect(doc.content).toContain(`<code>${cls}</code>`);
+    }
+    // ...and the three it does not must be visibly disclaimed rather than
+    // omitted, or the reader infers they were covered.
+    expect(doc.content).toContain("not observed");
+    expect(doc.content).toContain("makes no claim about it");
+  });
+
+  test("an indeterminate window prints NO count — never a bare zero", () => {
+    const doc = buildProofDocument(
+      { rows: [], completeness: { coverage: {}, outboundEgressEvents: 0, indeterminate: true } },
+      1,
+    );
+    expect(doc.content).toContain("INDETERMINATE");
+    expect(doc.content).toContain("not</strong> evidence that nothing left the machine");
+    expect(doc.content).not.toContain("authorized outbound event");
+  });
+
+  test("a completeness with no indeterminate field fails CLOSED", () => {
+    // An older gateway that predates the field. Absent must read as
+    // indeterminate, never as "covered".
+    const doc = buildProofDocument({ rows: [], completeness: { outboundEgressEvents: 0 } }, 1);
+    expect(doc.content).toContain("INDETERMINATE");
   });
 
   test("embeds the raw result JSON, parseable back to the input", () => {
@@ -187,7 +220,7 @@ describe("buildProofDocument", () => {
 
   test("no receipt and non-array rows render the empty-state fallbacks", () => {
     // rows is not an array (drops to []), and no receipt key is present.
-    const doc = buildProofDocument({ completeness: { tier: "unknown" }, rows: null }, 1);
+    const doc = buildProofDocument({ completeness: {}, rows: null }, 1);
     expect(doc.content).toContain("No rows in this window.");
     expect(doc.content).toContain("No signed receipt attached");
     expect(doc.content).toContain("Rows in window (0)");

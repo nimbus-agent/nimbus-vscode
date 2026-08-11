@@ -756,7 +756,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
-    "@nimbus-dev/client": "^0.15.1",
+    "@nimbus-dev/client": "^0.16.0",
     "@types/node": "^26.1.2",
     "@types/vscode": "^1.95.0",
     "@vitest/coverage-v8": "^4.1.10",
