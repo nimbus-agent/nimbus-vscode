@@ -707,7 +707,11 @@ git commit -m "test(ui): boot a real VS Code against the fake Gateway"
 
 Every case here asserts the extension's behaviour *up to* the send. The strongest assertion available is that the fake received nothing.
 
-**Reaching the fake from a spec:** the specs run inside Mocha in the same Node process the runner started, so import the singleton the runner created. Add to `scripts/run-ui-tests.mjs` before the `extest` call:
+**Reaching the fake from a spec — and the correction that made it possible.** The plan originally asserted that "the specs run inside Mocha in the same Node process the runner started". **That was false as Task 2 built it**: the runner shelled out to `bunx extest`, a separate OS process, so `globalThis` was not shared and every `fake()` call failed with "fake gateway not started by the runner". Discovered empirically during Task 3, root-caused in ExTester's own source, and fixed by switching the runner from the `extest` CLI to ExTester's **JS API** — `new ExTester(...).setupAndRunTests(...)` — which loads the compiled specs via `mocha.addFile()` / `mocha.run()` *in this process*. Same arguments, same behaviour, one process.
+
+Tasks 4 and 5 depend on this and would have hit the identical wall. If you are reading this before Task 3 landed, the runner must use the JS API, not the CLI.
+
+With that in place, add to `scripts/run-ui-tests.mjs` before the run call:
 
 ```js
 globalThis.__nimbusFakeGateway = gateway;
