@@ -184,13 +184,21 @@ extension's own behaviour up to the send.
 | Line number | the recorded `why` params carry the **1-based** line |
 | Brief error | a queued `briefError` surfaces the Gateway's detail with a **Retry** |
 
-**Group C — the participant.**
+**Group C — the participant. Mostly NOT ACHIEVABLE; corrected during implementation.**
 
-| Case | Asserts |
+This group rested on an assumption that proved false: that the ops slash commands could be invoked the way the briefs are. They cannot. `/incident`, `/deploys`, `/owns` and `/blast` are contributed only under `contributes.chatParticipants[].commands` and are reachable exclusively by typing `@nimbus /blast` into VS Code's built-in Chat view — none has a command-palette entry.
+
+And **ExTester 8.23.0 ships no page object for the Chat view.** Verified: `@redhat-developer/page-objects/out/components/` contains no chat component at all. Driving it would require raw CSS or XPath against VS Code's internal DOM, which this design rules out — and rules out for exactly the reason that would bite here, since such a selector breaks on a VS Code upgrade and the breakage reads as a product regression.
+
+| Case | Status |
 |---|---|
-| `/blast` | answers with **no modal** |
-| Redaction | the recorded `impact` params carry a basename, never an absolute path |
-| Ledger | *Show Last Outbound Payload* shows the recorded send |
+| Ledger — *Show Last Outbound Payload* reflects a real recorded send | ✅ covered, via an editor brief driven through the gate |
+| `/blast` answers with **no modal** | ❌ not achievable; stays unit-test-only |
+| Redaction — the recorded `impact` params carry a basename | ❌ not achievable; stays unit-test-only |
+
+The redaction gap is the one that stings, because that behaviour is load-bearing: `/blast` with no argument previously sent an absolute local path containing the OS username, and the fix landed in this same branch. Unit tests do assert the whole RPC payload with `toEqual`, which is real coverage — just not the wire-level, real-VS-Code proof this suite was meant to add. Recorded here rather than quietly dropped: a coverage claim nobody checks is worse than a stated gap.
+
+Revisit if ExTester gains a Chat page object.
 
 ## Drift, and the limit of this approach
 
