@@ -148,6 +148,8 @@ are for.
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
 | **"Preview what leaves" pre-flight** — a gate, not a viewer: all five agent-bound paths route through one seam that renders the exact outbound context with redacted paths and can refuse to send. Prompts on the two surfaces where the extension assembles the context; per-surface, per-workspace "always send here"; plus `Show Last Outbound Payload` and `Reset Egress Preview Prompts` | *no RPC — the payload is already in hand* |
+| **Built-in briefs** — `Why is this here?`, `Who knew this code?`, `Who else is touching this?` and blame-on-hover from the editor; `Team huddle`, `Is this idle?` and `Safe to deploy?` from the palette and the Agents view. All seven previously unreached briefs are wired; every model-composed call routes through the pre-flight gate, and `agentsWhyPeek` is the one documented exemption | `agentsWhy`, `agentsWhyPeek`, `agentsGhost`, `agentsConflicts`, `agentsHuddle`, `agentsJanitor`, `agentsPreflight` |
+| **Agents view shows the built-ins** — two-group sidebar view: the built-in briefs, plus the chat scopes from the `nimbus.agents` setting (never empty on a fresh install) | the `agents*` family |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
 | **Get Started walkthrough** — first-run walkthrough (install → connect Gateway → try Ask/Search/Quick Ask), on the Welcome page and via `Nimbus: Open Walkthrough` | *VS Code Walkthroughs API — no RPC* |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
@@ -180,8 +182,6 @@ is already holding.
 | **Workflow surface** — run / monitor / cancel workflows | The flagship gap (the removed `Run Workflow` stub is tracked here); unblocked by client `0.14.0` | `workflowList`, `workflowSave`, `workflowDelete`, `workflowListRuns`, `workflowRun` | L |
 | **Context-grounded Ask** — `@`-mention / attach files, search results, or index items into a question | Answers cite *your* local knowledge, not the model's guess | `searchRanked` / `queryItems` + `askStream` | M |
 | **Ambient context panel** — offer the agents that fit what is already on screen (file, selection, diff vs `HEAD`, branch) instead of waiting for a prompt; the editor counterpart of the browser ambient panel | The surface with the richest context stops making you retype the context | `searchRanked` / `queryItems` + the `agents*` family | L |
-| **The seven unreached briefs** — editor entry points for `agentsWhy`, `agentsWhyPeek`, `agentsGhost`, `agentsConflicts`, `agentsHuddle`, `agentsJanitor`, `agentsPreflight` | Ten briefs are typed by the client and three are wired; this is the cheapest gap on the agent surface | the seven `agents*` RPCs named | M |
-| **Agents view shows the built-ins** — populate the view from the briefs the client types instead of the empty-by-default `nimbus.agents` array | The view named after the product's core is currently empty out of the box | the `agents*` family | S |
 
 ## Phase 3 — Deepen surfaces & trust
 

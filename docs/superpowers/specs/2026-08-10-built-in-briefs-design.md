@@ -242,15 +242,18 @@ NIMBUS: AGENTS
     Who knew this code?      ghost
     Who else is touching…    conflicts
     Team huddle              huddle
-    Catch me up              catchup
-    Who owns…                expert
-    Blast radius…            impact
     Is this idle?            janitor
     Safe to deploy?          preflight
 ▾ Configured agents
     my-reviewer   (active)
     docs-helper
 ```
+
+`catchup` / `expert` / `impact` stay chat-participant slash commands
+(`/incident`, `/owns`, `/blast`) rather than gaining a sidebar row in PR 3;
+promoting them to the Agents view is deferred, not rejected — they are already
+reachable and routed through the seam (§ Egress), so the sidebar row would be
+a second doorway to the same call, not new coverage.
 
 Each built-in row runs the same command as its editor or palette entry point —
 one code path, three doorways. Configured agents keep their existing
@@ -340,7 +343,8 @@ change surfaces as a test failure rather than as drift.
 
 - **Renderers** — one test per brief: populated, empty, and with gap notes.
 - **`params.ts`** — an absolute path never survives into params.
-- **Catalog invariant** — exactly one ungated entry, and it is `whyPeek`.
+- **Catalog invariant** — every entry is gated; `whyPeek` is a hover, not a
+  row, and its exemption is enforced by the choke-point test.
 - **Choke-point** — the nine `.agentsX(` shapes appear only in the choke point
   and its allowlisted consumers.
 - **`commands.ts`** — driven through `test/unit/vscode-stub.ts`.
@@ -356,7 +360,7 @@ alone.
 |---|---|
 | 1 | `src/briefs/` core, the `"brief"` egress kind, choke-point growth, **why / ghost / conflicts / huddle**, the two-group Agents view |
 | 2 | **`whyPeek` hover** — `peek.ts`, the debounced provider, the exemption guard, `showHoverBlame` |
-| 3 | **janitor + preflight** with input prompts, `defaultNamespace`, retro-routing the participant's three briefs through the seam, and correcting `CLAUDE.md`'s "all five agent-bound paths" to describe what the seam then actually covers |
+| 3 | **Delivered.** **janitor + preflight** with input prompts, `defaultNamespace`, retro-routing the participant's three briefs through the seam, and correcting `CLAUDE.md`'s "all five agent-bound paths" to describe what the seam then actually covers — the six-row catalog (why, ghost, conflicts, huddle, janitor, preflight), all gated |
 
 PR 1 alone fixes the empty Agents view and reaches four of the seven unreached
 briefs. PR 3 closes the gap `CLAUDE.md` currently overstates, by which point

@@ -1218,6 +1218,18 @@ git commit -m "feat(briefs): add the janitor and preflight commands"
 
 **Watch out:** `manifest-briefs.test.ts` currently selects editor-menu briefs with `b.context !== "none"`. Adding `"prompted"` would sweep janitor and preflight into that filter and demand context-menu entries the design deliberately omits. Switch both call sites to `needsEditor`.
 
+> **Sequencing correction (recorded during execution).** Task 6's code calls
+> `briefSpec("janitor")`, which cannot compile until `BriefId` carries the new
+> ids — so Task 6 had to pull most of this task forward. As of commit `63e7120`
+> the catalog entries, `needsEditor`, the `package.json` command contributions,
+> the `briefs-catalog` / `manifest-briefs` test updates, and the
+> `namespaces` / `defaultNamespace` deps wiring in `extension.ts` are **already
+> done and reviewed**. What remains for this task is the part that was missed:
+> the two `register("nimbus.brief.janitor", …)` / `register("nimbus.brief.
+> preflight", …)` calls in `extension.ts`. Without them the commands are
+> contributed in the manifest but unregistered at runtime — VS Code answers
+> "command not found". Verify the sidebar rows render from the catalog too.
+
 - [ ] **Step 1: Write the failing tests**
 
 `test/unit/briefs-catalog.test.ts` — this file has three assertions that are **wrong after this task**, so edit rather than append. Import `needsEditor`, then:
@@ -1537,7 +1549,7 @@ test("an untrusted workspace does not change participant brief routing", async (
 });
 ```
 
-`test/unit/egress-choke-point.test.ts` — move the three shapes into the gated list and delete the pending list:
+`test/unit/egress-choke-point.test.ts` — **`.agentsJanitor(` and `.agentsPreflight(` are already in `GATED_BRIEF_CALLS`**: Task 5 had to add them, because the guard's final test discovers `agents*` shapes across `src/` and fails the moment a new one appears unaccounted for. So this task adds only the three ops shapes and deletes the pending list. The end state is the nine below:
 
 ```ts
 const GATED_BRIEF_CALLS = [
