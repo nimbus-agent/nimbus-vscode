@@ -1,5 +1,5 @@
 {
-  "nimbus.socketPath": "\\\\.\\pipe\\nimbus-ui-30468-1",
+  "nimbus.socketPath": "",
   "nimbus.autoStartGateway": false,
   "nimbus.egress.showStatusBarBadge": false,
   "nimbus.briefs.showHoverBlame": false,

@@ -9,9 +9,21 @@ import { join } from "node:path";
 
 export const VSCODE_VERSION = "1.104.0";
 
+// Fail-fast: used only before the fake Gateway exists, so there is nothing
+// yet for a `finally` to clean up.
 const run = (cmd, args) => {
   const r = spawnSync(cmd, args, { stdio: "inherit", shell: process.platform === "win32" });
   if (r.status !== 0) process.exit(r.status ?? 1);
+};
+
+// Unlike `run`, this never calls process.exit — it hands the exit status back
+// to the caller. process.exit() does not unwind to a pending `finally`, so
+// once the fake Gateway is running, exiting inside this helper would skip
+// gateway.stop() on every failing suite (the common case). The caller is
+// responsible for exiting with this status only after its `finally` runs.
+const runCapture = (cmd, args) => {
+  const r = spawnSync(cmd, args, { stdio: "inherit", shell: process.platform === "win32" });
+  return r.status ?? 1;
 };
 
 run("bunx", ["tsc", "-p", "tsconfig.ui.json"]);
@@ -45,8 +57,9 @@ writeFileSync(
   )}\n`,
 );
 
+let status = 0;
 try {
-  run("bunx", [
+  status = runCapture("bunx", [
     "extest",
     "setup-and-run",
     "./out/ui/specs/**/*.test.js",
@@ -62,4 +75,6 @@ try {
   ]);
 } finally {
   await gateway.stop();
+  console.log("[run-ui-tests] fake Gateway stopped");
 }
+process.exit(status);
