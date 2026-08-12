@@ -226,13 +226,14 @@ on a CLI "reuse window" handshake that never reaches the chromedriver-launched
 VS Code instance on headless Linux, a known, unfixed upstream limitation
 ([redhat-developer/vscode-extension-tester#506](https://github.com/redhat-developer/vscode-extension-tester/issues/506)).
 All nine of the job's failures on its first real run traced back to that one
-mechanism. See `.superpowers/sdd/2026-08-11-ui-test-harness/ci-failure-diagnosis.md`
-for the full diagnosis.
+mechanism. The full diagnosis, the community workaround for both halves, and
+the job that was removed are recorded in
+[issue #92](https://github.com/nimbus-agent/nimbus-vscode/issues/92).
 
 The suite ships **local-only** for now: run it yourself with `bun run
-test:ui` (`xvfb-run -a bun run test:ui` on headless Linux). A follow-up will
-add the CI job back once a workaround — driving the folder/file open through
-Selenium instead of the CLI reuse handshake — is verified against a real run.
+test:ui` (`xvfb-run -a bun run test:ui` on headless Linux). Issue #92 restores
+the CI job once a workaround — driving the folder/file open through Selenium
+instead of the CLI reuse handshake — is verified against a real run.
 
 The lean Windows job is unchanged: it stays typecheck + test + build + the two
 bundle guards, and runs no UI tests.
