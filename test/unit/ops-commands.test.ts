@@ -149,7 +149,7 @@ describe("/blast", () => {
   test("without a target renders usage, calling nothing", async () => {
     const impact = vi.fn();
     const c = sinkCapture();
-    await runOpsCommand(client({}), req({ command: "blast" }), c.sink, noWarn);
+    await runOpsCommand(client({ briefs: { impact } }), req({ command: "blast" }), c.sink, noWarn);
     expect(impact).not.toHaveBeenCalled();
     expect(c.all()).toContain("/blast");
   });
