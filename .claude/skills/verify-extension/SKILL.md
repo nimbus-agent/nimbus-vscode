@@ -40,8 +40,8 @@ the real flow:
 **The built-in briefs' modal-gate and no-send flows are now automated** —
 `bun run test:ui` drives a real VS Code (ExTester/Selenium) against a fake
 Gateway and covers exactly this for `Why is this here?` / `Who knew this
-code?` / `Who else is touching this?` / `Team huddle` / `Is this idle?` /
-`Safe to deploy?` (see [`docs/development.md`](../../../docs/development.md#ui-tests)).
+code?` / `Team huddle` / `Is this idle?` / `Safe to deploy?` (see
+[`docs/development.md`](../../../docs/development.md#ui-tests)).
 A green `ui-test` CI job means those flows already got a real-VS-Code pass —
 it does not replace the manual pass below for anything it doesn't cover, and
 it does **not** cover the `@nimbus` chat participant at all (no Chat-view page
