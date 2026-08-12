@@ -85,7 +85,7 @@ rather than *offered*, exactly as above.
   catchup, conflicts, expert, ghost, glossary, huddle, impact, janitor,
   preflight, why, why-peek — and dispatches all eleven over the `agents.*` IPC
   namespace (`packages/gateway/src/ipc/agents-rpc.ts`).
-- The published client (`0.15.1`) types **ten** of them — all but glossary,
+- The published client (`0.16.0`) types **ten** of them — all but glossary,
   which is a client-packaging gap, not a missing Gateway method — as
   `agentsCatchup`, `agentsConflicts`, `agentsExpert`, `agentsGhost`,
   `agentsHuddle`, `agentsImpact`, `agentsJanitor`, `agentsPreflight`,
