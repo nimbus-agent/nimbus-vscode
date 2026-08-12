@@ -64,6 +64,16 @@ test("rootFor returns undefined when no root contains the file", () => {
   expect(rootFor("/elsewhere/x.ts", ["/a"])).toBeUndefined();
 });
 
+test("rootFor does not cross-match differently-cased POSIX roots (case-sensitive filesystem)", () => {
+  // "/work/Proj" and "/work/proj" are different directories on a
+  // case-sensitive filesystem — a file under one must never match the
+  // other's workspace root (that would misdirect toRelativeRef/memoryFolder
+  // to the wrong project's namespace).
+  expect(rootFor("/work/proj/src/a.ts", ["/work/Proj"])).toBeUndefined();
+  expect(rootFor("/work/Proj/src/a.ts", ["/work/proj"])).toBeUndefined();
+  expect(rootFor("/work/proj/src/a.ts", ["/work/proj"])).toBe("/work/proj");
+});
+
 describe("params", () => {
   test("whyParams converts VS Code's 0-based line to 1-based", () => {
     expect(whyParams({ ref: "src/a.ts", line: 41 })).toEqual({ ref: "src/a.ts", line: 42 });

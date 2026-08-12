@@ -22,20 +22,34 @@ function basename(p: string): string {
 }
 
 /**
+ * Windows drive-letter ("C:/...") or UNC ("//host/share/...") paths only —
+ * the two shapes where the filesystem itself is case-insensitive. A plain
+ * POSIX path is left as-is: on a case-sensitive filesystem "/work/Proj" and
+ * "/work/proj" are different directories, and folding them together would
+ * let an unrelated project's file match this one's workspace root.
+ */
+function comparisonPath(p: string): string {
+  const isWindowsStyle = /^[a-z]:\//i.test(p) || p.startsWith("//");
+  return isWindowsStyle ? p.toLowerCase() : p;
+}
+
+/**
  * The workspace root containing `fileName`, returned in the ORIGINAL casing the
  * caller passed in, or undefined when none matches. Longest root first: with
  * nested folders open the innermost is the useful one, and a shorter parent
  * would otherwise win by appearing earlier.
  *
- * Compares case-insensitively because on Windows the editor's fileName and the
- * workspace folder can disagree on drive-letter case ("C:/" vs "c:/").
+ * Compares case-insensitively only for Windows drive-letter/UNC paths, because
+ * there the editor's fileName and the workspace folder can disagree on
+ * drive-letter case ("C:/" vs "c:/") even though the filesystem is the same.
+ * POSIX paths compare case-sensitively, matching the filesystem they name.
  */
 export function rootFor(fileName: string, roots: readonly string[]): string | undefined {
-  const file = normalise(fileName).toLowerCase();
+  const file = comparisonPath(normalise(fileName));
   const sorted = [...roots].sort((a, b) => normalise(b).length - normalise(a).length);
   for (const root of sorted) {
     const n = normalise(root);
-    const prefix = (n.endsWith("/") ? n : `${n}/`).toLowerCase();
+    const prefix = comparisonPath(n.endsWith("/") ? n : `${n}/`);
     if (file.startsWith(prefix)) return root;
   }
   return undefined;
