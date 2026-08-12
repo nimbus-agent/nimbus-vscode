@@ -102,14 +102,23 @@ jobs:
       # send here" skip-store. This cache is deliberately NOT allowed to carry
       # that: restoring it from a key that changes almost never would let a
       # skip set by one run's tests silently poison every later run, failing
-      # unrelated specs from a modal that no longer appears. Only the
-      # downloaded VS Code + chromedriver binaries are cached.
+      # unrelated specs from a modal that no longer appears. The include has
+      # to enumerate (`test-resources/*`, not just `test-resources`) or the
+      # exclude below has nothing to act on — @actions/cache globs each
+      # pattern with implicitDescendants off, so an un-enumerated
+      # `test-resources` resolves to that one directory and the `!settings`
+      # negation matches nothing. test-resources/extensions is excluded too:
+      # it holds this run's own locally-packaged .vsix, force-installed fresh
+      # every run (run-ui-tests.mjs), not a download, so caching it buys
+      # nothing. Only the downloaded VS Code + chromedriver binaries are
+      # cached.
       - name: Cache VS Code + chromedriver
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            test-resources
+            test-resources/*
             !test-resources/settings
+            !test-resources/extensions
           key: ${{ runner.os }}-extest-${{ hashFiles('scripts/run-ui-tests.mjs', 'package.json') }}
 
       - name: Build
