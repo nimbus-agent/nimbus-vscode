@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.13.0...v0.14.0) (2026-08-11)
+
+
+### Features
+
+* render per-class egress coverage instead of the removed tier scalar ([#89](https://github.com/nimbus-agent/nimbus-vscode/issues/89)) ([36f76d5](https://github.com/nimbus-agent/nimbus-vscode/commit/36f76d520b8226bbc79c9609113a383db43a1011))
+
 ## [0.13.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.12.1...v0.13.0) (2026-08-10)
 
 
