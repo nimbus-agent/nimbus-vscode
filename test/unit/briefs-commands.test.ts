@@ -371,6 +371,15 @@ describe("janitor", () => {
     expect(validate?.("abc")).toBeTypeOf("string");
   });
 
+  test("idleDays rejects a digit string too long to be a safe integer", async () => {
+    const h = harness({}, undefined, ["svc/legacy", ""]);
+    await createBriefCommands(h.deps).janitor();
+    const validate = h.validators[1];
+    // Matches POSITIVE_INT (all digits, no leading zero) but Number() of it
+    // loses precision — must not be forwarded to the IPC payload.
+    expect(validate?.("99999999999999999999")).toBeTypeOf("string");
+  });
+
   test("the manifest names the resource, not a file path", async () => {
     const h = harness({}, undefined, ["svc/legacy", ""]);
     await createBriefCommands(h.deps).janitor();

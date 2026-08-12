@@ -172,6 +172,11 @@ export function createBriefCommands(deps: BriefCommandDeps): BriefCommands {
   const POSITIVE_INT = /^[1-9]\d*$/;
   const IDLE_DAYS_ERROR =
     "Enter a whole number of days greater than zero, or leave blank for the Gateway default.";
+  // A digit string can match POSITIVE_INT while being too long for Number()
+  // to represent exactly (or to overflow to Infinity) — neither belongs in
+  // the IPC payload, so the safe-integer check gates the regex, not just Number().
+  const isValidIdleDays = (v: string): boolean =>
+    POSITIVE_INT.test(v) && Number.isSafeInteger(Number(v));
 
   // showInputBox has THREE outcomes, not two, and collapsing them sends
   // something the user tried to cancel. Escape returns undefined; Enter on a
@@ -214,7 +219,7 @@ export function createBriefCommands(deps: BriefCommandDeps): BriefCommands {
 
     const days = await ask("Idle for how many days? (blank = Gateway default)", {
       validate: (v) =>
-        v.trim().length === 0 || POSITIVE_INT.test(v.trim()) ? undefined : IDLE_DAYS_ERROR,
+        v.trim().length === 0 || isValidIdleDays(v.trim()) ? undefined : IDLE_DAYS_ERROR,
     });
     // Escape aborts the whole command. Blank means "use the Gateway default",
     // which is a decision, not an abort. Treating Escape as blank would send a
