@@ -2,7 +2,7 @@
   "name": "nimbus-vscode",
   "displayName": "Nimbus — On-Call & Incident Agent",
   "description": "Private, local-first agent for on-call & platform engineers — /incident, /deploys, /owns, /blast grounded in your own index, with a signed, verifiable record of every action it takes off-device.",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "publisher": "nimbus-agent",
   "license": "MIT",
   "private": false,

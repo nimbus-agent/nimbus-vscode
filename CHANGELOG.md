@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.14.0...v0.15.0) (2026-08-12)
+
+
+### Features
+
+* **briefs:** reach the last two briefs, and route every agent call through one seam ([#91](https://github.com/nimbus-agent/nimbus-vscode/issues/91)) ([63956e5](https://github.com/nimbus-agent/nimbus-vscode/commit/63956e5197267c676264c40d1f63d62bdb3df2f8))
+
 ## [0.14.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.13.0...v0.14.0) (2026-08-11)
 
 
