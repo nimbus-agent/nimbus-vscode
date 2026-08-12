@@ -1,10 +1,20 @@
 import type {
+  CatchupBrief,
+  CatchupParams,
   ConflictBrief,
   ConflictsParams,
+  ExpertBrief,
+  ExpertParams,
   GhostBrief,
   GhostParams,
   HuddleBrief,
   HuddleParams,
+  ImpactBrief,
+  ImpactParams,
+  JanitorBrief,
+  JanitorParams,
+  PreflightBrief,
+  PreflightParams,
   WhyBrief,
   WhyParams,
 } from "@nimbus-dev/client";
@@ -138,6 +148,8 @@ export interface RawBriefClient {
   agentsGhost(p: GhostParams, o?: { timeoutMs?: number }): Promise<GhostBrief>;
   agentsConflicts(p: ConflictsParams, o?: { timeoutMs?: number }): Promise<ConflictBrief>;
   agentsHuddle(p?: HuddleParams, o?: { timeoutMs?: number }): Promise<HuddleBrief>;
+  agentsJanitor(p: JanitorParams, o?: { timeoutMs?: number }): Promise<JanitorBrief>;
+  agentsPreflight(p: PreflightParams, o?: { timeoutMs?: number }): Promise<PreflightBrief>;
 }
 
 /** A brief call that has already passed the gate. Throws EgressCancelled if not. */
@@ -148,6 +160,8 @@ export interface GatedBriefs {
   ghost: GatedBrief<GhostParams, GhostBrief>;
   conflicts: GatedBrief<ConflictsParams, ConflictBrief>;
   huddle: GatedBrief<HuddleParams, HuddleBrief>;
+  janitor: GatedBrief<JanitorParams, JanitorBrief>;
+  preflight: GatedBrief<PreflightParams, PreflightBrief>;
 }
 
 export function gateRawBriefs(
@@ -175,5 +189,53 @@ export function gateRawBriefs(
     conflicts: (p, meta, title) =>
       run((q: ConflictsParams) => client.agentsConflicts(q), p, meta, title),
     huddle: (p, meta, title) => run((q: HuddleParams) => client.agentsHuddle(q), p, meta, title),
+    janitor: (p, meta, title) => run((q: JanitorParams) => client.agentsJanitor(q), p, meta, title),
+    preflight: (p, meta, title) =>
+      run((q: PreflightParams) => client.agentsPreflight(q), p, meta, title),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Participant briefs.
+//
+// The chat participant's three ops briefs take an argument the user typed after
+// a slash command, so they follow the same rule as askStream: record, do not
+// prompt. gate.ts splits kinds on exactly this principle — only the surfaces
+// where the EXTENSION decides what is sent prompt.
+//
+// A separate constructor rather than a flag on gateRawBriefs: one function per
+// gate behaviour, each named for what it does, and neither reachable by passing
+// the wrong argument to the other.
+
+export interface RawParticipantBriefClient {
+  agentsCatchup(p?: CatchupParams, o?: { timeoutMs?: number }): Promise<CatchupBrief>;
+  agentsExpert(p: ExpertParams, o?: { timeoutMs?: number }): Promise<ExpertBrief>;
+  agentsImpact(p: ImpactParams, o?: { timeoutMs?: number }): Promise<ImpactBrief>;
+}
+
+/** No progressTitle: the chat turn already renders its own progress. */
+export type ParticipantBrief<P, B> = (p: P, meta: EgressMeta) => Promise<B>;
+
+export interface ParticipantBriefs {
+  catchup: ParticipantBrief<CatchupParams, CatchupBrief>;
+  expert: ParticipantBrief<ExpertParams, ExpertBrief>;
+  impact: ParticipantBrief<ImpactParams, ImpactBrief>;
+}
+
+export function gateRawParticipantBriefs(
+  client: RawParticipantBriefClient,
+  gate: EgressGate,
+): ParticipantBriefs {
+  // Stringified by the seam, so no call site can send a shape the ledger did
+  // not record. Pretty-printed to match gateRawBriefs.
+  const run = async <P, B>(call: (p: P) => Promise<B>, p: P, meta: EgressMeta): Promise<B> => {
+    gate.record("participant", JSON.stringify(p, null, 2), meta);
+    return call(p);
+  };
+
+  return {
+    catchup: (p, meta) => run((q: CatchupParams) => client.agentsCatchup(q), p, meta),
+    expert: (p, meta) => run((q: ExpertParams) => client.agentsExpert(q), p, meta),
+    impact: (p, meta) => run((q: ImpactParams) => client.agentsImpact(q), p, meta),
   };
 }

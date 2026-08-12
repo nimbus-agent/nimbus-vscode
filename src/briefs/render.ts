@@ -1,4 +1,11 @@
-import type { ConflictBrief, GhostBrief, HuddleBrief, WhyBrief } from "@nimbus-dev/client";
+import type {
+  ConflictBrief,
+  GhostBrief,
+  HuddleBrief,
+  JanitorBrief,
+  PreflightBrief,
+  WhyBrief,
+} from "@nimbus-dev/client";
 
 import { formatRelativeTime } from "../sidebar/relative-time.js";
 
@@ -94,4 +101,71 @@ export function renderHuddle(brief: HuddleBrief, now: number): string {
     return items.length === 0 ? header : `${header}\n${items.join("\n")}`;
   });
   return `Team huddle:\n${blocks.join("\n")}${gapsFooter(brief)}`;
+}
+
+// A downstream that did not answer is NOT a pass. This brief exists to inform
+// deploy decisions, and a silent absence of failure is not a green light — so
+// the two non-answers name themselves as unknown.
+const PREFLIGHT_STATUS: Record<PreflightBrief["downstreams"][number]["status"], string> = {
+  pass: "pass",
+  fail: "FAIL",
+  declined: "declined (no answer)",
+  not_configured: "not configured (unknown)",
+};
+
+export function renderJanitor(brief: JanitorBrief): string {
+  const target = `\`${brief.query.resourceRef}\``;
+  const window = plural(brief.query.idleDays, "day");
+  const lines: string[] = [
+    brief.idle
+      ? `${target} looks idle after ${window} with no activity.`
+      : `${target} is still active within the last ${window}.`,
+  ];
+
+  if (brief.peersTouched.length > 0) {
+    lines.push("", "### Recently touched by");
+    for (const peer of brief.peersTouched) {
+      const when =
+        peer.lastSeenDaysAgo === null
+          ? "at an unknown time"
+          : `${plural(peer.lastSeenDaysAgo, "day")} ago`;
+      lines.push(`- **${peer.who ?? "unattributed"}** — last seen ${when}`);
+    }
+  }
+  if (brief.peersClear > 0) {
+    lines.push("", `${plural(brief.peersClear, "peer")} reported no recent activity.`);
+  }
+
+  // Rendered, never run. Output is a suggestion, never an applied edit — the
+  // rule the SCM trio already follows.
+  if (brief.cleanupAction !== null) {
+    lines.push(
+      "",
+      `Suggested cleanup: \`${brief.cleanupAction}\``,
+      "",
+      "_Nimbus never performs this. Run it yourself if you agree._",
+    );
+  }
+  if (brief.proposalSuppressed) {
+    lines.push("", "_No cleanup proposed: the agent suppressed it._");
+  }
+  return `${lines.join("\n")}${gapsFooter(brief)}`;
+}
+
+function preflightHeadline(brief: PreflightBrief, target: string): string {
+  if (brief.anyFailed) return `Not safe to deploy ${target}: a downstream check failed.`;
+  if (brief.anyIncomplete) return `Inconclusive for ${target}: some downstreams did not report.`;
+  return `No failures reported for ${target}.`;
+}
+
+export function renderPreflight(brief: PreflightBrief): string {
+  const target = `\`${brief.query.ref}\` in \`${brief.query.namespace}\``;
+  const headline = preflightHeadline(brief, target);
+  if (brief.downstreams.length === 0) {
+    return `${headline}\n\nNo downstreams answered, so nothing was actually checked.${gapsFooter(brief)}`;
+  }
+  const lines = brief.downstreams.map(
+    (d) => `- **${d.who ?? d.peerId}** — ${PREFLIGHT_STATUS[d.status]}: ${d.summary}`,
+  );
+  return `${headline}\n${lines.join("\n")}${gapsFooter(brief)}`;
 }

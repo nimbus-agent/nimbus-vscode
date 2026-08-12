@@ -57,6 +57,86 @@ function makeFakeClient(overrides: Partial<ClientLike> = {}): () => Promise<Clie
   return async () => merged;
 }
 
+// Regression guard for the own-vs-prototype spread bug: the real NimbusClient
+// is a CLASS, so every method (searchRanked, metricsDora, egressHead,
+// getSessionTranscript, askStream, agents*, …) lives on its PROTOTYPE, not as
+// an own enumerable property — only `ipc` is. `{ ...client }` copies own
+// properties only, so it silently drops every method. `makeFakeClient` above
+// builds a PLAIN OBJECT, whose methods ARE own properties, so it cannot
+// reproduce that failure — every test using it passes whether or not a spread
+// site actually forwards anything. This class reproduces the real shape so a
+// wrapper that merely spreads (rather than naming and forwarding each member)
+// fails loudly here.
+class FakeClassClient {
+  readonly calls: Record<string, unknown[]> = {};
+  private record(name: string, args: unknown[]): void {
+    this.calls[name] = args;
+  }
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
+  subscribeHitl(): { dispose(): void } {
+    return { dispose: () => undefined };
+  }
+  connectorListStatus(): Promise<unknown[]> {
+    return Promise.resolve([]);
+  }
+  askStream(input: string, opts?: unknown): unknown {
+    this.record("askStream", [input, opts]);
+    return {
+      streamId: "s1",
+      cancel: async () => undefined,
+      [Symbol.asyncIterator]: () => ({
+        next: async () => ({ value: { type: "done", reply: "", sessionId: "" }, done: false }),
+      }),
+    };
+  }
+  cancelStream(streamId: string): Promise<{ ok: boolean }> {
+    this.record("cancelStream", [streamId]);
+    return Promise.resolve({ ok: true });
+  }
+  getSessionTranscript(
+    params: { sessionId: string; limit?: number } = { sessionId: "" },
+  ): Promise<{ sessionId: string; turns: never[]; hasMore: boolean }> {
+    this.record("getSessionTranscript", [params]);
+    return Promise.resolve({ sessionId: params.sessionId, turns: [], hasMore: false });
+  }
+  gatewayPing(): Promise<{
+    version: string;
+    uptime: number;
+    agentLimits: { maxAgentDepth: number; maxToolCallsPerSession: number };
+  }> {
+    return Promise.resolve({
+      version: "0.0.0-test",
+      uptime: 1,
+      agentLimits: { maxAgentDepth: 1, maxToolCallsPerSession: 1 },
+    });
+  }
+  searchRanked(params?: unknown): Promise<unknown[]> {
+    this.record("searchRanked", [params]);
+    return Promise.resolve([{ name: "found.ts" }]);
+  }
+  metricsDora(params: unknown): Promise<unknown> {
+    this.record("metricsDora", [params]);
+    return Promise.resolve({ service: "checkout" });
+  }
+  egressHead(): Promise<{ head: string; count: number }> {
+    return Promise.resolve({ head: "h", count: 3 });
+  }
+  agentsImpact(params: unknown): Promise<unknown> {
+    this.record("agentsImpact", [params]);
+    return Promise.resolve({ kind: "impact" });
+  }
+  agentsExpert(params: unknown): Promise<unknown> {
+    this.record("agentsExpert", [params]);
+    return Promise.resolve({ kind: "expert" });
+  }
+  agentsCatchup(params?: unknown): Promise<unknown> {
+    this.record("agentsCatchup", [params]);
+    return Promise.resolve({ kind: "catchup" });
+  }
+}
+
 interface Captured {
   ctx: ExtensionContextLike;
   commandHandlers: Map<string, (...args: unknown[]) => unknown>;
@@ -189,6 +269,9 @@ function makeFixture(opts: {
     languageId?: string;
     /** Zero-based cursor line, as VS Code reports it. Defaults to 0. */
     line?: number;
+    /** document.uri.scheme. Defaults to "file"; set to e.g. "untitled" or a
+     *  virtual scheme to exercise the brief commands' real-file filter. */
+    scheme?: string;
   };
   panelVisible?: boolean;
   panelActive?: boolean;
@@ -318,6 +401,7 @@ function makeFixture(opts: {
                   : (opts.activeEditor?.selectionText ?? opts.activeEditor?.text ?? ""),
               fileName: opts.activeEditor?.fileName ?? "untitled",
               languageId: opts.activeEditor?.languageId ?? "plaintext",
+              uri: { scheme: opts.activeEditor?.scheme ?? "file" },
             },
           },
     withProgress: (async (_opts: unknown, task: () => Promise<unknown>) =>
@@ -541,6 +625,40 @@ describe("activateWithDeps", () => {
     ]) {
       expect(f.commandHandlers.has(id)).toBe(true);
     }
+  });
+
+  test("registers the six brief commands", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    for (const id of [
+      "nimbus.brief.why",
+      "nimbus.brief.ghost",
+      "nimbus.brief.conflicts",
+      "nimbus.brief.huddle",
+      "nimbus.brief.janitor",
+      "nimbus.brief.preflight",
+    ]) {
+      expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
+    }
+  });
+
+  test("a non-file editor is not offered to the brief commands", async () => {
+    // Same rule real-hover.ts already applies to the hover: an untitled
+    // buffer has no path to blame, and a virtual document — our own
+    // read-only brief tabs included — is not in any repo.
+    const f = makeFixture({
+      activeEditor: {
+        text: "",
+        fileName: "Nimbus — Why is this here?.md",
+        languageId: "markdown",
+        scheme: "nimbus-readonly",
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.brief.why")();
+    expect(f.infoMessages).toContain('Nimbus: Open a file to run "Why is this here?".');
   });
 
   test("nimbus.generateTests opens a fresh untitled document on each invocation", async () => {
@@ -2787,5 +2905,60 @@ describe("pass-through surfaces route through the seam", () => {
     expect(doc?.title).toBe("Nimbus outbound.md");
     expect(doc?.content).toContain("Ask panel");
     expect(doc?.content).toContain("why is p99 up?");
+  });
+});
+
+describe("client wrappers forward to the real NimbusClient prototype (own-vs-prototype regression)", () => {
+  test("the participant client wrapper forwards searchRanked/metricsDora/egressHead/briefs, not just askStream", async () => {
+    const fake = new FakeClassClient();
+    let captured: ParticipantDeps | undefined;
+    const f = makeFixture({ openClient: async () => fake as unknown as ClientLike });
+    f.deps.registerChatParticipant = (opts) => {
+      captured = opts.deps;
+      return { dispose: () => undefined };
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+
+    const client = captured?.client();
+    if (client === undefined) throw new Error("participant client did not connect");
+
+    // Each of these would throw "... is not a function" under a bare
+    // `{ ...client }` spread, because none of them are own properties of a
+    // real NimbusClient instance.
+    await expect(client.searchRanked({ name: "q" })).resolves.toEqual([{ name: "found.ts" }]);
+    await expect(client.metricsDora({ service: "s", since: "7d" })).resolves.toEqual({
+      service: "checkout",
+    });
+    await expect(client.egressHead()).resolves.toEqual({ head: "h", count: 3 });
+    await expect(
+      client.briefs.impact({ fileOrPrUrl: "a.ts" }, { action: "a", files: [], omissions: [] }),
+    ).resolves.toEqual({ kind: "impact" });
+
+    // And each call actually reached the real instance with its real params —
+    // not a stand-in that merely resolved without throwing.
+    expect(fake.calls["searchRanked"]?.[0]).toEqual({ name: "q" });
+    expect(fake.calls["metricsDora"]?.[0]).toEqual({ service: "s", since: "7d" });
+    expect(fake.calls["agentsImpact"]?.[0]).toEqual({ fileOrPrUrl: "a.ts" });
+  });
+
+  test("the Ask-panel client wrapper forwards askStream and getSessionTranscript to the real instance", async () => {
+    const fake = new FakeClassClient();
+    const f = makeFixture({
+      inputBoxAnswers: ["hi there"],
+      openClient: async () => fake as unknown as ClientLike,
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+
+    // Creates the chat controller with the gated wrapper and drives askStream.
+    await cmd(f, "nimbus.ask")();
+    expect(fake.calls["askStream"]?.[0]).toBe("hi there");
+
+    // Reuses the same controller/wrapper — proves getSessionTranscript, a
+    // member the old spread silently dropped, is forwarded too.
+    await cmd(f, "nimbus.openSession")("s9");
+    const call = fake.calls["getSessionTranscript"]?.[0] as { sessionId: string } | undefined;
+    expect(call?.sessionId).toBe("s9");
   });
 });

@@ -251,6 +251,16 @@
         "command": "nimbus.brief.huddle",
         "title": "Team huddle",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.janitor",
+        "title": "Is this idle?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.preflight",
+        "title": "Safe to deploy?",
+        "category": "Nimbus"
       }
     ],
     "chatParticipants": [
@@ -718,6 +728,11 @@
           "default": true,
           "description": "Show blame, PR and ticket for the line under the cursor on hover, with a link into the full 'Why is this here?' brief. Reads local git and the local index only — no model is involved."
         },
+        "nimbus.briefs.defaultNamespace": {
+          "type": "string",
+          "default": "",
+          "description": "Prefills the namespace prompt for the 'Safe to deploy?' brief. agents.preflight requires a namespace and Nimbus never guesses one — a wrong namespace returns a confident answer about the wrong thing, so this only prefills a prompt you still confirm."
+        },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",
           "default": false,
@@ -744,6 +759,7 @@
     "lint": "biome check .",
     "test": "bunx vitest run",
     "test:coverage": "bunx vitest run --coverage",
+    "test:ui": "node scripts/run-ui-tests.mjs",
     "check-bundle": "node scripts/check-bundle.mjs",
     "check-vsix-contents": "node scripts/check-vsix-contents.mjs",
     "check-settings-docs": "node scripts/check-settings-docs.mjs",
@@ -757,14 +773,19 @@
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
     "@nimbus-dev/client": "^0.16.0",
+    "@types/chai": "5",
+    "@types/mocha": "10",
     "@types/node": "^26.1.2",
     "@types/vscode": "^1.95.0",
     "@vitest/coverage-v8": "^4.1.10",
     "@vscode/vsce": "^3.9.2",
+    "chai": "5",
     "esbuild": "^0.28.1",
     "jsdom": "^30.0.1",
+    "mocha": "11",
     "ovsx": "^1.1.0",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "vscode-extension-tester": "8.23.0"
   }
 }

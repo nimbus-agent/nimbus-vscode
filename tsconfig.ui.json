@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "noEmit": false,
+    "outDir": "out/ui",
+    "rootDir": "test/ui",
+    "types": ["node", "mocha"]
+  },
+  "include": ["test/ui/**/*.ts"]
+}

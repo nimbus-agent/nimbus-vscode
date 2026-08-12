@@ -16,6 +16,7 @@ export interface Settings {
   scmEgressProofTrailer(): boolean;
   showEgressStatusBarBadge(): boolean;
   showHoverBlame(): boolean;
+  defaultNamespace(): string;
   hitlAlwaysModal(): boolean;
   logLevel(): LogLevel;
 }
@@ -35,6 +36,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     scmEgressProofTrailer: () => cfg().get<boolean>("scm.egressProofTrailer", false),
     showEgressStatusBarBadge: () => cfg().get<boolean>("egress.showStatusBarBadge", true),
     showHoverBlame: () => cfg().get<boolean>("briefs.showHoverBlame", true),
+    defaultNamespace: () => cfg().get<string>("briefs.defaultNamespace", ""),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
     logLevel: () => {
       const lvl = cfg().get<string>("logLevel", "info");

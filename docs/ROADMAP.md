@@ -77,29 +77,35 @@ This is a repositioning, not a new identity — the extension already ships as
 several baseline items above are already agent-surface features: the `@nimbus`
 chat participant with the ops slash commands, the `nimbus_search` /
 `nimbus_ask` Language Model tools, the "Preview what leaves" gate, the Index
-view. What is missing is that they are invoked rather than offered, and that
-they reach only a fraction of the agents that already exist:
+view, and — since the built-in-briefs work — the built-in briefs themselves.
+What is missing is not reach any more, but that reach is still *invoked*
+rather than *offered*, exactly as above.
 
 - The Gateway ships **eleven** agents (`packages/gateway/src/agents/`):
   catchup, conflicts, expert, ghost, glossary, huddle, impact, janitor,
   preflight, why, why-peek — and dispatches all eleven over the `agents.*` IPC
   namespace (`packages/gateway/src/ipc/agents-rpc.ts`).
-- The published client (`0.14.0`) types **ten** of them — all but glossary,
+- The published client (`0.16.0`) types **ten** of them — all but glossary,
   which is a client-packaging gap, not a missing Gateway method — as
   `agentsCatchup`, `agentsConflicts`, `agentsExpert`, `agentsGhost`,
   `agentsHuddle`, `agentsImpact`, `agentsJanitor`, `agentsPreflight`,
   `agentsWhy`, `agentsWhyPeek`.
-- This extension calls **three**: `agentsCatchup` (`/incident`), `agentsExpert`
-  (`/owns`), `agentsImpact` (`/blast`). The Agents sidebar view is not a list of
-  the built-ins — it projects the `nimbus.agents` setting, which defaults to an
-  empty array, so the view named after the product's core is empty until the
-  user hand-writes JSON.
+- This extension now calls **all ten** of the client's typed methods (every
+  `.agentsX(` shape the choke-point test discovers in `src/`, verified against
+  `src/egress/gated-client.ts` — nine of the ten call sites — and
+  `src/extension.ts`, which calls the tenth, `agentsWhyPeek`, directly).
+  `agentsGlossary` is the one Gateway agent left unreached, and it stays
+  Phase 4 until a client release types it. The Agents sidebar view shows two
+  groups: the built-in briefs, populated from `BRIEF_CATALOG` and never empty,
+  and the chat scopes from the `nimbus.agents` setting, which still defaults
+  to an empty array and stays user-configured by design — see **Built-in
+  briefs** and **Agents view shows the built-ins** in *Already shipped* above.
 
-So most of the near-term work here is **wiring capability that already exists to
-the surface that has the most context**, not new capability. The exceptions to
-that — resolving an arbitrary reference to an indexed item, and indexing one
-item on demand when that resolution misses — are genuinely new Gateway work and
-sit in Phase 4 accordingly.
+The reach gap above is closed; most of the near-term work below is now about
+**depth and offering agents from context, not reach**. The exceptions —
+resolving an arbitrary reference to an indexed item, and indexing one item on
+demand when that resolution misses — are genuinely new Gateway work and sit in
+Phase 4 accordingly.
 
 **The browser surface is a sibling repo, not this one.** The recorded direction
 for `nimbus-web-clipper` — a direction, not work in progress — is that it stops
@@ -147,7 +153,9 @@ are for.
 | **Dev-workflow trio** — Generate commit message (staged diff → SCM input box), Review changes (all local changes vs `HEAD` → findings tab), Generate tests / docstrings (untitled test buffer / docstring diff) | `agentInvoke` + SCM API |
 | **Sidebar** — Audit, Sessions (with chat resume), Index, Agents | `auditList`, `getSessionTranscript`, `queryItems` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
-| **"Preview what leaves" pre-flight** — a gate, not a viewer: all five agent-bound paths route through one seam that renders the exact outbound context with redacted paths and can refuse to send. Prompts on the two surfaces where the extension assembles the context; per-surface, per-workspace "always send here"; plus `Show Last Outbound Payload` and `Reset Egress Preview Prompts` | *no RPC — the payload is already in hand* |
+| **"Preview what leaves" pre-flight** — a gate, not a viewer: every agent-bound call routes through one seam that renders the exact outbound context with redacted paths and can refuse to send — the five `agentInvoke`/`askStream` paths, the six brief calls, and the participant's three ops briefs. Prompts where the extension assembles the context (Quick Ask, the SCM trio, the six briefs); records without prompting where the user typed the content (Ask panel, the participant's `askStream`, and the participant's three ops briefs); per-surface, per-workspace "always send here"; plus `Show Last Outbound Payload` and `Reset Egress Preview Prompts` | *no RPC — the payload is already in hand* |
+| **Built-in briefs** — `Why is this here?`, `Who knew this code?`, `Who else is touching this?` and blame-on-hover from the editor; `Team huddle`, `Is this idle?` and `Safe to deploy?` from the palette and the Agents view. All seven previously unreached briefs are wired; every model-composed call routes through the pre-flight gate, and `agentsWhyPeek` is the one documented exemption | `agentsWhy`, `agentsWhyPeek`, `agentsGhost`, `agentsConflicts`, `agentsHuddle`, `agentsJanitor`, `agentsPreflight` |
+| **Agents view shows the built-ins** — two-group sidebar view: the built-in briefs, plus the chat scopes from the `nimbus.agents` setting (never empty on a fresh install) | the `agents*` family |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
 | **Get Started walkthrough** — first-run walkthrough (install → connect Gateway → try Ask/Search/Quick Ask), on the Welcome page and via `Nimbus: Open Walkthrough` | *VS Code Walkthroughs API — no RPC* |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
@@ -180,8 +188,6 @@ is already holding.
 | **Workflow surface** — run / monitor / cancel workflows | The flagship gap (the removed `Run Workflow` stub is tracked here); unblocked by client `0.14.0` | `workflowList`, `workflowSave`, `workflowDelete`, `workflowListRuns`, `workflowRun` | L |
 | **Context-grounded Ask** — `@`-mention / attach files, search results, or index items into a question | Answers cite *your* local knowledge, not the model's guess | `searchRanked` / `queryItems` + `askStream` | M |
 | **Ambient context panel** — offer the agents that fit what is already on screen (file, selection, diff vs `HEAD`, branch) instead of waiting for a prompt; the editor counterpart of the browser ambient panel | The surface with the richest context stops making you retype the context | `searchRanked` / `queryItems` + the `agents*` family | L |
-| **The seven unreached briefs** — editor entry points for `agentsWhy`, `agentsWhyPeek`, `agentsGhost`, `agentsConflicts`, `agentsHuddle`, `agentsJanitor`, `agentsPreflight` | Ten briefs are typed by the client and three are wired; this is the cheapest gap on the agent surface | the seven `agents*` RPCs named | M |
-| **Agents view shows the built-ins** — populate the view from the briefs the client types instead of the empty-by-default `nimbus.agents` array | The view named after the product's core is currently empty out of the box | the `agents*` family | S |
 
 ## Phase 3 — Deepen surfaces & trust
 

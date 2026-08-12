@@ -110,6 +110,10 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
 
 `boolean` (default `true`). Hovering a line shows who last changed it, when, the commit subject, and any linked PR or ticket — with a **Why? →** link that opens the full `Why is this here?` brief for that exact line. Backed by `agents.whyPeek`, which is a synchronous git-and-index lookup: it carries no model call, so it is not routed through the pre-flight egress gate. It does fire one IPC request per mouse-rest (after a 150 ms settle, one in flight per file); set to `false` to turn it off. Requires the repo root to be indexed — run `nimbus init` — or the hover finds nothing and stays hidden.
 
+### `nimbus.briefs.defaultNamespace`
+
+`string` (default `""`). Prefills the namespace prompt for **Safe to deploy?** (`agents.preflight`), which requires a namespace the extension has no way to derive. It is only a prefill: the prompt still appears and you still confirm it. Nimbus deliberately does not infer the namespace from the branch name or `package.json` — a wrong namespace does not error, it returns a confident `preflight` answer computed for something you never asked about. A namespace you have already typed in this workspace folder takes precedence over this setting.
+
 ### `nimbus.hitlAlwaysModal`
 
 - **Type:** boolean · **Default:** `false`

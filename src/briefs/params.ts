@@ -21,21 +21,48 @@ function basename(p: string): string {
   return segments.at(-1) ?? p;
 }
 
+/**
+ * Windows drive-letter ("C:/...") or UNC ("//host/share/...") paths only —
+ * the two shapes where the filesystem itself is case-insensitive. A plain
+ * POSIX path is left as-is: on a case-sensitive filesystem "/work/Proj" and
+ * "/work/proj" are different directories, and folding them together would
+ * let an unrelated project's file match this one's workspace root.
+ */
+function comparisonPath(p: string): string {
+  const isWindowsStyle = /^[a-z]:\//i.test(p) || p.startsWith("//");
+  return isWindowsStyle ? p.toLowerCase() : p;
+}
+
+/**
+ * The workspace root containing `fileName`, returned in the ORIGINAL casing the
+ * caller passed in, or undefined when none matches. Longest root first: with
+ * nested folders open the innermost is the useful one, and a shorter parent
+ * would otherwise win by appearing earlier.
+ *
+ * Compares case-insensitively only for Windows drive-letter/UNC paths, because
+ * there the editor's fileName and the workspace folder can disagree on
+ * drive-letter case ("C:/" vs "c:/") even though the filesystem is the same.
+ * POSIX paths compare case-sensitively, matching the filesystem they name.
+ */
+export function rootFor(fileName: string, roots: readonly string[]): string | undefined {
+  const file = comparisonPath(normalise(fileName));
+  const sorted = [...roots].sort((a, b) => normalise(b).length - normalise(a).length);
+  for (const root of sorted) {
+    const n = normalise(root);
+    const prefix = comparisonPath(n.endsWith("/") ? n : `${n}/`);
+    if (file.startsWith(prefix)) return root;
+  }
+  return undefined;
+}
+
 export function toRelativeRef(fileName: string, roots: readonly string[]): string {
   const file = normalise(fileName);
-  // Longest root first: with nested folders open, the innermost is the useful
-  // one, and a shorter parent would otherwise win by appearing earlier.
-  const sorted = [...roots].map(normalise).sort((a, b) => b.length - a.length);
-  for (const root of sorted) {
-    const prefix = root.endsWith("/") ? root : `${root}/`;
-    // Compare case-insensitively: on Windows the editor's fileName and the
-    // workspace folder can disagree on drive-letter case ("C:/" vs "c:/"), and
-    // an exact compare would miss, silently degrading a useful repo-relative
-    // ref to a bare basename. Slice from the ORIGINAL string so real casing
-    // survives — the Gateway's index may be case-sensitive.
-    if (file.toLowerCase().startsWith(prefix.toLowerCase())) return file.slice(prefix.length);
-  }
-  return basename(file);
+  const root = rootFor(fileName, roots);
+  if (root === undefined) return basename(file);
+  const n = normalise(root);
+  // Slice from the ORIGINAL string so real casing survives — the Gateway's
+  // index may be case-sensitive.
+  return file.slice((n.endsWith("/") ? n : `${n}/`).length);
 }
 
 /**
@@ -63,4 +90,31 @@ export function whyParams(t: EditorTarget): { ref: string; line: number } {
 
 export function fileParams(t: EditorTarget): { file: string } {
   return { file: t.ref };
+}
+
+/** What the Janitor prompt collects. `idleDays` omitted = the Gateway's default. */
+export interface JanitorTarget {
+  resourceRef: string;
+  idleDays?: number;
+}
+
+/**
+ * Deliberately NOT relativised: a resource ref is often not a file at all
+ * ("svc/legacy-billing"), so putting it through toRelativeRef would corrupt it.
+ * The prompt prefills a relative ref; anything else the user types is their
+ * choice, and the gate's manifest shows it — with a leak warning if it carries
+ * an absolute path — before it is sent.
+ */
+export function janitorParams(t: JanitorTarget): { resourceRef: string; idleDays?: number } {
+  return {
+    resourceRef: t.resourceRef,
+    ...(t.idleDays !== undefined ? { idleDays: t.idleDays } : {}),
+  };
+}
+
+export function preflightParams(t: { ref: string; namespace: string }): {
+  ref: string;
+  namespace: string;
+} {
+  return { ref: t.ref, namespace: t.namespace };
 }

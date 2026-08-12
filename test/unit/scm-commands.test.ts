@@ -572,6 +572,7 @@ function editorDeps(opts: FakeEditorOpts = {}): Partial<ScmCommandDeps> {
           getText: (range?: unknown) => (range === undefined ? text : (selectionText ?? "")),
           fileName: opts.fileName ?? "/home/dev/proj/src/a.ts",
           languageId: opts.languageId ?? "typescript",
+          uri: { scheme: "file" },
         },
         selection: { isEmpty: selectionText === undefined, active: { line: 0 } },
       },

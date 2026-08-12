@@ -1,6 +1,7 @@
 import type { CatchupBrief, DoraMetricsResult, ExpertBrief, ImpactBrief } from "@nimbus-dev/client";
 import { gapsFooter } from "../briefs/render.js";
 import { errMsg } from "../logging.js";
+import { redactPath } from "../quick-ask.js";
 import type {
   ChatResponseSink,
   ParticipantClientLike,
@@ -74,14 +75,25 @@ async function handleBlast(
   req: ParticipantRequest,
   sink: ChatResponseSink,
 ): Promise<void> {
-  const target = arg.length > 0 ? arg : req.selection?.path;
-  if (target === undefined || target.length === 0) {
+  // The selection's path is the REAL local path. Redact it to a basename before
+  // it goes anywhere near the Gateway — the same treatment prompt.ts gives the
+  // same file in a free-form turn.
+  const target = arg.length > 0 ? arg : redactPath(req.selection?.path ?? "");
+  if (target.length === 0) {
     sink.markdown(
       "Usage: `/blast <file-or-PR-url>` — or run it with a file open to analyze that file.",
     );
     return;
   }
-  sink.markdown(renderImpact(target, await client.agentsImpact({ fileOrPrUrl: target })));
+  sink.markdown(
+    renderImpact(
+      target,
+      await client.briefs.impact(
+        { fileOrPrUrl: target },
+        { action: "Blast radius (agents.impact)", files: [], omissions: [] },
+      ),
+    ),
+  );
 }
 
 async function handleOwns(
@@ -90,15 +102,24 @@ async function handleOwns(
   req: ParticipantRequest,
   sink: ChatResponseSink,
 ): Promise<void> {
-  const topic = arg.length > 0 ? arg : req.selection?.path;
-  if (topic === undefined || topic.length === 0) {
+  // The selection's path is the REAL local path. Redact it to a basename before
+  // it goes anywhere near the Gateway — the same treatment prompt.ts gives the
+  // same file in a free-form turn.
+  const topic = arg.length > 0 ? arg : redactPath(req.selection?.path ?? "");
+  if (topic.length === 0) {
     sink.markdown(
       "Usage: `/owns <topic, service, or file>` — or run it with a file open to ask about that file.",
     );
     return;
   }
   sink.markdown(
-    renderExperts(topic, await client.agentsExpert({ topicOrFile: topic, limit: EXPERT_LIMIT })),
+    renderExperts(
+      topic,
+      await client.briefs.expert(
+        { topicOrFile: topic, limit: EXPERT_LIMIT },
+        { action: "Who owns this (agents.expert)", files: [], omissions: [] },
+      ),
+    ),
   );
 }
 
@@ -107,10 +128,10 @@ async function handleIncident(
   arg: string,
   sink: ChatResponseSink,
 ): Promise<void> {
-  const brief = await client.agentsCatchup({
-    sinceMs: INCIDENT_WINDOW_MS,
-    ...(arg.length > 0 ? { service: arg } : {}),
-  });
+  const brief = await client.briefs.catchup(
+    { sinceMs: INCIDENT_WINDOW_MS, ...(arg.length > 0 ? { service: arg } : {}) },
+    { action: "Catch me up (agents.catchup)", files: [], omissions: [] },
+  );
   sink.markdown(renderCatchup(brief));
 }
 

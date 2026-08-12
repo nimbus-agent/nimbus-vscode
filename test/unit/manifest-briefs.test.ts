@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-import { BRIEF_CATALOG } from "../../src/briefs/catalog.js";
+import { BRIEF_CATALOG, needsEditor } from "../../src/briefs/catalog.js";
 
 type Command = { command: string; title: string; category?: string };
 type MenuEntry = { command: string; when?: string; group?: string };
@@ -29,7 +29,7 @@ describe("extension manifest: briefs", () => {
   });
 
   test("the file-scoped briefs appear in the editor context menu", () => {
-    for (const spec of BRIEF_CATALOG.filter((b) => b.context !== "none")) {
+    for (const spec of BRIEF_CATALOG.filter(needsEditor)) {
       const entry = editorContext.find((e) => e.command === spec.command);
       expect(entry, `${spec.command} must be in editor/context`).toBeDefined();
       expect(entry?.when).toBe("editorTextFocus");
@@ -51,8 +51,22 @@ describe("extension manifest: briefs", () => {
   });
 
   test("the file-scoped briefs are palette-gated on an open editor", () => {
-    for (const spec of BRIEF_CATALOG.filter((b) => b.context !== "none")) {
+    for (const spec of BRIEF_CATALOG.filter(needsEditor)) {
       expect(palette.find((e) => e.command === spec.command)?.when).toBe("editorIsOpen");
+    }
+  });
+
+  test("the prompted briefs are not in the editor context menu", () => {
+    for (const spec of BRIEF_CATALOG.filter((b) => b.context === "prompted")) {
+      expect(editorContext.find((e) => e.command === spec.command)).toBeUndefined();
+    }
+  });
+
+  // They prompt for everything they need, so gating them on an open editor would
+  // hide them exactly when a tree row or the palette is the entry point.
+  test("the prompted briefs are not palette-gated on an open editor", () => {
+    for (const spec of BRIEF_CATALOG.filter((b) => b.context === "prompted")) {
+      expect(palette.find((e) => e.command === spec.command)?.when).not.toBe("editorIsOpen");
     }
   });
 });

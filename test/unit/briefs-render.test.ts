@@ -1,4 +1,11 @@
-import type { ConflictBrief, GhostBrief, HuddleBrief, WhyBrief } from "@nimbus-dev/client";
+import type {
+  ConflictBrief,
+  GhostBrief,
+  HuddleBrief,
+  JanitorBrief,
+  PreflightBrief,
+  WhyBrief,
+} from "@nimbus-dev/client";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -6,6 +13,8 @@ import {
   renderConflicts,
   renderGhost,
   renderHuddle,
+  renderJanitor,
+  renderPreflight,
   renderWhy,
 } from "../../src/briefs/render.js";
 
@@ -201,5 +210,130 @@ describe("renderHuddle", () => {
     expect(out).toContain("**Robin Hale** — 1 PR, 1 incident");
     expect(out).toContain("Fix retry");
     expect(out).toContain("Auth outage");
+  });
+});
+
+function janitor(over: Partial<JanitorBrief> = {}): JanitorBrief {
+  return {
+    ...BASE,
+    kind: "janitor",
+    query: { resourceRef: "svc/legacy-billing", idleDays: 90 },
+    idle: true,
+    proposalSuppressed: false,
+    cleanupAction: null,
+    peersClear: 0,
+    peersTouched: [],
+    ...over,
+  } as JanitorBrief;
+}
+
+function preflight(over: Partial<PreflightBrief> = {}): PreflightBrief {
+  return {
+    ...BASE,
+    kind: "preflight",
+    query: { ref: "release-1.4", namespace: "billing" },
+    downstreams: [],
+    anyFailed: false,
+    anyIncomplete: false,
+    ...over,
+  } as PreflightBrief;
+}
+
+describe("renderJanitor", () => {
+  test("an idle resource names the window it was idle for", () => {
+    expect(renderJanitor(janitor())).toContain("`svc/legacy-billing` looks idle after 90 days");
+  });
+
+  test("an active resource does not read as idle", () => {
+    const out = renderJanitor(janitor({ idle: false }));
+    expect(out).toContain("still active");
+    expect(out).not.toContain("looks idle");
+  });
+
+  test("a cleanup action is a suggestion, never an action taken", () => {
+    const out = renderJanitor(janitor({ cleanupAction: "archive svc/legacy-billing" }));
+    expect(out).toContain("`archive svc/legacy-billing`");
+    expect(out).toContain("Nimbus never performs this");
+  });
+
+  test("a suppressed proposal says so instead of staying silent", () => {
+    expect(renderJanitor(janitor({ proposalSuppressed: true }))).toContain("No cleanup proposed");
+  });
+
+  test("peers who touched it are named with how long ago", () => {
+    const out = renderJanitor(
+      janitor({
+        idle: false,
+        peersClear: 2,
+        peersTouched: [{ peerId: "p1", who: "Dana", lastSeenDaysAgo: 3 }],
+      }),
+    );
+    expect(out).toContain("**Dana** — last seen 3 days ago");
+    expect(out).toContain("2 peers reported no recent activity");
+  });
+
+  test("an unknown last-seen is not rendered as zero days", () => {
+    const out = renderJanitor(
+      janitor({ peersTouched: [{ peerId: "p1", who: null, lastSeenDaysAgo: null }] }),
+    );
+    expect(out).toContain("**unattributed** — last seen at an unknown time");
+    expect(out).not.toContain("0 days ago");
+  });
+
+  test("gap notes reach the footer", () => {
+    expect(
+      renderJanitor(janitor({ gaps: [{ category: "empty_index", detail: "no peer answered" }] })),
+    ).toContain("_Data gaps: no peer answered_");
+  });
+});
+
+describe("renderPreflight", () => {
+  test("a failure is stated as not safe to deploy", () => {
+    const out = renderPreflight(
+      preflight({
+        anyFailed: true,
+        downstreams: [{ peerId: "p1", who: "checkout", status: "fail", summary: "smoke failed" }],
+      }),
+    );
+    expect(out).toContain("Not safe to deploy");
+    expect(out).toContain("**checkout** — FAIL: smoke failed");
+  });
+
+  test("an incomplete answer reads as inconclusive, not as a pass", () => {
+    const out = renderPreflight(
+      preflight({
+        anyIncomplete: true,
+        downstreams: [
+          { peerId: "p1", who: null, status: "not_configured", summary: "no checks defined" },
+        ],
+      }),
+    );
+    expect(out).toContain("Inconclusive");
+    expect(out).not.toContain("No failures reported");
+    expect(out).toContain("not configured (unknown)");
+  });
+
+  test("no downstreams says nothing was checked, not that everything passed", () => {
+    const out = renderPreflight(preflight());
+    expect(out).toContain("nothing was actually checked");
+  });
+
+  test("a clean run names the ref and namespace it checked", () => {
+    const out = renderPreflight(
+      preflight({
+        downstreams: [{ peerId: "p1", who: "checkout", status: "pass", summary: "all green" }],
+      }),
+    );
+    expect(out).toContain("No failures reported for `release-1.4` in `billing`");
+  });
+
+  test("a declined downstream is named rather than dropped", () => {
+    const out = renderPreflight(
+      preflight({
+        anyIncomplete: true,
+        downstreams: [{ peerId: "p9", who: null, status: "declined", summary: "peer opted out" }],
+      }),
+    );
+    expect(out).toContain("**p9** — declined (no answer): peer opted out");
   });
 });
