@@ -22,6 +22,7 @@ function call(
     const sock = net.connect(socketPath, () => {
       sock.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })}\n`);
     });
+    const timer = setTimeout(() => reject(new Error("fake gateway did not answer")), 3000);
     let buf = "";
     sock.on("data", (chunk) => {
       buf += chunk.toString();
@@ -34,12 +35,15 @@ function call(
       }
       // A brief is done when the response AND its notification have arrived.
       if (result !== undefined && notifications.length > 0) {
+        clearTimeout(timer);
         sock.end();
         resolve({ result, notifications });
       }
     });
-    sock.on("error", reject);
-    setTimeout(() => reject(new Error("fake gateway did not answer")), 3000);
+    sock.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
