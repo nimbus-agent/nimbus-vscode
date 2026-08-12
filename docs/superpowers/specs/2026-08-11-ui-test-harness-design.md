@@ -132,9 +132,12 @@ with the process, so there is nothing to unlink there.
 ### `test/ui/fixture-workspace/`
 
 A checked-in workspace ExTester opens: two or three small source files to run
-briefs against, and a `.vscode/settings.json` pointing `nimbus.socketPath` at
-the fake's socket. Its files are fixtures — their content is asserted against,
-so they must not be edited casually.
+briefs against. `scripts/run-ui-tests.mjs` generates the per-run socket setting
+into `out/ui-settings.json` (gitignored) and installs it at USER scope via
+ExTester's own `settings:` RunOption — not a workspace-scope
+`.vscode/settings.json` in the fixture, which stays free of a machine-specific
+socket path. Its files are fixtures — their content is asserted against, so
+they must not be edited casually.
 
 ### `test/ui/specs/`
 

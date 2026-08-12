@@ -256,11 +256,12 @@ renderers and its degrade-honestly contract are untouched.
 ### What `record` does and does not do
 
 Raised in review, and worth stating outright because the words "gate" and
-"policy" invite a stronger reading than the code supports: **the gate never
-blocks anything.** `check` prompts and obeys the answer; `record` does not even
-prompt. Neither consults a policy, and there is no rule set that could forbid a
-send — *Egress policy management* is a Phase 4 item precisely because no
-published client exposes the RPCs for it.
+"policy" invite a stronger reading than the code supports: **the gate has no
+policy-based block: `check` can stop a send when the user declines, while
+`record` never prompts.** `check` prompts and obeys the answer; `record` does
+not even prompt. Neither consults a policy, and there is no rule set that
+could forbid a send — *Egress policy management* is a Phase 4 item precisely
+because no published client exposes the RPCs for it.
 
 Two consequences follow, and the tests should pin both:
 
