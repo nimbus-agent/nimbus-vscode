@@ -19,7 +19,7 @@ every change to the surface. This design replaces it with tests.
 ## What is verified, and what is assumed
 
 Every protocol claim below was checked against the installed client
-(`@nimbus-dev/client` 0.15.1, `@nimbus-dev/sdk` 1.10.0) rather than recalled:
+(`@nimbus-dev/client` 0.16.0, `@nimbus-dev/sdk` 1.16.0) rather than recalled:
 
 - **Framing is NDJSON** — one JSON-RPC 2.0 object per line, over a Unix socket
   or a Windows named pipe (`dist/ipc-transport.js`, using `NdjsonLineReader`
@@ -60,8 +60,10 @@ would actually be violated.
 
 The harness costs the same whether it drives two briefs or six. The briefs
 surface was built across three PRs and none of it has ever been exercised
-against a real VS Code, so the suite covers `why`, `ghost`, `conflicts`,
-`huddle`, `janitor` and `preflight`.
+against a real VS Code, so the suite drives `why`, `ghost`, `huddle`,
+`janitor` and `preflight` end to end through the gate. `conflicts` is not
+driven by any spec — it is only asserted present in the editor context menu
+(Coverage, Group A), which is a narrower claim than the other five get.
 
 ### A separate, PR-gating CI job
 
@@ -217,15 +219,20 @@ acknowledged gap:
 
 ## CI
 
-A new `ui-test` job in `.github/workflows/ci.yml`:
+**Not wired up.** The `ui-test` job this section originally specified —
+`ubuntu-24.04` under `xvfb`, running `bun run test:ui` — was added to
+`.github/workflows/ci.yml` and then removed: ExTester's `openResources` relies
+on a CLI "reuse window" handshake that never reaches the chromedriver-launched
+VS Code instance on headless Linux, a known, unfixed upstream limitation
+([redhat-developer/vscode-extension-tester#506](https://github.com/redhat-developer/vscode-extension-tester/issues/506)).
+All nine of the job's failures on its first real run traced back to that one
+mechanism. See `.superpowers/sdd/2026-08-11-ui-test-harness/ci-failure-diagnosis.md`
+for the full diagnosis.
 
-- `ubuntu-24.04`, same hardened setup as `build-test` (pinned action SHAs,
-  `harden-runner` with `egress-policy: audit` — the VS Code and chromedriver
-  downloads are network egress and are permitted-and-logged under that policy).
-- `xvfb` for a display.
-- The ExTester VS Code download cached, keyed on the pinned VS Code version.
-- Its own timeout (~25 minutes), so it cannot consume `build-test`'s 15.
-- Runs `bun run test:ui`.
+The suite ships **local-only** for now: run it yourself with `bun run
+test:ui` (`xvfb-run -a bun run test:ui` on headless Linux). A follow-up will
+add the CI job back once a workaround — driving the folder/file open through
+Selenium instead of the CLI reuse handshake — is verified against a real run.
 
 The lean Windows job is unchanged: it stays typecheck + test + build + the two
 bundle guards, and runs no UI tests.

@@ -67,11 +67,18 @@ the command palette, or right-click a selection → *Ask About Selection* /
 (`test/ui/fake-gateway.ts`) that records every request, to prove the built-in
 briefs' modal-gate and no-send flows against actual UI, not a `vscode` stub.
 It needs a desktop session — on headless Linux, run it under `xvfb-run -a bun
-run test:ui` (see `.github/workflows/ci.yml`'s `ui-test` job). The first run
-downloads a full copy of VS Code plus a matching chromedriver (~200 MB,
-cached into the gitignored `test-resources/`); later runs reuse the cache.
-It rebuilds the extension itself before running, so it always exercises the
-current `src/`, not a stale `dist/`.
+run test:ui`. The first run downloads a full copy of VS Code plus a matching
+chromedriver (~200 MB, cached into the gitignored `test-resources/`); later
+runs reuse the cache. It rebuilds the extension itself before running, so it
+always exercises the current `src/`, not a stale `dist/`.
+
+**Local-only for now.** CI does not run this suite. ExTester's `openResources`
+relies on a CLI "reuse window" handshake that does not reach the
+chromedriver-launched VS Code instance on headless Linux under xvfb — a known,
+unfixed upstream limitation
+([redhat-developer/vscode-extension-tester#506](https://github.com/redhat-developer/vscode-extension-tester/issues/506)).
+A follow-up will wire CI back up once a workaround is verified against a real
+run.
 
 **What it does not cover:** the `@nimbus` chat participant — including
 `/blast`'s basename redaction — because ExTester 8.23.0 ships no Chat-view
