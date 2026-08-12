@@ -165,9 +165,16 @@ wire.
   id when present, emitting `{ streamId, text }`. When absent it emits
   `{ text }` byte-for-byte as today. The same optional echo is applied to
   `dispatchAgentInvoke`, which fixes `agent.invoke`'s untagged stream for free.
-- **A run registry.** `dispatchWorkflowRunRpc` registers an `AbortController`
-  under the supplied `streamId` and unregisters it in a `finally`, mirroring
-  what `createAskStreamHandler` already does with `deps.registry`.
+- **A run registry, keyed per client.** `dispatchWorkflowRunRpc` registers an
+  `AbortController` and unregisters it in a `finally`, mirroring what
+  `createAskStreamHandler` already does with `deps.registry`. The key is
+  `clientId` + `streamId`, **not** the bare id: the registry is created once
+  per server (`server.ts:68`) and shared by every session, and the id is now
+  chosen by the caller, so a bare key would let one client abort another
+  client's run and let one client's cleanup unregister another's entry.
+  Reusing an id already live for the *same* client is rejected with `-32602`.
+  A useful consequence: `engine.cancelStream`, which passes a bare id, cannot
+  reach a workflow run.
 - **`workflow.cancel`** — a new RPC taking `{ streamId }`, aborting the
   registered controller and returning whether one was found. Deliberately a
   distinct method rather than an overload of `engine.cancelStream`: the client
@@ -186,6 +193,13 @@ with its own timeout and partial-write questions.
 is checked between steps; the in-flight step runs to completion. On abort the
 run is finalised with a terminal `cancelled` status via `finalizeRun`, so run
 history reflects it and the Part 1 viewer renders it.
+
+**The terminal status also travels in the run result.** `runWorkflowExecution`
+returns `status` alongside `runId` / `dryRun` / `stepResults`, taking one of
+`"preview"` (dry run) / `"done"` / `"error"` / `"cancelled"`. Without it an
+IPC caller — which cannot read the `workflow_run` table — could not tell a run
+cancelled after one step from a one-step run that completed, which would leave
+the whole cancel feature unobservable to its only consumer.
 
 This is a real limitation and must be documented as one — in the client's
 `workflow.cancel` docstring and in the eventual extension UI — rather than
@@ -213,9 +227,15 @@ compatibility claim.
 ## Part 3 — Client: type it and release
 
 - `WorkflowRunParams.streamId?: string`.
-- `workflowCancel(params: { streamId: string }): Promise<{ cancelled: boolean }>`.
+- `WorkflowRunResult.status: string` — `"preview" | "done" | "error" |
+  "cancelled"`. Additive, so it does not break existing consumers.
+- `workflowCancel(params: { streamId: string }): Promise<{ cancelled: boolean }>`,
+  where `false` means no live run of *this connection's* client held that id.
+  Document that ids are scoped per client: two clients may use the same id,
+  and one client can never cancel another's run.
 - `workflowRunStream` mints its own id, passes it, and **filters incoming
-  chunks by it**.
+  chunks by it**. Because reusing a live id is rejected `-32602`, the minted id
+  must be unique per run — a UUID, not a constant.
 - Consequently its documentation drops the "ONE AT A TIME PER CONNECTION"
   caveat, and `WorkflowRunStreamHandle` gains the `cancel()` its current
   comment calls a lie — with the next-step-boundary semantics stated plainly.
@@ -243,5 +263,8 @@ Work begins on PR 2 (the Gateway), in a dedicated worktree.
 - Two concurrent streaming operations on one connection can be told apart by
   `streamId`.
 - A running workflow can be cancelled and finalises as `cancelled` in run
-  history, with the boundary limitation documented rather than papered over.
+  history *and* in the run result, with the boundary limitation documented
+  rather than papered over.
+- One client cannot cancel, or clobber the registry entry of, another client's
+  run — including by reusing its `streamId`.
 - No existing client behaviour changes when `streamId` is omitted.
