@@ -18,7 +18,8 @@ describe("harness smoke", () => {
     const prompt = await new Workbench().openCommandPrompt();
     await prompt.setText(">Nimbus: Why is this here?");
     const picks = await prompt.getQuickPicks();
-    expect(picks.length).to.be.greaterThan(0);
+    const labels = await Promise.all(picks.map((p) => p.getLabel()));
+    expect(labels).to.include("Nimbus: Why is this here?");
     await prompt.cancel();
   });
 

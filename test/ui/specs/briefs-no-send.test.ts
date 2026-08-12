@@ -81,8 +81,28 @@ describe("briefs that never send", () => {
 
   // Reset AFTER each case, not before: a failing test leaves the fake's state
   // intact for inspection, and a queued error can never leak into a later case.
-  afterEach(() => {
+  //
+  // Same rationale as briefs-gated.test.ts's afterEach: a case that fails
+  // between opening an InputBox/ModalDialog and dismissing it leaves that
+  // prompt open, which the next case would otherwise inherit. Both dismissals
+  // are best-effort and deliberately skip InputBox.create()'s built-in wait
+  // (default 5s) — `new InputBox()` does a plain findElement with no wait,
+  // same as ModalDialog's getMessage() below, so a clean run (nothing open)
+  // doesn't pay a timeout on every case.
+  afterEach(async () => {
     fake().reset();
+    try {
+      await new InputBox().cancel();
+    } catch {
+      // no input box open — the common case.
+    }
+    try {
+      const dialog = new ModalDialog();
+      await dialog.getMessage();
+      await dialog.pushButton("Cancel");
+    } catch {
+      // no modal open — the common case.
+    }
   });
 
   after(async () => {
