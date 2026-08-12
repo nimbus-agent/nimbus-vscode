@@ -60,17 +60,38 @@ export function createFakeGateway(): FakeGateway {
     sock.write(`${JSON.stringify(msg)}\n`);
   };
 
+  // `handle` runs inside the socket's "data" listener below. An exception
+  // thrown from an EventEmitter listener is unhandled and kills the Node
+  // process hosting ExTester and Mocha — the whole UI suite would abort with
+  // a stack trace instead of a single spec failing. A malformed frame (bad
+  // JSON, or a shape with no string `method`) must fail that one request, not
+  // the runner.
   const handle = (sock: net.Socket, line: string): void => {
-    const req = JSON.parse(line) as { id?: number | string; method: string; params?: unknown };
-    recorded.push({ method: req.method, params: req.params ?? {} });
+    let req: { id?: number | string; method?: string; params?: unknown };
+    try {
+      req = JSON.parse(line) as typeof req;
+    } catch {
+      send(sock, { jsonrpc: "2.0", id: null, error: { code: -32700, message: "parse error" } });
+      return;
+    }
+    const method = req.method;
+    if (typeof method !== "string") {
+      send(sock, {
+        jsonrpc: "2.0",
+        id: req.id ?? null,
+        error: { code: -32600, message: "no method" },
+      });
+      return;
+    }
+    recorded.push({ method, params: req.params ?? {} });
 
-    if (req.method.startsWith("agents.") && req.method !== "agents.whyPeek") {
-      const agent = req.method.slice("agents.".length);
+    if (method.startsWith("agents.") && method !== "agents.whyPeek") {
+      const agent = method.slice("agents.".length);
       const sessionId = `s-${recorded.length}`;
       send(sock, { jsonrpc: "2.0", id: req.id, result: { sessionId } });
-      const queued = queuedErrors.get(req.method);
+      const queued = queuedErrors.get(method);
       if (queued !== undefined) {
-        queuedErrors.delete(req.method);
+        queuedErrors.delete(method);
         send(sock, {
           jsonrpc: "2.0",
           method: `${agent}.briefError`,
@@ -86,7 +107,7 @@ export function createFakeGateway(): FakeGateway {
       return;
     }
 
-    send(sock, { jsonrpc: "2.0", id: req.id, result: CANNED[req.method] ?? {} });
+    send(sock, { jsonrpc: "2.0", id: req.id, result: CANNED[method] ?? {} });
   };
 
   return {
