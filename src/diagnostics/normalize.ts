@@ -23,8 +23,10 @@ export const NORMALIZED_QUERY_MAX_CHARS = 300;
 // actions.ts withholds the action entirely rather than offering a dud.
 export const NORMALIZED_QUERY_MIN_CHARS = 12;
 
-// A path token: contains a separator AND a dot-extension. The conjunction is the
-// point — it drops `src/widgets/thing.ts` while keeping `Array<string>`.
+// One token: an optional opening quote, a run of non-space, non-quote,
+// non-paren characters, and the matching closing quote. `:` and `\` are inside
+// the run, so a Windows path (`C:\Users\dev\a.ts`) arrives as one token without
+// a drive-letter clause.
 //
 // The optional quote group + backreference matters: messages quote their paths
 // ("Cannot find module './widgets/thing.ts'"), and the character class stops at
@@ -33,7 +35,26 @@ export const NORMALIZED_QUERY_MIN_CHARS = 12;
 // opening quotes of two ADJACENT quoted tokens ("'a' 'b'"). A backreference to a
 // group that did not participate matches the empty string, so the unquoted
 // Windows-path case still works.
-const PATH_TOKEN = /(['"`])?(?:[A-Za-z]:)?[^\s'"`()]*[\\/][^\s'"`()]*\.[A-Za-z0-9]+\1?/g;
+//
+// This deliberately does NOT try to recognise a path inside one pattern. The
+// previous version did, with two unbounded runs straddling a required separator
+// and a trailing dot-extension that might never match — which backtracked
+// cubically on separator-heavy input (8 000 characters took ~31 s). Because
+// provideCodeActions runs this synchronously on every cursor move, over a raw
+// diagnostic message that is only clamped AFTERWARDS, that froze the lightbulb.
+// One linear pass plus a predicate per token cannot backtrack: the single `+`
+// run is followed only by an optional backreference, which never forces it to
+// give characters back.
+const TOKEN = /(['"`])?([^\s'"`()]+)\1?/g;
+
+// A path token: contains a separator AND a dot-extension after the LAST
+// separator. The conjunction is the point — it drops `src/widgets/thing.ts`
+// while keeping `Array<string>`, and the "after the last separator" half keeps
+// `a.ts/b` (a type-ish token, not a file) from being read as a path.
+function looksLikePath(token: string): boolean {
+  const lastSep = Math.max(token.lastIndexOf("/"), token.lastIndexOf("\\"));
+  return lastSep !== -1 && /\.[A-Za-z0-9]/.test(token.slice(lastSep + 1));
+}
 
 // `line 42`, `:17:9`, `(12,4)`.
 const POSITION = /\bline \d+\b|:\d+:\d+|\(\d+,\s*\d+\)/g;
@@ -62,7 +83,9 @@ export function normalizeDiagnosticMessage(input: {
   let text = input.message;
   // Paths first: a path can contain digits that POSITION would otherwise eat,
   // leaving a fragment behind instead of removing the whole token.
-  text = text.replace(PATH_TOKEN, " ");
+  text = text.replace(TOKEN, (match: string, _quote: string | undefined, token: string) =>
+    looksLikePath(token) ? " " : match,
+  );
   text = text.replace(POSITION, " ");
   if (policyFor(input.source) === "drop") text = text.replace(QUOTED, " ");
   // Collapse last: every rule above leaves gaps behind.

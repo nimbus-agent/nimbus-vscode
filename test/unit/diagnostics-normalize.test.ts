@@ -106,4 +106,26 @@ describe("normalizeDiagnosticMessage", () => {
   test("returns empty when nothing survives normalization", () => {
     expect(normalizeDiagnosticMessage({ message: "  :3:9  " })).toBe("");
   });
+
+  test("keeps a separator-ful token whose dot-extension is not the last segment", () => {
+    // `a.ts/b` has a separator and a dot, but nothing file-shaped after the last
+    // separator — so the path rule leaves it alone.
+    expect(normalizeDiagnosticMessage({ message: "Type 'a.ts/b' is not assignable." })).toBe(
+      "Type 'a.ts/b' is not assignable.",
+    );
+  });
+
+  test("stays linear on separator-heavy input with no extension", () => {
+    // This runs synchronously inside provideCodeActions, which VS Code calls on
+    // every cursor move, and the clamp to NORMALIZED_QUERY_MAX_CHARS happens
+    // AFTER these rules — so the input is the raw, unbounded diagnostic message.
+    // The previous path pattern backtracked cubically on exactly this shape:
+    // ~9 ms at 500 characters, ~500 ms at 2 000, ~31 s at 8 000. A message that
+    // long would have frozen the lightbulb.
+    const message = `${"a/".repeat(6000)}!`;
+    expect(message.length).toBeGreaterThanOrEqual(8000);
+    const started = performance.now();
+    normalizeDiagnosticMessage({ message });
+    expect(performance.now() - started).toBeLessThan(100);
+  });
 });

@@ -27,6 +27,28 @@ const context: DiagnosticContext = {
 const fullText = "const x = maybe();\nx.go();\nmore();";
 const arg: DiagnosticActionArg = { context, fullText, query: "2532 Object is possibly" };
 
+type WindowDep = Parameters<typeof createDiagnosticCommands>[0]["window"];
+
+// A window whose focused editor holds `text` for `fileName` — the seam the fix
+// path reads to notice the buffer moved under it. The default harness window has
+// no activeTextEditor, which is the "cannot tell" case.
+function editorWindow(fileName: string, text: string): WindowDep {
+  return {
+    showErrorMessage: vi.fn(),
+    showInformationMessage: vi.fn(),
+    showWarningMessage: vi.fn(),
+    activeTextEditor: {
+      document: {
+        getText: () => text,
+        fileName,
+        languageId: "typescript",
+        uri: { scheme: "file" },
+      },
+      selection: { isEmpty: true, active: { line: 0 } },
+    },
+  } as unknown as WindowDep;
+}
+
 function harness(over: Partial<Parameters<typeof createDiagnosticCommands>[0]> = {}) {
   const agentInvoke = vi.fn().mockResolvedValue({ reply: "```ts\nx?.go();\n```" });
   const deps = {
@@ -151,6 +173,41 @@ describe("fix", () => {
     const { cmds, deps } = harness({ client: () => ({ agentInvoke }) });
     await cmds.fix(arg);
     expect(deps.openDiff).toHaveBeenCalledWith(expect.objectContaining({ right: whole }));
+  });
+
+  // fullText is captured when the code action is CREATED. An edit landing while
+  // the agent request is in flight makes BOTH sides of the diff stale — the left
+  // no longer matches the buffer and the offsets have moved — so the diff would
+  // misrepresent the change.
+  test("refuses to diff when the file changed while the request was in flight", async () => {
+    const { cmds, deps } = harness({
+      window: editorWindow("/home/dev/repo/src/a.ts", "const x = maybe();\n// edited\nx.go();"),
+    });
+    await cmds.fix(arg);
+    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("changed while the fix was being generated"),
+    );
+  });
+
+  test("diffs as usual when the live document still matches the snapshot", async () => {
+    const { cmds, deps } = harness({
+      window: editorWindow("/home/dev/repo/src/a.ts", fullText),
+    });
+    await cmds.fix(arg);
+    expect(deps.openDiff).toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  // "Unknown", not "changed": the user moved to another file while waiting, so
+  // the snapshot is the best evidence we have and refusing would be a guess.
+  test("proceeds on the snapshot when the focused editor is a different file", async () => {
+    const { cmds, deps } = harness({
+      window: editorWindow("/home/dev/repo/src/elsewhere.ts", "something else entirely"),
+    });
+    await cmds.fix(arg);
+    expect(deps.openDiff).toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).not.toHaveBeenCalled();
   });
 
   test("never applies an edit — the diff is the whole output", async () => {

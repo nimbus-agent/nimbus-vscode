@@ -1,7 +1,7 @@
 import { isEgressCancelled } from "../egress/gated-client.js";
 import type { EgressMeta } from "../egress/preflight.js";
 import { errMsg, type Logger } from "../logging.js";
-import { extractReply, QUICK_ASK_MAX_CONTEXT_CHARS } from "../quick-ask.js";
+import { extractReply, QUICK_ASK_MAX_CONTEXT_CHARS, redactPath } from "../quick-ask.js";
 import { extractCode, isWholeFileRewrite, spliceSelection } from "../scm/generate.js";
 import type { WindowApi } from "../vscode-shim.js";
 import type { DiagnosticContext } from "./context.js";
@@ -114,6 +114,19 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
     return client;
   };
 
+  // The live text of the document the diagnostic came from, or undefined when
+  // we cannot tell it is the same document — no editor is focused, or the user
+  // moved to another file while the request was in flight. Undefined is
+  // "unknown", not "changed": the fix path proceeds on its snapshot rather than
+  // refusing on a guess. The comparison is on the redacted basename because that
+  // is all DiagnosticContext carries; a same-named file in another directory is
+  // the residual false positive, and it errs toward not opening a diff.
+  const liveText = (ctx: DiagnosticContext): string | undefined => {
+    const doc = deps.window.activeTextEditor?.document;
+    if (doc === undefined) return undefined;
+    return redactPath(doc.fileName) === ctx.fileName ? doc.getText() : undefined;
+  };
+
   const invoke = async (
     client: DiagnosticClientLike,
     prompt: string,
@@ -155,6 +168,19 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
         diagnosticMeta(context, "Suggest Fix"),
       );
       if (reply === undefined) return;
+      // fullText was captured when the code action was CREATED — before the
+      // request went out. If the user edited the file while it was in flight,
+      // both sides of the diff are stale: the left no longer matches the buffer,
+      // and the splice offsets point at lines that have moved. Say so rather
+      // than opening a diff that misrepresents the change.
+      const live = liveText(context);
+      if (live !== undefined && live !== fullText) {
+        deps.log.debug("diagnostics: file changed while the fix was in flight; not diffing");
+        void deps.window.showWarningMessage(
+          `Nimbus: ${context.fileName} changed while the fix was being generated, so the diff would be misleading. Re-run the action.`,
+        );
+        return;
+      }
       const rewritten = extractCode(reply);
       const { start, end } = context.offsets;
       // A whole-file reply to a region prompt must not be spliced — that would
