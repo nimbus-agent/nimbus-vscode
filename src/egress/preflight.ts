@@ -2,7 +2,14 @@ import { findLeakedRoots } from "./leak-check.js";
 
 // Which surface a payload came from. Fixed per surface at wiring time so a
 // call site cannot misreport itself.
-export type EgressKind = "quickAsk" | "scm" | "ask" | "participant" | "lmTool" | "brief";
+export type EgressKind =
+  | "quickAsk"
+  | "scm"
+  | "ask"
+  | "participant"
+  | "lmTool"
+  | "brief"
+  | "workflow";
 
 export interface EgressFile {
   /** ALREADY redacted by the call site — a basename or repo-relative path. */

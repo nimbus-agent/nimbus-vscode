@@ -31,6 +31,7 @@ import {
   gateRawAskStream,
   gateRawBriefs,
   gateRawParticipantBriefs,
+  gateRawWorkflowRun,
   isEgressCancelled,
   type ProgressRunner,
 } from "./egress/gated-client.js";
@@ -84,6 +85,7 @@ import {
 } from "./status-bar/egress-status-bar-item.js";
 import { createStatusBarController, type StatusBarInputs } from "./status-bar/status-bar-item.js";
 import type {
+  CancellationTokenLike,
   CommandsApi,
   DisposableLike,
   ExtensionContextLike,
@@ -93,6 +95,7 @@ import type {
   WorkspaceApi,
 } from "./vscode-shim.js";
 import { PROGRESS_LOCATION_NOTIFICATION } from "./vscode-shim.js";
+import { createWorkflowCommands, type WorkflowRunTarget } from "./workflows/commands.js";
 
 // Newest-N indexed items pulled for the Index view. The Gateway returns them
 // already ordered; we cap to keep the tree responsive (cf. the search handler).
@@ -188,6 +191,19 @@ export function activateWithDeps(
   const runWithProgress: ProgressRunner = (title, body) =>
     Promise.resolve(
       deps.window.withProgress({ location: PROGRESS_LOCATION_NOTIFICATION, title }, body),
+    );
+
+  // A workflow run is the one send long enough to be worth interrupting, so it
+  // gets the cancellable variant and hands the token down to the run surface.
+  const runWithCancellableProgress = <R>(
+    title: string,
+    body: (token: CancellationTokenLike) => Promise<R>,
+  ): Promise<R> =>
+    Promise.resolve(
+      deps.window.withProgress(
+        { location: PROGRESS_LOCATION_NOTIFICATION, title, cancellable: true },
+        body,
+      ),
     );
 
   const openClient =
@@ -687,6 +703,33 @@ export function activateWithDeps(
     log,
   });
 
+  // A workflow run is agent-bound — the Gateway expands saved steps into model
+  // prompts — so it goes through the same choke point as every other send. The
+  // gate is awaited BEFORE the stream starts: a run that has begun has already
+  // reached the model, and cancelling it only takes effect at the next step
+  // boundary. workflowList / workflowCancel are not gated (read-only, and
+  // stopping egress respectively).
+  const workflowOutput = deps.window.createOutputChannel("Nimbus Workflow Runs");
+  ctx.subscriptions.push(workflowOutput);
+  const workflowCommands = createWorkflowCommands({
+    listWorkflows: async () => {
+      const client = nimbus();
+      if (client === undefined) throw new Error("Nimbus: not connected to the Gateway.");
+      const { workflows } = await client.workflowList();
+      return workflows;
+    },
+    runWorkflow: async (params, manifest, meta) => {
+      const client = nimbus();
+      if (client === undefined) throw new Error("Nimbus: not connected to the Gateway.");
+      return gateRawWorkflowRun(client, egressGate)(params, manifest, meta);
+    },
+    output: workflowOutput,
+    openReadonly: openReadonlyJson,
+    withCancellableProgress: runWithCancellableProgress,
+    window: deps.window,
+    log,
+  });
+
   // whyPeek is NOT routed through the egress gate, and that exemption is on
   // evidence: it takes no timeoutMs, returns synchronously, and carries no
   // `brief` string or AgentBriefBase — it never reaches a model. See
@@ -1121,6 +1164,19 @@ export function activateWithDeps(
     workflowsView.refresh();
   });
 
+  // args[0] is the SidebarItem VS Code passes for a view/item/context command;
+  // its payload carries the workflow name. Absent (palette invocation), the
+  // command falls back to its own picker.
+  register("nimbus.runWorkflow", async (...args) => {
+    await workflowCommands.run(workflowTargetFrom(args[0]));
+    workflowsView.refresh();
+  });
+
+  register("nimbus.dryRunWorkflow", async (...args) => {
+    await workflowCommands.dryRun(workflowTargetFrom(args[0]));
+    workflowsView.refresh();
+  });
+
   register("nimbus.openIndexItem", async (...args) => {
     // Primary-click command: args[0] is the IndexItem we put in the row's
     // command.arguments. Re-validate it defensively through parseIndexRow.
@@ -1356,6 +1412,18 @@ async function sendConsentResponse(
     }
   ).ipc;
   await ipc.call("consent.respond", { requestId, decision });
+}
+
+// A view/item/context command receives the tree NODE, not command.arguments,
+// and its payload is untyped by design (SidebarItem is generic across views).
+// Coerced defensively here: anything else means the command was invoked from
+// the palette, so the run surface falls back to its own picker.
+function workflowTargetFrom(arg: unknown): WorkflowRunTarget | undefined {
+  if (typeof arg !== "object" || arg === null) return undefined;
+  const payload = (arg as { payload?: unknown }).payload;
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const name = (payload as { workflowName?: unknown }).workflowName;
+  return typeof name === "string" && name.length > 0 ? { workflowName: name } : undefined;
 }
 
 function m_str(msg: Record<string, unknown>, key: string): string {

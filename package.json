@@ -183,6 +183,18 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "nimbus.runWorkflow",
+        "title": "Run Workflow",
+        "category": "Nimbus",
+        "icon": "$(play)"
+      },
+      {
+        "command": "nimbus.dryRunWorkflow",
+        "title": "Dry-Run Workflow",
+        "category": "Nimbus",
+        "icon": "$(eye)"
+      },
+      {
         "command": "nimbus.openEgressEntry",
         "title": "Open Egress Entry",
         "category": "Nimbus"
@@ -515,6 +527,16 @@
           "command": "nimbus.findRelatedFromIndex",
           "when": "view == nimbus.indexView && viewItem == nimbusIndexItem",
           "group": "navigation"
+        },
+        {
+          "command": "nimbus.runWorkflow",
+          "when": "view == nimbus.workflowsView && viewItem == nimbus.workflow",
+          "group": "inline"
+        },
+        {
+          "command": "nimbus.dryRunWorkflow",
+          "when": "view == nimbus.workflowsView && viewItem == nimbus.workflow",
+          "group": "nimbus@1"
         }
       ],
       "editor/context": [
@@ -792,7 +814,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.7",
-    "@nimbus-dev/client": "^0.16.0",
+    "@nimbus-dev/client": "^0.17.0",
     "@types/chai": "5",
     "@types/mocha": "10",
     "@types/node": "^26.1.2",

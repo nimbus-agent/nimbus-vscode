@@ -16,6 +16,7 @@ import {
 import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
 import type {
+  CancellationTokenLike,
   CommandsApi,
   ConfigurationChangeEventLike,
   ExtensionContextLike,
@@ -404,8 +405,14 @@ function makeFixture(opts: {
               uri: { scheme: opts.activeEditor?.scheme ?? "file" },
             },
           },
-    withProgress: (async (_opts: unknown, task: () => Promise<unknown>) =>
-      task()) as WindowApi["withProgress"],
+    withProgress: (async (
+      _opts: unknown,
+      task: (token: CancellationTokenLike) => Promise<unknown>,
+    ) =>
+      // A token that never fires: nothing in these tests cancels a send.
+      task({
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      })) as WindowApi["withProgress"],
   };
 
   const workspace: WorkspaceApi = {

@@ -35,6 +35,12 @@ export function formatRunDuration(durationMs: number | null): string {
   return `${Math.floor(totalSec / 60)}m ${totalSec % 60}s`;
 }
 
+/**
+ * The row's `contextValue`, matched by package.json's
+ * `viewItem == nimbus.workflow` clause. Named here so the string exists once.
+ */
+export const WORKFLOW_CONTEXT_VALUE = "nimbus.workflow";
+
 /** Carried on a workflow row so the lazy child load knows what to fetch. */
 export interface WorkflowPayload {
   readonly workflowName: string;
@@ -47,6 +53,10 @@ export function workflowToItem(row: WorkflowRow, now: number): SidebarItem {
     // A null description would leave an empty hover; the name is at least true.
     tooltip: row.description ?? row.name,
     iconId: "symbol-event",
+    // Gates the Run / Dry-Run context-menu items in package.json
+    // (`viewItem == nimbus.workflow`). Only a workflow row gets them — a run row
+    // underneath is history, not something to re-run.
+    contextValue: WORKFLOW_CONTEXT_VALUE,
     // Runs are fetched on expand, so the row must advertise a twistie while
     // still having no children — hence the explicit `collapsible`.
     children: [],

@@ -28,7 +28,7 @@ const ALLOWED = [
   "chat/chat-controller.ts",
   "chat-participant/participant.ts",
 ];
-const CALLS = [".agentInvoke(", ".askStream("];
+const CALLS = [".agentInvoke(", ".askStream(", ".workflowRunStream("];
 
 // Every agents* call in src/ that is gated. The built-in briefs and the
 // participant's three ops briefs alike — the only shape allowed to appear
@@ -88,7 +88,18 @@ describe("agent-bound calls have exactly one choke point", () => {
   // in fact the first thing written here.
   test("extension.ts never touches the raw client's agent methods", () => {
     const src = readFileSync(join(SRC, "extension.ts"), "utf8");
-    for (const member of [".agentInvoke", ".askStream"]) expect(src).not.toContain(member);
+    for (const member of [".agentInvoke", ".askStream", ".workflowRunStream"]) {
+      expect(src).not.toContain(member);
+    }
+  });
+
+  // workflowCancel is deliberately NOT guarded: it STOPS egress rather than
+  // causing any, so routing it through the gate would mean asking permission to
+  // stop sending. workflowList / workflowListRuns are read-only and reach no
+  // model. Only the run itself is agent-bound.
+  test("workflow.cancel is reachable without the gate, by design", () => {
+    const gated = readFileSync(join(SRC, "egress", "gated-client.ts"), "utf8");
+    expect(gated).not.toContain(".workflowCancel(");
   });
 
   // Guards the guard: if the call shapes are ever renamed, the tests above

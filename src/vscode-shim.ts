@@ -8,6 +8,11 @@ export interface DisposableLike {
   dispose(): void;
 }
 
+/** The slice of vscode.CancellationToken the extension uses. */
+export interface CancellationTokenLike {
+  onCancellationRequested(cb: () => void): DisposableLike;
+}
+
 export interface OutputChannelHandle {
   appendLine(msg: string): void;
   show(preserveFocus?: boolean): void;
@@ -129,9 +134,12 @@ export interface WindowApi {
   createQuickPick<T extends QuickPickItemLike>(): QuickPickLike<T>;
   registerTreeDataProvider<T>(viewId: string, provider: TreeDataProviderLike<T>): DisposableLike;
   activeTextEditor: TextEditorLike | undefined;
+  // The task receives vscode's CancellationToken. Every existing caller ignores
+  // it (their sends are not cancellable), so the parameter is additive; a
+  // cancellable: true caller reads it to learn the user hit the X.
   withProgress<R>(
     options: { location: number; title?: string; cancellable?: boolean },
-    task: () => Thenable<R>,
+    task: (token: CancellationTokenLike) => Thenable<R>,
   ): Thenable<R>;
 }
 

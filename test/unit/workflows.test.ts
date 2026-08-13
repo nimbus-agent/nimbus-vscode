@@ -111,6 +111,12 @@ describe("workflowToItem", () => {
   test("carries the workflow name so the lazy child load knows what to fetch", () => {
     expect(workflowToItem(workflow(), NOW).payload).toEqual({ workflowName: "nightly-sync" });
   });
+
+  test("declares the contextValue the Run / Dry-Run menu items key off", () => {
+    // package.json gates them on `viewItem == nimbus.workflow`; without this the
+    // context menu silently never appears on any row.
+    expect(workflowToItem(workflow(), NOW).contextValue).toBe("nimbus.workflow");
+  });
 });
 
 describe("runToItem", () => {
