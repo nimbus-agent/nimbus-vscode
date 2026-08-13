@@ -15,18 +15,21 @@ import { describe, expect, test } from "vitest";
 // declarations like `agentInvoke(input: string, ...)` do not false-positive.
 // Same trick as no-raw-sql-guard.test.ts.
 
-// The choke point itself, plus the four consumer modules. A consumer only ever
-// holds a seam INJECTED by extension.ts, never a real NimbusClient — and for
-// agentInvoke that seam's type requires the EgressMeta argument, so the raw
-// client does not even satisfy it. What this list must never contain is
-// extension.ts, the one place a real client exists: keeping it out is why a
-// new surface cannot quietly wire an ungated client through.
+// The choke point itself, plus the five consumer modules. A consumer only ever
+// holds a seam INJECTED by extension.ts, never a real NimbusClient. That is a
+// convention, not a type-level fact: the seam's extra EgressMeta parameter does
+// NOT stop a raw client satisfying it, since TypeScript assigns a function with
+// fewer parameters to one with more. So this list is honour-system, and the
+// assertion below is what carries the weight — what this list must never
+// contain is extension.ts, the one place a real client exists: keeping it out
+// is why a new surface cannot quietly wire an ungated client through.
 const ALLOWED = [
   "egress/gated-client.ts",
   "scm/commands.ts",
   "lm-tools/lm-tools.ts",
   "chat/chat-controller.ts",
   "chat-participant/participant.ts",
+  "diagnostics/commands.ts",
 ];
 const CALLS = [".agentInvoke(", ".askStream(", ".workflowRunStream("];
 

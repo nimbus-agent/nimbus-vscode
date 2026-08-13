@@ -9,7 +9,8 @@ export type EgressKind =
   | "participant"
   | "lmTool"
   | "brief"
-  | "workflow";
+  | "workflow"
+  | "diagnostic";
 
 export interface EgressFile {
   /** ALREADY redacted by the call site — a basename or repo-relative path. */

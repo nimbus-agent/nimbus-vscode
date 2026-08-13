@@ -114,6 +114,10 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
 
 `string` (default `""`). Prefills the namespace prompt for **Safe to deploy?** (`agents.preflight`), which requires a namespace the extension has no way to derive. It is only a prefill: the prompt still appears and you still confirm it. Nimbus deliberately does not infer the namespace from the branch name or `package.json` — a wrong namespace does not error, it returns a confident `preflight` answer computed for something you never asked about. A namespace you have already typed in this workspace folder takes precedence over this setting.
 
+### `nimbus.diagnostics.showCodeActions`
+
+`boolean` (default `true`). Puts up to three Nimbus actions on the lightbulb for an error or a warning: **Explain this problem**, **Suggest a fix** (shown as a diff you apply yourself — Nimbus never edits your code), and **Find prior occurrences** (a search of the local index for the same error, which reaches no model — offered only when the message normalizes to enough of a query to be worth searching, so some diagnostics show two entries rather than three). `Information` and `Hint` diagnostics are never offered. Where a line carries several diagnostics, exactly one is chosen — highest severity first — so the lightbulb gains at most three entries, never three per diagnostic. The two model-bound actions route through the pre-flight egress gate; all three need a connected Gateway. Set to `false` to turn the lightbulb entries off.
+
 ### `nimbus.hitlAlwaysModal`
 
 - **Type:** boolean · **Default:** `false`

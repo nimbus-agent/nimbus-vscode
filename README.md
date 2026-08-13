@@ -62,6 +62,7 @@ verbatim, and `Nimbus: Reset Egress Preview Prompts` clears the stored choices.
 - **Find related** — from a selection or an Index sidebar item, pivot to the local knowledge around it (ranked search that excludes the item itself).
 - **Selection-aware** — right-click a selection to *Ask About Selection*, *Search Selection*, or *Find Related*.
 - **Dev-workflow trio** — *Generate Commit Message* drafts a message from your staged diff, in your repository's own commit style, into the Source Control input box; *Review Changes* reviews all local changes (staged and unstaged) in a findings tab that also names what wasn't reviewed (too large, possibly secret, binary or non-textual changes, untracked); *Generate Tests* and *Generate Docstrings* work over an editor selection, opening an untitled test buffer or a docstring diff. Output is always a suggestion — nothing is written to disk or applied automatically.
+- **Diagnostic actions** — the lightbulb on an error or warning offers up to three Nimbus actions: *Explain this problem*, *Suggest a fix* (shown as a diff you apply yourself — nothing is ever written for you), and *Find prior occurrences*, which searches your local index for the same error and reaches no model at all. Where a line carries several diagnostics — a compiler error and a lint warning, say — one is chosen, so the lightbulb gains at most three entries rather than three per diagnostic. Toggle with `nimbus.diagnostics.showCodeActions`.
 - **Nimbus sidebar** — activity-bar views for Sessions (with chat resume), the local Index, and Agents.
 - **Audit & Egress ledgers** — inspect what the agent did and everything it sent off-device; verify the egress hash-chain and export a signed proof for any time window, all locally. A **status-bar badge** (shown while connected, on by default) displays the egress row count with a ledger-live ✓ — click to open the ledger, or toggle it with `nimbus.egress.showStatusBarBadge`.
 - **Connection troubleshooter** — *Nimbus: Troubleshoot Connection* explains why you're disconnected and offers one-click fixes (start the Gateway, reconnect, open logs, or edit the socket path).
@@ -117,6 +118,7 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/user-guide/install/> for
 | `nimbus.egress.showStatusBarBadge` | `true` | Show the egress row-count badge (ledger-live ✓) in the status bar. |
 | `nimbus.briefs.showHoverBlame` | `true` | Blame + PR/ticket on hover, with a link to the full Why brief. |
 | `nimbus.briefs.defaultNamespace` | `""` | Prefills the namespace prompt for the Safe to deploy? brief. |
+| `nimbus.diagnostics.showCodeActions` | `true` | Offer Nimbus actions on the lightbulb for errors and warnings. |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |
 | `nimbus.logLevel` | `info` | Output-channel verbosity. |
 

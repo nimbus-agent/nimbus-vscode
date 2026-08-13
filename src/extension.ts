@@ -25,6 +25,11 @@ import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js"
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
+import { DIAGNOSTIC_COMMANDS, diagnosticActionsFor } from "./diagnostics/actions.js";
+import { createDiagnosticCommands } from "./diagnostics/commands.js";
+import { buildDiagnosticContext } from "./diagnostics/context.js";
+import { normalizeDiagnosticMessage } from "./diagnostics/normalize.js";
+import { registerDiagnosticCodeActions } from "./diagnostics/real-provider.js";
 import { createEgressGate } from "./egress/gate.js";
 import {
   gateRawAgentInvoke,
@@ -805,7 +810,7 @@ export function activateWithDeps(
 
   const runSearch = (
     initialValue?: string,
-    opts?: { placeholder?: string; exclude?: (r: RankedResult) => boolean },
+    opts?: { placeholder?: string; emptyText?: string; exclude?: (r: RankedResult) => boolean },
   ): void => {
     const client = nimbus();
     if (client === undefined) {
@@ -836,7 +841,8 @@ export function activateWithDeps(
         const rows = await client.searchRanked({ name: q, limit: settings.searchLimit() });
         if (disposed || mine !== seq) return; // pick closed, or a newer keystroke won
         const picks = buildPicks(rows, opts?.exclude);
-        qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
+        qp.items =
+          picks.length > 0 ? picks : [statusPick(opts?.emptyText ?? "No matching index records")];
       } catch (e) {
         if (disposed || mine !== seq) return;
         log.error(`nimbus.search failed: ${errMsg(e)}`);
@@ -926,6 +932,63 @@ export function activateWithDeps(
       (item.url !== undefined && r.url === item.url) || byName(r);
     runSearch(item.name, { placeholder: `Related to "${item.name}"…`, exclude });
   });
+
+  // Wired here rather than beside the other seams above because it is the one
+  // surface that reuses runSearch, which is defined just above this point.
+  const diagnosticCommands = createDiagnosticCommands({
+    client: () => {
+      const client = nimbus();
+      return client === undefined
+        ? undefined
+        : { agentInvoke: gateRawAgentInvoke(client, egressGate, "diagnostic", runWithProgress) };
+    },
+    window: deps.window,
+    agent: () => settings.askAgent(),
+    openReadonly: openReadonlyJson,
+    openDiff,
+    // Every OPEN document, not the focused one: the user is free to move around
+    // while a fix is being generated, and focus must not decide whether the
+    // staleness check can run. The path stays here — it is never put in a
+    // payload.
+    textOfDocument: (path) =>
+      deps.workspace.textDocuments.find((doc) => doc.uri.fsPath === path)?.getText(),
+    search: (query) =>
+      runSearch(query, {
+        placeholder: "Prior occurrences of this error",
+        emptyText: "Nimbus: nothing in the local index matches this error.",
+      }),
+    log,
+  });
+
+  register(DIAGNOSTIC_COMMANDS.explain, (arg) => diagnosticCommands.explain(arg));
+  register(DIAGNOSTIC_COMMANDS.fix, (arg) => diagnosticCommands.fix(arg));
+  register(DIAGNOSTIC_COMMANDS.priorOccurrences, (arg) => diagnosticCommands.priorOccurrences(arg));
+
+  ctx.subscriptions.push(
+    registerDiagnosticCodeActions({
+      offer: (diagnostics) =>
+        diagnosticActionsFor({
+          diagnostics,
+          connected: nimbus() !== undefined,
+          enabled: settings.showDiagnosticCodeActions(),
+        }),
+      buildArg: (document, diagnostic) => {
+        const fullText = document.getText();
+        return {
+          context: buildDiagnosticContext({
+            fullText,
+            fileName: document.fileName,
+            languageId: document.languageId,
+            diagnostic,
+          }),
+          // `documentPath` is stamped by real-provider.ts, the one place
+          // holding the real TextDocument — see the note there.
+          fullText,
+          query: normalizeDiagnosticMessage(diagnostic),
+        };
+      },
+    }),
+  );
 
   register("nimbus.quickAsk", async () => {
     const editor = deps.window.activeTextEditor;

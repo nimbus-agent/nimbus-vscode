@@ -428,6 +428,7 @@ function makeFixture(opts: {
     },
     isTrusted: opts.isTrusted ?? true,
     workspaceFolders: opts.workspaceFolders,
+    textDocuments: [],
   };
 
   const commands: CommandsApi = {
