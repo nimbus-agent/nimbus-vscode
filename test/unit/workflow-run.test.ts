@@ -81,6 +81,24 @@ describe("buildRunManifest", () => {
     expect(buildRunManifest(workflow(), { dryRun: false }).meta.files).toEqual([]);
   });
 
+  test("warns in the manifest when the steps could not be read at all", () => {
+    // The user is about to authorise a send whose contents nobody can enumerate.
+    // Staying silent here would show an empty step list that reads like "no
+    // steps" rather than "unknown steps".
+    const { prompt, meta } = buildRunManifest(workflow({ steps_json: "{not json" }), {
+      dryRun: false,
+    });
+    expect(prompt).toContain("(none readable)");
+    expect(meta.omissions.join(" ")).toMatch(/could not be read/i);
+    expect(meta.omissions.join(" ")).toMatch(/does not validate it at save time/i);
+  });
+
+  test("a workflow with no description omits the line rather than printing null", () => {
+    expect(
+      buildRunManifest(workflow({ description: null }), { dryRun: false }).prompt,
+    ).not.toContain("null");
+  });
+
   test("a param override is shown, since it changes what is sent", () => {
     const { prompt } = buildRunManifest(workflow(), {
       dryRun: false,
@@ -147,5 +165,27 @@ describe("formatRunReport", () => {
   test("a cancelled report carries the boundary caveat in the body", () => {
     const { content } = formatRunReport("nightly-sync", result({ status: "cancelled" }));
     expect(content).toMatch(/next step boundary/i);
+  });
+
+  test("a run cancelled before its first step says so instead of rendering a blank list", () => {
+    const { content } = formatRunReport(
+      "nightly-sync",
+      result({ status: "cancelled", stepResults: [] }),
+    );
+    expect(content).toMatch(/no steps recorded/i);
+  });
+
+  test("an unlabelled step still gets a positional heading", () => {
+    const { content } = formatRunReport(
+      "nightly-sync",
+      result({ stepResults: [{ status: "done", output: "out" }] }),
+    );
+    expect(content).toContain("1. step 1 — done");
+  });
+
+  test("a Gateway that reports no status says so rather than printing undefined", () => {
+    const { status: _drop, ...noStatus } = result();
+    const { content } = formatRunReport("nightly-sync", noStatus as WorkflowRunResult);
+    expect(content).toContain("not reported by this Gateway");
   });
 });

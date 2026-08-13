@@ -252,4 +252,89 @@ describe("createWorkflowCommands — run", () => {
     expect(h.picked).toEqual([]);
     expect(h.gateCalls[0]?.action).toBe("Run workflow nightly-sync");
   });
+
+  test("a tree row naming a workflow that no longer exists says so and runs nothing", async () => {
+    // The view can outlive a deletion made elsewhere; silently falling back to
+    // the picker would run a different workflow than the row the user clicked.
+    const h = makeHarness();
+    await createWorkflowCommands(h.deps).run({ workflowName: "deleted-since" });
+    expect(h.errors.join(" ")).toContain("deleted-since");
+    expect(h.gateCalls).toEqual([]);
+  });
+
+  test("a workflow with unreadable steps is still offered, labelled as such", async () => {
+    const h = makeHarness({ workflows: [{ ...ROW, steps_json: "{not json" }] });
+    await createWorkflowCommands(h.deps).run();
+    // It may well be the one the user wants to run to discover it is broken.
+    expect(h.gateCalls).toHaveLength(1);
+  });
+
+  test("a cancel that rejects is logged, not thrown into the run", async () => {
+    // handle.cancel() rejecting must not take down a run that is still healthy.
+    const logged: string[] = [];
+    let release = (): void => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const handle = {
+      streamId: "sid-1",
+      result: Promise.resolve(RESULT),
+      cancel: async () => {
+        throw new Error("cancel rpc exploded");
+      },
+      async *[Symbol.asyncIterator]() {
+        yield { type: "chunk", text: "working" } as WorkflowRunEvent;
+        await held;
+        yield { type: "done", result: RESULT } as WorkflowRunEvent;
+      },
+    };
+    const h = makeHarness({ handle });
+    h.deps.log.warn = (m: string) => logged.push(m);
+    const done = createWorkflowCommands(h.deps).run();
+    await waitFor(() => h.appended.some((l) => l.includes("working")));
+    h.cancelToken.fire();
+    await waitFor(() => logged.length > 0);
+    release();
+    await done;
+    expect(logged.join(" ")).toContain("cancel rpc exploded");
+    expect(h.errors).toEqual([]);
+  });
+
+  test("a cancel the Gateway could not honour says so rather than claiming success", async () => {
+    let release = (): void => {};
+    const held = new Promise<void>((r) => {
+      release = r;
+    });
+    const handle = {
+      streamId: "sid-1",
+      result: Promise.resolve(RESULT),
+      cancel: async () => ({ cancelled: false }),
+      async *[Symbol.asyncIterator]() {
+        yield { type: "chunk", text: "working" } as WorkflowRunEvent;
+        await held;
+        yield { type: "done", result: RESULT } as WorkflowRunEvent;
+      },
+    };
+    const h = makeHarness({ handle });
+    const done = createWorkflowCommands(h.deps).run();
+    await waitFor(() => h.appended.some((l) => l.includes("working")));
+    h.cancelToken.fire();
+    await waitFor(() => h.appended.some((l) => l.includes("no effect")));
+    release();
+    await done;
+    expect(h.appended.join(" ")).toMatch(/no effect/i);
+  });
+
+  test("a stream error event is surfaced in the output rather than dropped", async () => {
+    const h = makeHarness({
+      handle: fakeHandle({
+        events: [
+          { type: "error", message: "step 2 exploded" },
+          { type: "done", result: RESULT },
+        ],
+      }),
+    });
+    await createWorkflowCommands(h.deps).run();
+    expect(h.appended.join("\n")).toContain("step 2 exploded");
+  });
 });
