@@ -10,6 +10,8 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-13-diagnostic-actions-design.md` — read it before Task 1. Its review record is `docs/superpowers/specs/2026-08-13-diagnostic-actions-design-feedback.md`.
 
+> **Correction, 2026-08-13 (post-review).** As first written, this plan had `buildDiagnosticContext` carry the diagnostic's **character-exact** offsets and `buildFixPrompt` ask for "the replacement for the flagged region only". Review found that pairing splices a whole rewritten statement into a sub-token span — a TS2532 flags just the `x`, so `x?.go();` went in and the rest of the line stayed, giving `x?.go();.go();`. Sub-line ranges are the norm, not a corner case. The shipped contract is **whole lines**: the offsets expand to the start of the diagnostic's first line through the end of its last, and the prompt names those lines and asks for all of them in full. The Task 2, 3 and 6 snippets below have been corrected to the shipped contract; see the spec for the reasoning. A second review pass replaced the fix path's staleness check — it originally read the *focused* editor and compared redacted basenames, which both misidentified the document and defaulted to proceeding on a stale snapshot; it now re-reads the source by full local path and refuses when it cannot. Tasks 6 and 7 reflect that too. The narrative is otherwise left as it was written.
+
 ## Global Constraints
 
 - **No `any`.** External/untyped data is `unknown`. Biome enforces (`noExplicitAny`).
@@ -372,10 +374,28 @@ describe("buildDiagnosticContext", () => {
     expect(ctx.endLine).toBe(10);
   });
 
-  test("carries character offsets for the splice", () => {
+  test("expands the splice offsets to whole lines, ignoring the characters", () => {
+    // at(2) is characters 2-6 of line 2, but the splice must cover the WHOLE
+    // line, because buildFixPrompt asks the model to replace whole lines.
+    // "line 0\n" + "line 1\n" is 14 chars, so line 2 starts at 14 — not 16, the
+    // character-exact start — and ends at 20, the offset of its own "\n".
     const ctx = build(lines(30), at(2));
-    // "line 0\nline 1\n" is 14 chars; +2 for the range's start character.
-    expect(ctx.offsets).toEqual({ start: 16, end: 20 });
+    expect(ctx.offsets).toEqual({ start: 14, end: 20 });
+  });
+
+  test("ends the splice at the document end on the last line, which has no newline", () => {
+    // lines(3) is "line 0\nline 1\nline 2" — 20 chars, no trailing newline.
+    const ctx = build(lines(3), at(2));
+    expect(ctx.offsets).toEqual({ start: 14, end: 20 });
+  });
+
+  test("covers every line a multi-line diagnostic spans", () => {
+    const ctx = build(lines(30), {
+      ...at(1),
+      range: { start: { line: 1, character: 4 }, end: { line: 3, character: 1 } },
+    });
+    // Line 1 starts at 7; line 3 ends at its "\n", offset 27.
+    expect(ctx.offsets).toEqual({ start: 7, end: 27 });
   });
 
   test("labels severity, mapping VS Code's numbering", () => {
@@ -452,7 +472,11 @@ export interface DiagnosticContext {
   endLine: number;
   snippet: string;
   truncated: boolean;
-  /** Character offsets into the FULL document, for splicing a fix back in. */
+  /**
+   * Character offsets into the FULL document, for splicing a fix back in.
+   * WHOLE LINES: the start of the diagnostic's first line through the end of
+   * its last. See buildDiagnosticContext for why.
+   */
   offsets: { start: number; end: number };
 }
 
@@ -466,10 +490,14 @@ export function lineStartOffsets(text: string): readonly number[] {
   return starts;
 }
 
-function offsetOf(starts: readonly number[], pos: PositionLike, textLength: number): number {
-  const line = Math.min(Math.max(pos.line, 0), starts.length - 1);
-  const start = starts[line] ?? 0;
-  return Math.min(start + Math.max(pos.character, 0), textLength);
+function clampLine(starts: readonly number[], line: number): number {
+  return Math.min(Math.max(line, 0), starts.length - 1);
+}
+
+// Where a line ends: the offset its terminating "\n" sits at, or the end of the
+// document on the last line, which has none.
+function lineEndOffset(starts: readonly number[], line: number, textLength: number): number {
+  return line >= starts.length - 1 ? textLength : (starts[line + 1] ?? textLength) - 1;
 }
 
 export function buildDiagnosticContext(input: {
@@ -486,7 +514,7 @@ export function buildDiagnosticContext(input: {
   const last = Math.min(diagnostic.range.end.line + DIAGNOSTIC_CONTEXT_LINES, lastLine);
   const from = starts[first] ?? 0;
   // Everything up to the start of the line after `last` — minus its newline.
-  const to = last >= lastLine ? fullText.length : (starts[last + 1] ?? fullText.length) - 1;
+  const to = lineEndOffset(starts, last, fullText.length);
 
   // The same helper and the same budget the SCM trio uses, rather than a second
   // differently-tuned number. At 41 lines this effectively never fires; it is a
@@ -507,9 +535,15 @@ export function buildDiagnosticContext(input: {
     endLine: diagnostic.range.end.line + 1,
     snippet,
     truncated,
+    // WHOLE LINES, deliberately, and not the diagnostic's character-exact
+    // range: buildFixPrompt tells the model which whole LINES to replace, so
+    // the splice must consume exactly those lines or the two disagree. Sub-line
+    // ranges are the norm — tsserver spans the flagged expression, ESLint the
+    // identifier — and splicing a whole rewritten statement into a sub-span of
+    // one line leaves the rest of the original line behind.
     offsets: {
-      start: offsetOf(starts, diagnostic.range.start, fullText.length),
-      end: offsetOf(starts, diagnostic.range.end, fullText.length),
+      start: starts[clampLine(starts, diagnostic.range.start.line)] ?? 0,
+      end: lineEndOffset(starts, clampLine(starts, diagnostic.range.end.line), fullText.length),
     },
   };
 }
@@ -518,7 +552,7 @@ export function buildDiagnosticContext(input: {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bunx vitest run test/unit/diagnostics-context.test.ts`
-Expected: PASS, 11 tests.
+Expected: PASS, 13 tests.
 
 - [ ] **Step 5: Lint and typecheck**
 
@@ -609,6 +643,21 @@ describe("buildFixPrompt", () => {
     expect(p.toLowerCase()).toContain("replacement");
   });
 
+  // The splice consumes WHOLE LINES (see context.ts), so the prompt must ask for
+  // whole lines. A reply sized to the flagged expression would be spliced over
+  // the entire line and lose the rest of it.
+  test("asks for the whole of the flagged line, naming it", () => {
+    const p = buildFixPrompt(ctx);
+    expect(p).toContain("the whole of line 10");
+    expect(p).toContain("the entire line, not just the flagged expression");
+  });
+
+  test("names every line when the diagnostic spans more than one", () => {
+    const p = buildFixPrompt({ ...ctx, endLine: 14 });
+    expect(p).toContain("the whole of lines 10-14");
+    expect(p).toContain("every one of those lines in full");
+  });
+
   test("tells the agent not to explain, so extractCode gets a clean block", () => {
     expect(buildFixPrompt(ctx).toLowerCase()).toContain("no prose");
   });
@@ -633,6 +682,15 @@ function where(ctx: DiagnosticContext): string {
   return ctx.startLine === ctx.endLine
     ? `line ${ctx.startLine}`
     : `lines ${ctx.startLine}-${ctx.endLine}`;
+}
+
+// Spells out what "the whole of line 10" / "the whole of lines 10-14" means in
+// the reply, since the splice replaces those lines entirely and a reply sized to
+// the flagged expression would leave the rest of the line behind.
+function scope(ctx: DiagnosticContext): string {
+  return ctx.startLine === ctx.endLine
+    ? "the entire line, not just the flagged expression"
+    : "every one of those lines in full, not just the flagged expression";
 }
 
 // "(ts 2532)" — omitted entirely when the diagnostic carries neither, so the
@@ -663,10 +721,13 @@ export function buildFixPrompt(ctx: DiagnosticContext): string {
     `Fix this ${ctx.severityLabel} at ${where(ctx)} of ${ctx.fileName}${origin(ctx)}:`,
     ctx.message,
     "",
-    // The reply is spliced back into the document at the diagnostic's range, so
-    // it must be the replacement for THAT region and nothing else. "No prose"
-    // keeps extractCode's job unambiguous.
-    "Reply with the replacement for the flagged region only, as a single fenced code block. No prose, no explanation, no surrounding lines.",
+    // The reply is spliced in over WHOLE LINES (context.ts expands the
+    // diagnostic's range to line boundaries for exactly this reason), so the
+    // prompt has to name those lines and ask for all of them. Asking for "the
+    // flagged region" instead would invite a reply sized to a sub-expression
+    // while the splice consumed the whole line. "No prose" keeps extractCode's
+    // job unambiguous.
+    `Reply with the replacement for the whole of ${where(ctx)}, as a single fenced code block: ${scope(ctx)}, indented as it should appear in the file, and nothing outside it. No prose, no explanation.`,
     "",
     block(ctx),
   ].join("\n");
@@ -676,7 +737,7 @@ export function buildFixPrompt(ctx: DiagnosticContext): string {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bunx vitest run test/unit/diagnostics-prompts.test.ts`
-Expected: PASS, 7 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1146,17 +1207,17 @@ git commit -m "feat(egress): add the diagnostic pre-flight kind"
 **On widening `ALLOWED`.** That test's header says "Do NOT widen ALLOWED — that defeats the entire point," and that warning is about files reaching a **raw** client. The list already holds four consumer modules, and its own comment states the rule: a consumer only ever holds a seam injected by `extension.ts`, and for `agentInvoke` that seam's type requires the `EgressMeta` argument, so a raw `NimbusClient` does not structurally satisfy it. `DiagnosticClientLike` is shape-identical to `ScmClientLike` on that point, so this module qualifies on the same grounds as the existing four. The entry the list must never gain is `extension.ts`.
 
 **Interfaces:**
-- Consumes: `DiagnosticContext` (Task 2); `buildExplainPrompt`/`buildFixPrompt` (Task 3); `extractCode`, `isWholeFileRewrite`, `spliceSelection` from `../scm/generate.js`; `extractReply` and `redactPath` from `../quick-ask.js`; `isEgressCancelled` from `../egress/gated-client.js`; `EgressMeta` from `../egress/preflight.js`; `WindowApi` from `../vscode-shim.js`; `Logger` from `../logging.js`.
+- Consumes: `DiagnosticContext` (Task 2); `buildExplainPrompt`/`buildFixPrompt` (Task 3); `extractCode`, `isWholeFileRewrite`, `spliceSelection` from `../scm/generate.js`; `extractReply` and `QUICK_ASK_MAX_CONTEXT_CHARS` from `../quick-ask.js`; `isEgressCancelled` from `../egress/gated-client.js`; `EgressMeta` from `../egress/preflight.js`; `WindowApi` from `../vscode-shim.js`; `Logger` from `../logging.js`.
 - Produces:
-  - `interface DiagnosticActionArg { context: DiagnosticContext; fullText: string; query: string }`
+  - `interface DiagnosticActionArg { context: DiagnosticContext; documentPath: string; fullText: string; query: string }` — `documentPath` is the un-redacted local path, used only to re-read the source document before diffing; it never reaches a prompt or the egress manifest
   - `interface DiagnosticClientLike { agentInvoke(input: string, opts: { stream: boolean; agent?: string }, meta: EgressMeta, progressTitle?: string): Promise<unknown> }`
-  - `interface DiagnosticCommandDeps { client(): DiagnosticClientLike | undefined; window: WindowApi; agent(): string; openReadonly(title: string, content: string): Promise<void>; openDiff(opts: { title: string; left: string; right: string; fileName: string }): Promise<void>; search(query: string): void; log: Logger }`
+  - `interface DiagnosticCommandDeps { client(): DiagnosticClientLike | undefined; window: WindowApi; agent(): string; openReadonly(title: string, content: string): Promise<void>; openDiff(opts: { title: string; left: string; right: string; fileName: string }): Promise<void>; textOfDocument(path: string): string | undefined; search(query: string): void; log: Logger }`
   - `function diagnosticMeta(ctx: DiagnosticContext, action: string): EgressMeta`
   - `function createDiagnosticCommands(deps: DiagnosticCommandDeps): { explain(arg: unknown): Promise<void>; fix(arg: unknown): Promise<void>; priorOccurrences(arg: unknown): Promise<void> }`
 
 The handlers take `unknown` because VS Code hands back whatever the code action put in `command.arguments`; each one narrows before use.
 
-**On the fix action's output.** Every reply shape ends in a **diff** — a region reply spliced, a whole-file reply diffed whole-file. There is deliberately **no read-only fallback** here, unlike `generateDocstrings`: its read-only trigger is *no selection offsets*, and a diagnostic always carries a range, so that case cannot arise. What the fix path does guard is **staleness** — `fullText` is a snapshot taken when the code action was created, so before diffing it compares the focused editor's live text against it and refuses to open a misleading diff when they differ.
+**On the fix action's output.** Every reply shape ends in a **diff** — a region reply spliced, a whole-file reply diffed whole-file. There is deliberately **no read-only fallback** here, unlike `generateDocstrings`: its read-only trigger is *no selection offsets*, and a diagnostic always carries a range, so that case cannot arise. What the fix path does guard is **staleness** — `fullText` is a snapshot taken when the code action was created, so before diffing it re-reads the source document **by its full local path** (`textOfDocument`, wired over `workspace.textDocuments`) and refuses to open a misleading diff when the two differ. Focus is deliberately *not* the identity: the user moves between tabs while a request is in flight, and a basename comparison would confuse `src/a.ts` with `test/a.ts`. If the document cannot be resolved at all the path **refuses** rather than proceeding — a diff that cannot be checked against the file it claims to change is the unsafe direction.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1183,14 +1244,30 @@ const context: DiagnosticContext = {
   endLine: 2,
   snippet: "const x = maybe();\nx.go();",
   truncated: false,
-  // 19 is the start of line 2 ("const x = maybe();\n" is 19 chars); 26 is its
-  // end. The range MUST cover the trailing ";" — stopping at 25 splices in a
-  // replacement that already ends in ";" and leaves the original's behind.
+  // Whole-line offsets, as buildDiagnosticContext produces: 19 is the start of
+  // line 2 ("const x = maybe();\n" is 19 chars) and 26 is the offset of its
+  // "\n". They must cover the WHOLE line — the model is asked to replace whole
+  // lines, so a splice stopping short leaves the rest of the original behind.
   offsets: { start: 19, end: 26 },
 };
 
 const fullText = "const x = maybe();\nx.go();\nmore();";
-const arg: DiagnosticActionArg = { context, fullText, query: "2532 Object is possibly" };
+
+// The un-redacted local path. It identifies the document for the staleness
+// re-read and nothing else — never a prompt, never a manifest.
+const documentPath = "/home/dev/repo/src/a.ts";
+const arg: DiagnosticActionArg = {
+  context,
+  documentPath,
+  fullText,
+  query: "2532 Object is possibly",
+};
+
+// A path -> text map standing in for workspace.textDocuments. Anything not in
+// the map is "no open document has that path", which the fix path refuses on.
+function documents(open: Record<string, string>): (path: string) => string | undefined {
+  return (path) => open[path];
+}
 
 function harness(over: Partial<Parameters<typeof createDiagnosticCommands>[0]> = {}) {
   const agentInvoke = vi.fn().mockResolvedValue({ reply: "```ts\nx?.go();\n```" });
@@ -1204,6 +1281,7 @@ function harness(over: Partial<Parameters<typeof createDiagnosticCommands>[0]> =
     agent: () => "",
     openReadonly: vi.fn().mockResolvedValue(undefined),
     openDiff: vi.fn().mockResolvedValue(undefined),
+    textOfDocument: documents({ [documentPath]: fullText }),
     search: vi.fn(),
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     ...over,
@@ -1287,6 +1365,62 @@ describe("fix", () => {
     expect(deps.openDiff).toHaveBeenCalledWith(expect.objectContaining({ right: whole }));
   });
 
+  // The edit is applied WHILE the agentInvoke promise is pending, which is the
+  // whole point: at the moment the request went out the document still matched.
+  // Read the liveness check before the call instead of after and this test
+  // fails, because "unchanged then, changed now" is exactly the window the
+  // guard exists to cover. Setting the changed text up front would not pin that.
+  test("refuses to diff when the file changed while the request was in flight", async () => {
+    let release: (value: unknown) => void = () => undefined;
+    const agentInvoke = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    let live = fullText;
+    const { cmds, deps } = harness({
+      client: () => ({ agentInvoke }),
+      textOfDocument: (path) => (path === documentPath ? live : undefined),
+    });
+
+    const pending = cmds.fix(arg);
+    await Promise.resolve();
+    expect(agentInvoke).toHaveBeenCalledTimes(1);
+
+    live = "const x = maybe();\n// edited\nx.go();";
+    release({ reply: "```ts\nx?.go();\n```" });
+    await pending;
+
+    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("changed while the fix was being generated"),
+    );
+  });
+
+  // The lookup is by full local path, so an open-but-unfocused source document
+  // still resolves, and a same-named file in another directory is not it.
+  test("does not confuse a same-named file in another directory", async () => {
+    const { cmds, deps } = harness({
+      textOfDocument: documents({
+        [documentPath]: fullText,
+        "/home/dev/repo/test/a.ts": "a completely different a.ts",
+      }),
+    });
+    await cmds.fix(arg);
+    expect(deps.openDiff).toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  test("refuses to diff when the source document cannot be re-read", async () => {
+    const { cmds, deps } = harness({ textOfDocument: documents({}) });
+    await cmds.fix(arg);
+    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("could not be re-read"),
+    );
+  });
+
   test("never applies an edit — the diff is the whole output", async () => {
     const { cmds, deps } = harness();
     await cmds.fix(arg);
@@ -1323,7 +1457,7 @@ Create `src/diagnostics/commands.ts`:
 import { isEgressCancelled } from "../egress/gated-client.js";
 import type { EgressMeta } from "../egress/preflight.js";
 import { errMsg, type Logger } from "../logging.js";
-import { extractReply } from "../quick-ask.js";
+import { extractReply, QUICK_ASK_MAX_CONTEXT_CHARS } from "../quick-ask.js";
 import { extractCode, isWholeFileRewrite, spliceSelection } from "../scm/generate.js";
 import type { WindowApi } from "../vscode-shim.js";
 import type { DiagnosticContext } from "./context.js";
@@ -1333,6 +1467,13 @@ import { buildExplainPrompt, buildFixPrompt } from "./prompts.js";
 // which is the only place holding the document.
 export interface DiagnosticActionArg {
   context: DiagnosticContext;
+  /**
+   * The document's un-redacted local path, for ONE purpose: looking the same
+   * document up again in `textOfDocument` before diffing. It must never reach a
+   * payload or the egress manifest — `diagnosticMeta` uses `context.fileName`,
+   * the redacted basename, and neither prompt builder is given this field.
+   */
+  documentPath: string;
   fullText: string;
   query: string;
 }
@@ -1354,6 +1495,13 @@ export interface DiagnosticCommandDeps {
   agent(): string; // askAgent() setting; "" = omit
   openReadonly(title: string, content: string): Promise<void>;
   openDiff(opts: { title: string; left: string; right: string; fileName: string }): Promise<void>;
+  /**
+   * The current text of the OPEN document at that local path, or undefined when
+   * no open document has it. Deliberately not "the focused editor": the user
+   * moving to another tab while a request is in flight must not decide whether
+   * the staleness check can run. Wired over `workspace.textDocuments`.
+   */
+  textOfDocument(path: string): string | undefined;
   /** Seeds the existing search Quick Pick. No model, no gate. */
   search(query: string): void;
   log: Logger;
@@ -1380,6 +1528,7 @@ function asArg(value: unknown): DiagnosticActionArg | undefined {
   const context = rec["context"];
   if (typeof context !== "object" || context === null) return undefined;
   if (typeof rec["fullText"] !== "string" || typeof rec["query"] !== "string") return undefined;
+  if (typeof rec["documentPath"] !== "string") return undefined;
   return value as DiagnosticActionArg;
 }
 
@@ -1421,15 +1570,6 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
     return client;
   };
 
-  // Live text of the document this diagnostic came from, or undefined when we
-  // cannot tell it is the same document. Compared on the redacted basename,
-  // which is all DiagnosticContext carries.
-  const liveText = (ctx: DiagnosticContext): string | undefined => {
-    const doc = deps.window.activeTextEditor?.document;
-    if (doc === undefined) return undefined;
-    return redactPath(doc.fileName) === ctx.fileName ? doc.getText() : undefined;
-  };
-
   const invoke = async (
     client: DiagnosticClientLike,
     prompt: string,
@@ -1461,7 +1601,7 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
       await deps.openReadonly("Nimbus explanation.md", reply);
     }),
 
-    fix: contain("diagnosticFix", "suggest a fix", async ({ context, fullText }) => {
+    fix: contain("diagnosticFix", "suggest a fix", async ({ context, documentPath, fullText }) => {
       const client = requireClient();
       if (client === undefined) return;
       const reply = await invoke(
@@ -1471,12 +1611,22 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
         diagnosticMeta(context, "Suggest Fix"),
       );
       if (reply === undefined) return;
-      // fullText was captured when the code action was CREATED. An edit landing
-      // while the request was in flight makes both sides of the diff stale, so
-      // say so instead of opening one. A focused editor for a DIFFERENT file is
-      // "cannot tell", not "changed", and the command proceeds on the snapshot.
-      const live = liveText(context);
-      if (live !== undefined && live !== fullText) {
+      // fullText was captured when the code action was CREATED — before the
+      // request went out. If the user edited the file while it was in flight,
+      // both sides of the diff are stale: the left no longer matches the buffer,
+      // and the splice offsets point at lines that have moved. Re-read the
+      // source by PATH — not through whatever happens to be focused now — and
+      // refuse if it cannot be resolved: a diff we cannot check against the file
+      // it claims to change is the failure worth being loud about.
+      const live = deps.textOfDocument(documentPath);
+      if (live === undefined) {
+        deps.log.debug("diagnostics: source document is no longer open; not diffing");
+        void deps.window.showWarningMessage(
+          `Nimbus: ${context.fileName} could not be re-read, so the fix could not be checked against the current file. Re-open it and re-run the action.`,
+        );
+        return;
+      }
+      if (live !== fullText) {
         deps.log.debug("diagnostics: file changed while the fix was in flight; not diffing");
         void deps.window.showWarningMessage(
           `Nimbus: ${context.fileName} changed while the fix was being generated, so the diff would be misleading. Re-run the action.`,
@@ -1515,7 +1665,7 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bunx vitest run test/unit/diagnostics-commands.test.ts`
-Expected: PASS, 12 tests.
+Expected: PASS, 19 tests.
 
 - [ ] **Step 5: Run the choke-point test — it must still hold**
 
@@ -1538,6 +1688,7 @@ git commit -m "feat(diagnostics): explain, fix and prior-occurrences commands"
 - Create: `src/diagnostics/real-provider.ts`
 - Modify: `src/settings.ts` (add `showDiagnosticCodeActions()`)
 - Modify: `src/extension.ts` (add `emptyText` to `runSearch`; wire the commands and register the provider)
+- Modify: `src/vscode-shim.ts` — `WorkspaceApi` gains `textDocuments: readonly OpenTextDocumentLike[]`, the seam `textOfDocument` is wired over. Every `WorkspaceApi` literal in `test/` needs the field too
 - Modify: `package.json` (three commands, three `commandPalette` entries, `contributes.codeActions`, one configuration property)
 - Modify: `docs/settings.md` (document the setting)
 - Modify: `README.md` — `check-settings-docs` guards the README settings **table** as well as `docs/settings.md`; a row is required or the build fails
@@ -1726,7 +1877,13 @@ function toLike(d: vscode.Diagnostic): DiagnosticLike {
 
 export function registerDiagnosticCodeActions(opts: {
   offer: (diagnostics: readonly DiagnosticLike[]) => ReturnType<typeof diagnosticActionsFor>;
-  buildArg: (document: vscode.TextDocument, diagnostic: DiagnosticLike) => DiagnosticActionArg;
+  // Everything BUT `documentPath`: that one field is stamped below, from the
+  // TextDocument this file already holds, so no wiring can forget it or supply
+  // a path that is not the document's own.
+  buildArg: (
+    document: vscode.TextDocument,
+    diagnostic: DiagnosticLike,
+  ) => Omit<DiagnosticActionArg, "documentPath">;
 }): { dispose(): void } {
   return vscode.languages.registerCodeActionsProvider(
     SELECTOR,
@@ -1735,7 +1892,15 @@ export function registerDiagnosticCodeActions(opts: {
         const likes = context.diagnostics.map(toLike);
         const offered = opts.offer(likes);
         if (offered === undefined) return undefined;
-        const arg = opts.buildArg(document, offered.diagnostic);
+        // The un-redacted path rides along for ONE purpose: re-reading this
+        // same document by path before the fix diff opens. `fileName` is
+        // vscode's shorthand for `uri.fsPath`, which is what that lookup matches
+        // on. It must never reach a prompt or the egress manifest — those use
+        // the redacted basename buildDiagnosticContext produces.
+        const arg: DiagnosticActionArg = {
+          ...opts.buildArg(document, offered.diagnostic),
+          documentPath: document.fileName,
+        };
         // selectDiagnostic returns one of the objects it was given, so index
         // identity recovers the real Diagnostic to attach below.
         const chosen = context.diagnostics[likes.indexOf(offered.diagnostic)];
@@ -1794,6 +1959,12 @@ Then, next to the `registerWhyPeekHover` wiring (around line 753), add:
     agent: () => settings.askAgent(),
     openReadonly: openReadonlyJson,
     openDiff,
+    // Every OPEN document, not the focused one: the user is free to move around
+    // while a fix is being generated, and focus must not decide whether the
+    // staleness check can run. The path stays here — it is never put in a
+    // payload.
+    textOfDocument: (path) =>
+      deps.workspace.textDocuments.find((doc) => doc.uri.fsPath === path)?.getText(),
     search: (query) =>
       runSearch(query, {
         placeholder: "Prior occurrences of this error",
