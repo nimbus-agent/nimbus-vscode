@@ -1497,6 +1497,8 @@ git commit -m "feat(diagnostics): explain, fix and prior-occurrences commands"
 - Modify: `src/extension.ts` (add `emptyText` to `runSearch`; wire the commands and register the provider)
 - Modify: `package.json` (three commands, three `commandPalette` entries, `contributes.codeActions`, one configuration property)
 - Modify: `docs/settings.md` (document the setting)
+- Modify: `README.md` — `check-settings-docs` guards the README settings **table** as well as `docs/settings.md`; a row is required or the build fails
+- Modify: `test/unit/vscode-stub.ts` — add `CodeActionKind` (including the real `append` empty-value behaviour), `CodeAction`, and `languages.registerCodeActionsProvider`. Without these, every existing suite that imports `extension.ts` dies at module load evaluating `PROVIDED` in `real-provider.ts`
 - Test: `test/unit/manifest-diagnostics.test.ts`
 
 **Interfaces:**
