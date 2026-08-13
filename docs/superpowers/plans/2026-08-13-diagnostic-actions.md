@@ -1095,7 +1095,10 @@ function skippableKind(kind: EgressKind): SkippableKind | undefined {
 }
 ```
 
-Also extend the comment above `skippableKind` with one clause: a diagnostic action prompts because the extension assembles the snippet from the editor, not from a user keystroke.
+Also extend **both** policy comments — these two files are where the "why does this kind prompt?" reasoning lives, and a kind added without it is a real gap:
+
+- `gate.ts`, above `skippableKind`: a diagnostic action prompts because the extension assembles the snippet from the editor, not from a user keystroke.
+- `skip-store.ts`, above `SkippableKind`: that comment **enumerates the prompting kinds by role**, so adding a member without adding its clause leaves the comment describing four of five. (Its closing "the other three never prompt" stays correct — eight kinds, five skippable.)
 
 - [ ] **Step 4: Run the test to verify it passes**
 
