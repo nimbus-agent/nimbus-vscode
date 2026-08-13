@@ -15,7 +15,7 @@ import { describe, expect, test } from "vitest";
 // declarations like `agentInvoke(input: string, ...)` do not false-positive.
 // Same trick as no-raw-sql-guard.test.ts.
 
-// The choke point itself, plus the four consumer modules. A consumer only ever
+// The choke point itself, plus the five consumer modules. A consumer only ever
 // holds a seam INJECTED by extension.ts, never a real NimbusClient — and for
 // agentInvoke that seam's type requires the EgressMeta argument, so the raw
 // client does not even satisfy it. What this list must never contain is
@@ -27,6 +27,7 @@ const ALLOWED = [
   "lm-tools/lm-tools.ts",
   "chat/chat-controller.ts",
   "chat-participant/participant.ts",
+  "diagnostics/commands.ts",
 ];
 const CALLS = [".agentInvoke(", ".askStream(", ".workflowRunStream("];
 
