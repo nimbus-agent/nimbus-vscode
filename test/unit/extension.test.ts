@@ -21,6 +21,7 @@ import type {
   ConfigurationChangeEventLike,
   ExtensionContextLike,
   MementoLike,
+  ProgressLike,
   QuickPickLike,
   StatusBarItemHandle,
   WindowApi,
@@ -289,6 +290,13 @@ function makeFixture(opts: {
   searchDebounceMs?: number;
   /** False simulates Restricted Mode, where no pre-flight skip is honoured. */
   isTrusted?: boolean;
+  /**
+   * Filled with every callback a cancellable withProgress body registers on the
+   * cancellation token. A test fires them to stand in for the user clicking
+   * Cancel on the progress notification — and their mere presence proves the
+   * body was handed the token rather than the progress reporter.
+   */
+  cancelSubscribers?: Array<() => void>;
   workspaceFolders?: readonly { uri: { fsPath: string } }[];
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
@@ -315,6 +323,7 @@ function makeFixture(opts: {
     warnClicks.length > 0 ? warnClicks.shift() : "Send";
   const saveJsonCalls: Array<{ defaultName: string; content: string }> = [];
   const quickPicks: FakeQuickPick[] = [];
+  const cancelSubscribers = opts.cancelSubscribers ?? [];
 
   const webviewMessageHandlers: Array<(msg: unknown) => void> = [];
   const openedDocs: Array<{ title: string; content: string }> = [];
@@ -405,14 +414,25 @@ function makeFixture(opts: {
               uri: { scheme: opts.activeEditor?.scheme ?? "file" },
             },
           },
+    // Invoked exactly as real VS Code invokes it: `task(progress, token)`,
+    // progress FIRST. The progress double deliberately has no
+    // onCancellationRequested — so a call site that forwards the wrong argument
+    // fails here rather than in a real window.
     withProgress: (async (
       _opts: unknown,
-      task: (token: CancellationTokenLike) => Promise<unknown>,
+      task: (progress: ProgressLike, token: CancellationTokenLike) => Promise<unknown>,
     ) =>
-      // A token that never fires: nothing in these tests cancels a send.
-      task({
-        onCancellationRequested: () => ({ dispose: () => undefined }),
-      })) as WindowApi["withProgress"],
+      task(
+        { report: () => undefined },
+        {
+          // Subscribers are captured, so a test can fire the token the way the
+          // Cancel button on the notification does. Nothing fires by default.
+          onCancellationRequested: (cb: () => void) => {
+            cancelSubscribers.push(cb);
+            return { dispose: () => undefined };
+          },
+        },
+      )) as WindowApi["withProgress"],
   };
 
   const workspace: WorkspaceApi = {
@@ -2761,6 +2781,54 @@ describe("createReadonlyJsonOpener", () => {
     expect(provider.provideTextDocumentContent({ path: "/2/Nimbus — issue " })).toBe("HASH BODY");
     spy.mockRestore();
   });
+
+  // activate() builds TWO of these — the shared one (50) and the pre-flight
+  // preview's own (5) — each with its own document map and its own sequence
+  // counter. A scheme, though, resolves through ONE provider: register a second
+  // for the same scheme and it shadows the first, so documents opened by the
+  // other opener resolve to "" and the tab opens SILENTLY EMPTY.
+  //
+  // Found in a real window, behind the withProgress defect: once any "Show full
+  // text" had registered the preview's opener, every later shared-opener tab —
+  // the workflow run report among them — came up blank. Both maps also key on a
+  // bare sequence number, so a collision could serve one surface's text under
+  // another's tab: in an extension whose whole point is showing what leaves,
+  // that is worse than blank.
+  test("two openers get their own scheme, so neither shadows the other", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const opened = vi.spyOn(vscodeWorkspace, "openTextDocument");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    const preview = createReadonlyJsonOpener(ctx, 5);
+    const shared = createReadonlyJsonOpener(ctx);
+    await preview("Nimbus outbound.md", "PREVIEW BODY");
+    await shared("workflow-run-run-1.md", "REPORT BODY");
+
+    const [previewScheme, previewProvider] = spy.mock.calls[0] as unknown as [
+      string,
+      { provideTextDocumentContent(uri: { path: string }): string },
+    ];
+    const [sharedScheme, sharedProvider] = spy.mock.calls[1] as unknown as [
+      string,
+      { provideTextDocumentContent(uri: { path: string }): string },
+    ];
+    expect(sharedScheme).not.toBe(previewScheme);
+    // Each provider still serves its own document — the sequence numbers are
+    // per-opener, so both documents are "/1/…" and only the scheme tells them
+    // apart.
+    expect(previewProvider.provideTextDocumentContent({ path: "/1/Nimbus outbound.md" })).toBe(
+      "PREVIEW BODY",
+    );
+    expect(sharedProvider.provideTextDocumentContent({ path: "/1/workflow-run-run-1.md" })).toBe(
+      "REPORT BODY",
+    );
+    // And the document each opener OPENS carries its own scheme: renaming the
+    // registration alone would fix nothing.
+    const uris = opened.mock.calls.map((c) => String(c[0]));
+    expect(uris[0]?.startsWith(`${previewScheme}:`)).toBe(true);
+    expect(uris[1]?.startsWith(`${sharedScheme}:`)).toBe(true);
+    spy.mockRestore();
+    opened.mockRestore();
+  });
 });
 
 // Same defect class as the read-only opener above, fixed before it could bite:
@@ -3032,6 +3100,57 @@ describe("workflow run wiring", () => {
     expect(workflowRunStream).toHaveBeenCalledWith(
       expect.objectContaining({ name: "nightly-sync", dryRun: false }),
     );
+    expect(f.openedDocs[0]?.title).toContain("run-1");
+  });
+
+  // Regression: activate() bridges vscode.window to WindowApi with an `unknown`
+  // cast, so nothing but the seam's own types stands between the run surface and
+  // the wrong argument. Real withProgress calls `task(progress, token)`;
+  // runWithCancellableProgress must forward the SECOND. It forwarded the first
+  // for four releases — every run died on
+  // "o.onCancellationRequested is not a function", so no report, no outcome, and
+  // a Cancel button that sent nothing. This pins the WIRING, not the seam: the
+  // suite was green (1119 tests) throughout.
+  test("a cancellable run hands its body the token, not the progress reporter", async () => {
+    const cancelSubscribers: Array<() => void> = [];
+    const handleCancel = vi.fn(async () => ({ cancelled: true }));
+    const workflowRunStream = vi.fn(() => ({
+      streamId: "sid-1",
+      result: Promise.resolve({ ...RUN_RESULT, status: "cancelled" }),
+      cancel: handleCancel,
+      [Symbol.asyncIterator]: () => {
+        let sent = false;
+        return {
+          next: async () => {
+            if (sent) return { value: undefined, done: true };
+            sent = true;
+            // Mid-run, the user hits Cancel on the progress notification.
+            for (const cb of cancelSubscribers) cb();
+            return { value: { type: "chunk", text: "collect: ok" }, done: false };
+          },
+        };
+      },
+    }));
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      warnMessageClicks: ["Send"],
+      cancelSubscribers,
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")();
+
+    // The body subscribed on the object that HAS onCancellationRequested — the
+    // token. Handed the progress reporter instead, the run throws before this.
+    expect(cancelSubscribers.length).toBe(1);
+    // And the subscription is live: firing it reaches workflow.cancel.
+    expect(handleCancel).toHaveBeenCalled();
+    expect(f.errorMessages).toEqual([]);
+    // The run still settles: report tab and outcome, not a dead notification.
     expect(f.openedDocs[0]?.title).toContain("run-1");
   });
 

@@ -193,13 +193,20 @@ export function activateWithDeps(
   // Handed to every gated invoke so the "sending…" notification is raised by the
   // seam, after the gate clears, rather than by the call site around it — which
   // would put it on screen while the preview is still asking whether to send.
+  // A ProgressRunner body takes no arguments; the wrapper drops withProgress's
+  // (progress, token) explicitly rather than leaning on JS arity, so the two
+  // signatures are visibly reconciled at the seam.
   const runWithProgress: ProgressRunner = (title, body) =>
     Promise.resolve(
-      deps.window.withProgress({ location: PROGRESS_LOCATION_NOTIFICATION, title }, body),
+      deps.window.withProgress({ location: PROGRESS_LOCATION_NOTIFICATION, title }, () => body()),
     );
 
   // A workflow run is the one send long enough to be worth interrupting, so it
   // gets the cancellable variant and hands the token down to the run surface.
+  // withProgress calls its task as (progress, token): the SECOND argument is the
+  // one the run surface subscribes to. Passing `body` straight through handed it
+  // the Progress object and every run died on the first
+  // token.onCancellationRequested.
   const runWithCancellableProgress = <R>(
     title: string,
     body: (token: CancellationTokenLike) => Promise<R>,
@@ -207,7 +214,7 @@ export function activateWithDeps(
     Promise.resolve(
       deps.window.withProgress(
         { location: PROGRESS_LOCATION_NOTIFICATION, title, cancellable: true },
-        body,
+        (_progress, token) => body(token),
       ),
     );
 
@@ -1521,6 +1528,27 @@ export function createInlineHitlSurface(args: {
   };
 }
 
+// A virtual scheme resolves through ONE content provider, but each opener
+// instance holds its OWN document map — so two instances registering the same
+// scheme do not co-operate: one shadows the other, and every document the
+// shadowed opener stored resolves to "" and its tab opens SILENTLY EMPTY.
+// activate() builds two read-only openers (the shared one, and the pre-flight
+// preview's smaller-bounded one), which is exactly that collision — found in a
+// real window, where the workflow run report came up blank once any "Show full
+// text" had registered the preview's opener. Worse than blank was possible:
+// both maps key on a bare per-instance sequence number, so a collision could
+// serve one surface's text under another surface's tab.
+//
+// So an instance never assumes it is the only one: the first keeps the base
+// scheme (the common case, and the one users see), and each later instance
+// takes a suffixed one.
+const schemeInstances = new Map<string, number>();
+function uniqueScheme(base: string): string {
+  const n = (schemeInstances.get(base) ?? 0) + 1;
+  schemeInstances.set(base, n);
+  return n === 1 ? base : `${base}-${n}`;
+}
+
 // Opens read-only JSON in an editor tab via a custom-scheme content provider.
 // The provider is registered lazily on first use; each call gets a unique URI
 // so VS Code re-resolves the content. The `.json` path extension drives syntax
@@ -1534,7 +1562,7 @@ export function createReadonlyJsonOpener(
   // and 50 of them would sit in memory for the whole session.
   maxDocs = 50,
 ): (title: string, content: string) => Promise<void> {
-  const scheme = "nimbus-audit";
+  const scheme = uniqueScheme("nimbus-audit");
   const docs = new Map<string, string>();
   let seq = 0;
   let registered = false;
@@ -1608,7 +1636,9 @@ function createUntitledOpener(): (opts: { fileName: string; content: string }) =
 export function createDiffOpener(
   ctx: ExtensionContextLike,
 ): (opts: { title: string; left: string; right: string; fileName: string }) => Promise<void> {
-  const scheme = "nimbus-diff";
+  // Only one of these exists today, but the collision above is a property of
+  // the pattern, not of that one call site.
+  const scheme = uniqueScheme("nimbus-diff");
   const MAX_DOCS = 20;
   const docs = new Map<string, string>();
   let seq = 0;

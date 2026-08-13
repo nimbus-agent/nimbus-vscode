@@ -13,6 +13,17 @@ export interface CancellationTokenLike {
   onCancellationRequested(cb: () => void): DisposableLike;
 }
 
+/**
+ * The slice of vscode.Progress<{ message?: string; increment?: number }> handed
+ * to a withProgress task. Nothing here reports progress yet — the type exists
+ * so the seam DESCRIBES the real API, whose task is called `(progress, token)`.
+ * Typing the task as taking the token alone let a cast hide that the run
+ * surface's "token" was really the Progress object.
+ */
+export interface ProgressLike {
+  report(value: { message?: string; increment?: number }): void;
+}
+
 export interface OutputChannelHandle {
   appendLine(msg: string): void;
   show(preserveFocus?: boolean): void;
@@ -134,12 +145,17 @@ export interface WindowApi {
   createQuickPick<T extends QuickPickItemLike>(): QuickPickLike<T>;
   registerTreeDataProvider<T>(viewId: string, provider: TreeDataProviderLike<T>): DisposableLike;
   activeTextEditor: TextEditorLike | undefined;
-  // The task receives vscode's CancellationToken. Every existing caller ignores
-  // it (their sends are not cancellable), so the parameter is additive; a
-  // cancellable: true caller reads it to learn the user hit the X.
+  // Mirrors the real API exactly: the task is invoked as `task(progress, token)`
+  // — the reporter FIRST, vscode's CancellationToken second. Most callers ignore
+  // both (their sends are not cancellable); a cancellable: true caller reads the
+  // token to learn the user hit Cancel. Do not "simplify" this to the token
+  // alone: activate() reaches the real window through an `unknown` cast, so this
+  // declaration is the only thing that can catch a call site forwarding the
+  // wrong argument, and once it did not, every workflow run died on
+  // `token.onCancellationRequested is not a function`.
   withProgress<R>(
     options: { location: number; title?: string; cancellable?: boolean },
-    task: (token: CancellationTokenLike) => Thenable<R>,
+    task: (progress: ProgressLike, token: CancellationTokenLike) => Thenable<R>,
   ): Thenable<R>;
 }
 
