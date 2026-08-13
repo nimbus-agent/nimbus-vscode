@@ -85,7 +85,13 @@ function harness(
       return undefined;
     },
     showQuickPick: async (items: readonly { label: string }[]) => items[0],
-    withProgress: async <R>(_o: unknown, task: () => Promise<R>) => task(),
+    // As real VS Code calls it: `task(progress, token)`. The SCM bodies take no
+    // arguments, but the fake should not be the reason a mismatch stays hidden.
+    withProgress: async <R>(_o: unknown, task: (progress: unknown, token: unknown) => Promise<R>) =>
+      task(
+        { report: () => undefined },
+        { onCancellationRequested: () => ({ dispose: () => undefined }) },
+      ),
     activeTextEditor: undefined,
   } as unknown as ScmCommandDeps["window"];
   const { window: windowOverride, ...restOver } = over;

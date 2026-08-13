@@ -9,7 +9,19 @@ export const window = {
   showWarningMessage: async () => undefined,
   showInputBox: async () => undefined,
   showQuickPick: async () => undefined,
-  withProgress: async (_opts: unknown, task: () => Promise<unknown>) => task(),
+  // Real VS Code invokes the task as `task(progress, token)` — progress FIRST.
+  // A stub that called `task()` (or `task(token)`) could not expose an
+  // argument-order bug even in principle, and one shipped: the workflow run
+  // surface read `token.onCancellationRequested` off the Progress object.
+  withProgress: async (
+    _opts: unknown,
+    task: (progress: unknown, token: unknown) => Promise<unknown>,
+  ) =>
+    task(
+      { report: (_value: { message?: string; increment?: number }) => undefined },
+      // A token that never fires: nothing in these tests cancels a send.
+      { onCancellationRequested: () => ({ dispose: () => undefined }) },
+    ),
   createQuickPick: () => {
     const sub = () => ({ dispose: () => undefined });
     return {
