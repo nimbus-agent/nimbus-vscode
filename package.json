@@ -177,6 +177,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "nimbus.refreshWorkflows",
+        "title": "Refresh Workflows",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "nimbus.openEgressEntry",
         "title": "Open Egress Entry",
         "category": "Nimbus"
@@ -376,6 +382,10 @@
         {
           "id": "nimbus.sessionsView",
           "name": "Sessions"
+        },
+        {
+          "id": "nimbus.workflowsView",
+          "name": "Workflows"
         }
       ]
     },
@@ -403,6 +413,11 @@
       {
         "view": "nimbus.sessionsView",
         "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)",
+        "when": "!nimbus.connected"
+      },
+      {
+        "view": "nimbus.workflowsView",
+        "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)\nOnce connected, your saved workflows and their recent runs appear here.",
         "when": "!nimbus.connected"
       }
     ],
@@ -472,6 +487,11 @@
         {
           "command": "nimbus.refreshEgress",
           "when": "view == nimbus.egressView",
+          "group": "navigation"
+        },
+        {
+          "command": "nimbus.refreshWorkflows",
+          "when": "view == nimbus.workflowsView",
           "group": "navigation"
         },
         {

@@ -283,3 +283,58 @@ describe("one-level nesting", () => {
     expect(await view.getChildren(kid as never)).toEqual([]);
   });
 });
+
+describe("lazily loaded children", () => {
+  const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
+
+  test("without loadChildren, createDataView behaves exactly as before", async () => {
+    // The other five views pass no loadChildren and must be untouched by it.
+    const c = makeConnection(connected);
+    const view = createDataView({
+      connection: c.connection,
+      loadData: async () => [{ label: "svc", children: [{ label: "eager" }] }],
+    });
+    const [parent] = await view.getChildren();
+    if (parent === undefined) throw new Error("expected a parent row");
+    expect(await view.getChildren(parent)).toEqual([{ label: "eager" }]);
+  });
+
+  test("loadChildren resolves a non-root element's children on demand", async () => {
+    const c = makeConnection(connected);
+    const view = createDataView({
+      connection: c.connection,
+      loadData: async () => [{ label: "svc", children: [], collapsible: true }],
+      loadChildren: async (item) => [{ label: `lazy child of ${item.label}` }],
+    });
+    const [parent] = await view.getChildren();
+    if (parent === undefined) throw new Error("expected a parent row");
+    expect(await view.getChildren(parent)).toEqual([{ label: "lazy child of svc" }]);
+  });
+
+  test("loadChildren is not consulted for the root", async () => {
+    const c = makeConnection(connected);
+    let calls = 0;
+    const view = createDataView({
+      connection: c.connection,
+      loadData: async () => [{ label: "svc", children: [], collapsible: true }],
+      loadChildren: async () => {
+        calls += 1;
+        return [];
+      },
+    });
+    await view.getChildren();
+    expect(calls).toBe(0);
+  });
+
+  test("toTreeItem honours an explicit collapsible on a row with no children yet", () => {
+    // Without this, a lazy parent (children: []) would render as a leaf and
+    // could never be expanded to trigger the load.
+    expect(toTreeItem({ label: "lazy", children: [], collapsible: true }).collapsibleState).toBe(1);
+  });
+
+  test("collapsible: false keeps a row with children a leaf", () => {
+    expect(
+      toTreeItem({ label: "x", children: [{ label: "kid" }], collapsible: false }).collapsibleState,
+    ).toBe(0);
+  });
+});

@@ -697,7 +697,7 @@ describe("activateWithDeps", () => {
     openTextDocument.mockRestore();
   });
 
-  test("registers the five sidebar tree views in the nimbus container", async () => {
+  test("registers the six sidebar tree views in the nimbus container", async () => {
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
@@ -709,6 +709,7 @@ describe("activateWithDeps", () => {
       "nimbus.agentsView",
       "nimbus.indexView",
       "nimbus.sessionsView",
+      "nimbus.workflowsView",
     ]);
   });
 

@@ -76,6 +76,7 @@ import { createQuickActions } from "./sidebar/quick-actions.js";
 import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
+import { createWorkflowsView } from "./sidebar/workflows-view.js";
 import { summarizeConnectorHealth } from "./status-bar/connector-health.js";
 import {
   createEgressStatusBarController,
@@ -595,12 +596,19 @@ export function activateWithDeps(
     loadAgents,
     activeAgentId: () => activeAgent,
   });
+  // Read-only: workflowList / workflowListRuns reach no model, so this view
+  // stays clear of the egress pre-flight gate by construction.
+  const workflowsView = createWorkflowsView({
+    connection,
+    getClient: () => nimbus(),
+  });
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
     ["nimbus.auditView", auditView],
     ["nimbus.egressView", egressView],
     ["nimbus.agentsView", agentsView],
     ["nimbus.indexView", indexView],
     ["nimbus.sessionsView", sessionsView],
+    ["nimbus.workflowsView", workflowsView],
   ];
   for (const [viewId, view] of sidebarViews) {
     ctx.subscriptions.push(
@@ -1107,6 +1115,10 @@ export function activateWithDeps(
 
   register("nimbus.refreshIndex", () => {
     indexView.refresh();
+  });
+
+  register("nimbus.refreshWorkflows", () => {
+    workflowsView.refresh();
   });
 
   register("nimbus.openIndexItem", async (...args) => {

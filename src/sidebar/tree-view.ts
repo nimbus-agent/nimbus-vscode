@@ -25,6 +25,13 @@ export interface SidebarItem {
   /** Child rows; when present and non-empty, this row renders collapsible. */
   readonly children?: SidebarItem[];
   /**
+   * Overrides the children-derived collapsibility. A row whose children are
+   * fetched lazily on expand (see `createDataView`'s `loadChildren`) declares
+   * `children: []` and would otherwise render as an un-expandable leaf — with
+   * no twistie, the load could never be triggered.
+   */
+  readonly collapsible?: boolean;
+  /**
    * Domain object carried on the tree node. VS Code passes the NODE element
    * (this SidebarItem) — not `command.arguments` — to a view/item/context
    * command, so a menu handler reads its data from here. Untyped because it's
@@ -106,7 +113,8 @@ export function toTreeItem(item: SidebarItem): TreeItemLike {
   // Build incrementally so we never assign `undefined` to an optional field
   // (tsconfig has exactOptionalPropertyTypes). A row with children renders
   // Collapsed (1); otherwise it's a leaf (None = 0).
-  const collapsibleState = item.children !== undefined && item.children.length > 0 ? 1 : 0;
+  const hasChildren = item.children !== undefined && item.children.length > 0;
+  const collapsibleState = (item.collapsible ?? hasChildren) ? 1 : 0;
   const treeItem: TreeItemLike = { label: item.label, collapsibleState };
   if (item.description !== undefined) treeItem.description = item.description;
   if (item.tooltip !== undefined) treeItem.tooltip = item.tooltip;
@@ -146,6 +154,13 @@ export function applyThemeIcons(
 export function createDataView(deps: {
   connection: SidebarConnection;
   loadData: () => Promise<SidebarItem[]>;
+  /**
+   * Resolve a row's children on expand rather than up front. Supplied only by
+   * views whose children cost a round trip each — without it, populating them
+   * eagerly would mean one RPC per row on open, for rows nobody expanded.
+   * Omitted, `getChildren` behaves exactly as it always has.
+   */
+  loadChildren?: (item: SidebarItem) => Promise<SidebarItem[]>;
 }): SidebarView {
   const emitter = createEmitter<SidebarItem | undefined>();
   const sub = deps.connection.onState(() => emitter.fire(undefined));
@@ -153,11 +168,15 @@ export function createDataView(deps: {
     const placeholder = connectionPlaceholder(deps.connection.current());
     return placeholder ?? (await deps.loadData());
   };
+  const childrenOf = async (element: SidebarItem): Promise<SidebarItem[]> => {
+    if (deps.loadChildren !== undefined) return await deps.loadChildren(element);
+    return element.children ?? [];
+  };
   return {
     onDidChangeTreeData: emitter.event,
     getTreeItem: (item) => toTreeItem(item),
     getChildren: async (element) =>
-      element === undefined ? await loadRows() : (element.children ?? []),
+      element === undefined ? await loadRows() : await childrenOf(element),
     refresh: () => emitter.fire(undefined),
     dispose: () => {
       sub.dispose();
