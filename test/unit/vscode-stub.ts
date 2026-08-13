@@ -127,8 +127,33 @@ export class Hover {
   constructor(public contents: unknown) {}
 }
 
+// Code-action support. `append` keeps the real API's empty-value guard, so
+// `Empty.append("quickfix.nimbus.explain")` yields that string rather than a
+// leading-dot variant.
+export class CodeActionKind {
+  static readonly Empty = new CodeActionKind("");
+  static readonly QuickFix = new CodeActionKind("quickfix");
+  constructor(public readonly value: string) {}
+  append(parts: string): CodeActionKind {
+    return new CodeActionKind(this.value ? `${this.value}.${parts}` : parts);
+  }
+}
+
+export class CodeAction {
+  command?: { command: string; title: string; arguments?: unknown[] };
+  diagnostics?: unknown[];
+  isPreferred?: boolean;
+  constructor(
+    public title: string,
+    public kind?: CodeActionKind,
+  ) {}
+}
+
 export const languages = {
   registerHoverProvider: (_selector: unknown, _provider: unknown) => ({
+    dispose: () => undefined,
+  }),
+  registerCodeActionsProvider: (_selector: unknown, _provider: unknown, _metadata?: unknown) => ({
     dispose: () => undefined,
   }),
 };

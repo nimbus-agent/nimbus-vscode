@@ -117,6 +117,7 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/user-guide/install/> for
 | `nimbus.egress.showStatusBarBadge` | `true` | Show the egress row-count badge (ledger-live ✓) in the status bar. |
 | `nimbus.briefs.showHoverBlame` | `true` | Blame + PR/ticket on hover, with a link to the full Why brief. |
 | `nimbus.briefs.defaultNamespace` | `""` | Prefills the namespace prompt for the Safe to deploy? brief. |
+| `nimbus.diagnostics.showCodeActions` | `true` | Offer Nimbus actions on the lightbulb for errors and warnings. |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |
 | `nimbus.logLevel` | `info` | Output-channel verbosity. |
 

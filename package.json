@@ -279,6 +279,21 @@
         "command": "nimbus.brief.preflight",
         "title": "Safe to deploy?",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.diagnosticExplain",
+        "title": "Explain this problem",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.diagnosticFix",
+        "title": "Suggest a fix",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.diagnosticPriorOccurrences",
+        "title": "Find prior occurrences",
+        "category": "Nimbus"
       }
     ],
     "chatParticipants": [
@@ -362,6 +377,30 @@
             "question"
           ]
         }
+      }
+    ],
+    "codeActions": [
+      {
+        "languages": [
+          "*"
+        ],
+        "actions": [
+          {
+            "kind": "quickfix.nimbus.explain",
+            "title": "Explain this problem",
+            "description": "Ask Nimbus what this diagnostic means."
+          },
+          {
+            "kind": "quickfix.nimbus.fix",
+            "title": "Suggest a fix",
+            "description": "Ask Nimbus for a fix, shown as a diff you apply yourself."
+          },
+          {
+            "kind": "quickfix.nimbus.priorOccurrences",
+            "title": "Find prior occurrences",
+            "description": "Search the local Nimbus index for this error."
+          }
+        ]
       }
     ],
     "viewsContainers": {
@@ -477,6 +516,18 @@
         },
         {
           "command": "nimbus.findRelatedFromIndex",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.diagnosticExplain",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.diagnosticFix",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.diagnosticPriorOccurrences",
           "when": "false"
         }
       ],
@@ -774,6 +825,11 @@
           "type": "string",
           "default": "",
           "description": "Prefills the namespace prompt for the 'Safe to deploy?' brief. agents.preflight requires a namespace and Nimbus never guesses one — a wrong namespace returns a confident answer about the wrong thing, so this only prefills a prompt you still confirm."
+        },
+        "nimbus.diagnostics.showCodeActions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer Nimbus actions (explain, suggest a fix, find prior occurrences) on the lightbulb for errors and warnings."
         },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",

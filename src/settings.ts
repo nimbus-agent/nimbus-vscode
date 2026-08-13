@@ -17,6 +17,7 @@ export interface Settings {
   showEgressStatusBarBadge(): boolean;
   showHoverBlame(): boolean;
   defaultNamespace(): string;
+  showDiagnosticCodeActions(): boolean;
   hitlAlwaysModal(): boolean;
   logLevel(): LogLevel;
 }
@@ -37,6 +38,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     showEgressStatusBarBadge: () => cfg().get<boolean>("egress.showStatusBarBadge", true),
     showHoverBlame: () => cfg().get<boolean>("briefs.showHoverBlame", true),
     defaultNamespace: () => cfg().get<string>("briefs.defaultNamespace", ""),
+    showDiagnosticCodeActions: () => cfg().get<boolean>("diagnostics.showCodeActions", true),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
     logLevel: () => {
       const lvl = cfg().get<string>("logLevel", "info");
