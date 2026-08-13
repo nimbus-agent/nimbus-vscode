@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.16.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.15.0...v0.16.0) (2026-08-13)
+
+
+### Features
+
+* **sidebar:** add a read-only Workflows view ([#95](https://github.com/nimbus-agent/nimbus-vscode/issues/95)) ([c47aa7f](https://github.com/nimbus-agent/nimbus-vscode/commit/c47aa7fe9799a07b5ca0b7978dc99451e75c58ae))
+* **workflows:** run and cancel a workflow from the editor ([#96](https://github.com/nimbus-agent/nimbus-vscode/issues/96)) ([ad94c1a](https://github.com/nimbus-agent/nimbus-vscode/commit/ad94c1a12837c688908eaca0dea2e1cf71d0f2d8))
+
 ## [0.15.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.14.0...v0.15.0) (2026-08-12)
 
 
