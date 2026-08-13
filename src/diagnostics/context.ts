@@ -58,6 +58,31 @@ function clampLine(starts: readonly number[], line: number): number {
   return Math.min(Math.max(line, 0), starts.length - 1);
 }
 
+/**
+ * The last line a diagnostic actually covers.
+ *
+ * `vscode.Diagnostic.range.end` is EXCLUSIVE, and plenty of producers report a
+ * single-line problem as `end: { line: N + 1, character: 0 }` rather than the
+ * end of line N. Taken literally that pulls an untouched line into the display
+ * range, the snippet and the splice: the model is then asked to reproduce a
+ * line it has no reason to change, and any byte it does not echo back shows up
+ * as a spurious modification in the diff.
+ *
+ * Only column zero is special. An end at `character > 0` is an ordinary
+ * intra-line end and the line it names is genuinely covered.
+ *
+ * ONE helper, used by all three consumers — `endLine`, the snippet's last line
+ * and `offsets.end` — because three separate adjustments would drift and the
+ * whole-line contract only holds while the prompt and the splice agree.
+ */
+function effectiveLastLine(range: { start: PositionLike; end: PositionLike }): number {
+  if (range.end.character === 0 && range.end.line > range.start.line) {
+    // Clamped so a range can never end before it begins.
+    return Math.max(range.end.line - 1, range.start.line);
+  }
+  return range.end.line;
+}
+
 // Where a line ends: the offset its terminating "\n" sits at, or the end of the
 // document on the last line, which has none.
 function lineEndOffset(starts: readonly number[], line: number, textLength: number): number {
@@ -74,8 +99,10 @@ export function buildDiagnosticContext(input: {
   const starts = lineStartOffsets(fullText);
   const lastLine = starts.length - 1;
 
+  const endLine = effectiveLastLine(diagnostic.range);
+
   const first = Math.max(diagnostic.range.start.line - DIAGNOSTIC_CONTEXT_LINES, 0);
-  const last = Math.min(diagnostic.range.end.line + DIAGNOSTIC_CONTEXT_LINES, lastLine);
+  const last = Math.min(endLine + DIAGNOSTIC_CONTEXT_LINES, lastLine);
   const from = starts[first] ?? 0;
   // Everything up to the start of the line after `last` — minus its newline.
   const to = lineEndOffset(starts, last, fullText.length);
@@ -96,7 +123,7 @@ export function buildDiagnosticContext(input: {
     source: diagnostic.source ?? "",
     code: diagnostic.code === undefined ? "" : String(diagnostic.code),
     startLine: diagnostic.range.start.line + 1,
-    endLine: diagnostic.range.end.line + 1,
+    endLine: endLine + 1,
     snippet,
     truncated,
     // WHOLE LINES, deliberately, and not the diagnostic's character-exact
@@ -104,10 +131,12 @@ export function buildDiagnosticContext(input: {
     // the splice must consume exactly those lines or the two disagree. Sub-line
     // ranges are the norm — tsserver spans the flagged expression, ESLint the
     // identifier — and splicing a whole rewritten statement into a sub-span of
-    // one line leaves the rest of the original line behind.
+    // one line leaves the rest of the original line behind. The last line is
+    // the EFFECTIVE one — see effectiveLastLine — so an exclusive end at column
+    // zero does not drag an untouched line into the splice.
     offsets: {
       start: starts[clampLine(starts, diagnostic.range.start.line)] ?? 0,
-      end: lineEndOffset(starts, clampLine(starts, diagnostic.range.end.line), fullText.length),
+      end: lineEndOffset(starts, clampLine(starts, endLine), fullText.length),
     },
   };
 }

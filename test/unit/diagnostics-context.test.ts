@@ -84,6 +84,52 @@ describe("buildDiagnosticContext", () => {
     expect(ctx.offsets).toEqual({ start: 7, end: 27 });
   });
 
+  // `range.end` is EXCLUSIVE, and plenty of producers report a single-line
+  // problem as "start of the next line" rather than "end of this one". Taken
+  // literally that pulls an untouched line into endLine, the snippet and the
+  // splice — the model is then asked to reproduce a line it has no reason to
+  // change, and every byte it does not echo back reads as a modification.
+  test("treats an exclusive end at column zero as ending on the previous line", () => {
+    const exclusive = build(lines(30), {
+      ...at(2),
+      range: { start: { line: 2, character: 0 }, end: { line: 3, character: 0 } },
+    });
+    // "line 2" is 6 characters, so this is the same single line said the other
+    // way. The two contexts must be indistinguishable — display range, snippet
+    // and splice offsets alike.
+    const intraLine = build(lines(30), {
+      ...at(2),
+      range: { start: { line: 2, character: 0 }, end: { line: 2, character: 6 } },
+    });
+    expect(exclusive).toEqual(intraLine);
+    expect(exclusive.endLine).toBe(3);
+    expect(exclusive.offsets).toEqual({ start: 14, end: 20 });
+    expect(exclusive.snippet.endsWith("line 22")).toBe(true);
+  });
+
+  test("keeps every genuinely spanned line when a multi-line range ends at column zero", () => {
+    // Lines 1 through 3 are covered; line 4 is only named because the end is
+    // exclusive, so it must not be dragged in.
+    const ctx = build(lines(30), {
+      ...at(1),
+      range: { start: { line: 1, character: 4 }, end: { line: 4, character: 0 } },
+    });
+    expect(ctx.startLine).toBe(2);
+    expect(ctx.endLine).toBe(4);
+    // Line 1 starts at 7; line 3 ends at its "\n", offset 27.
+    expect(ctx.offsets).toEqual({ start: 7, end: 27 });
+  });
+
+  test("handles a degenerate empty range at column zero without going backwards", () => {
+    const ctx = build(lines(30), {
+      ...at(2),
+      range: { start: { line: 2, character: 0 }, end: { line: 2, character: 0 } },
+    });
+    expect(ctx.startLine).toBe(3);
+    expect(ctx.endLine).toBe(3);
+    expect(ctx.offsets).toEqual({ start: 14, end: 20 });
+  });
+
   test("labels severity, mapping VS Code's numbering", () => {
     expect(build(lines(5), { ...at(1), severity: 0 }).severityLabel).toBe("error");
     expect(build(lines(5), { ...at(1), severity: 1 }).severityLabel).toBe("warning");
