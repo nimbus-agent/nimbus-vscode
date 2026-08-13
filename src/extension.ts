@@ -946,6 +946,12 @@ export function activateWithDeps(
     agent: () => settings.askAgent(),
     openReadonly: openReadonlyJson,
     openDiff,
+    // Every OPEN document, not the focused one: the user is free to move around
+    // while a fix is being generated, and focus must not decide whether the
+    // staleness check can run. The path stays here — it is never put in a
+    // payload.
+    textOfDocument: (path) =>
+      deps.workspace.textDocuments.find((doc) => doc.uri.fsPath === path)?.getText(),
     search: (query) =>
       runSearch(query, {
         placeholder: "Prior occurrences of this error",
@@ -975,6 +981,8 @@ export function activateWithDeps(
             languageId: document.languageId,
             diagnostic,
           }),
+          // `documentPath` is stamped by real-provider.ts, the one place
+          // holding the real TextDocument — see the note there.
           fullText,
           query: normalizeDiagnosticMessage(diagnostic),
         };

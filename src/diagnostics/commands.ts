@@ -1,7 +1,7 @@
 import { isEgressCancelled } from "../egress/gated-client.js";
 import type { EgressMeta } from "../egress/preflight.js";
 import { errMsg, type Logger } from "../logging.js";
-import { extractReply, QUICK_ASK_MAX_CONTEXT_CHARS, redactPath } from "../quick-ask.js";
+import { extractReply, QUICK_ASK_MAX_CONTEXT_CHARS } from "../quick-ask.js";
 import { extractCode, isWholeFileRewrite, spliceSelection } from "../scm/generate.js";
 import type { WindowApi } from "../vscode-shim.js";
 import type { DiagnosticContext } from "./context.js";
@@ -11,6 +11,15 @@ import { buildExplainPrompt, buildFixPrompt } from "./prompts.js";
 // which is the only place holding the document.
 export interface DiagnosticActionArg {
   context: DiagnosticContext;
+  /**
+   * The document's un-redacted local path, for ONE purpose: looking the same
+   * document up again in `textOfDocument` before diffing. It must never reach a
+   * payload or the egress manifest — `diagnosticMeta` uses `context.fileName`,
+   * the redacted basename, and neither `buildExplainPrompt` nor
+   * `buildFixPrompt` is given this field. A directory in an agent prompt is
+   * exactly what `redactPath` exists to prevent.
+   */
+  documentPath: string;
   fullText: string;
   query: string;
 }
@@ -38,6 +47,13 @@ export interface DiagnosticCommandDeps {
   agent(): string; // askAgent() setting; "" = omit
   openReadonly(title: string, content: string): Promise<void>;
   openDiff(opts: { title: string; left: string; right: string; fileName: string }): Promise<void>;
+  /**
+   * The current text of the OPEN document at that local path, or undefined when
+   * no open document has it. Deliberately not "the focused editor": the user
+   * moving to another tab while a request is in flight must not decide whether
+   * the staleness check can run. Wired over `workspace.textDocuments`.
+   */
+  textOfDocument(path: string): string | undefined;
   /** Seeds the existing search Quick Pick. No model, no gate. */
   search(query: string): void;
   log: Logger;
@@ -73,6 +89,7 @@ function asArg(value: unknown): DiagnosticActionArg | undefined {
   const context = rec["context"];
   if (typeof context !== "object" || context === null) return undefined;
   if (typeof rec["fullText"] !== "string" || typeof rec["query"] !== "string") return undefined;
+  if (typeof rec["documentPath"] !== "string") return undefined;
   return value as DiagnosticActionArg;
 }
 
@@ -114,19 +131,6 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
     return client;
   };
 
-  // The live text of the document the diagnostic came from, or undefined when
-  // we cannot tell it is the same document — no editor is focused, or the user
-  // moved to another file while the request was in flight. Undefined is
-  // "unknown", not "changed": the fix path proceeds on its snapshot rather than
-  // refusing on a guess. The comparison is on the redacted basename because that
-  // is all DiagnosticContext carries; a same-named file in another directory is
-  // the residual false positive, and it errs toward not opening a diff.
-  const liveText = (ctx: DiagnosticContext): string | undefined => {
-    const doc = deps.window.activeTextEditor?.document;
-    if (doc === undefined) return undefined;
-    return redactPath(doc.fileName) === ctx.fileName ? doc.getText() : undefined;
-  };
-
   const invoke = async (
     client: DiagnosticClientLike,
     prompt: string,
@@ -158,7 +162,7 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
       await deps.openReadonly("Nimbus explanation.md", reply);
     }),
 
-    fix: contain("diagnosticFix", "suggest a fix", async ({ context, fullText }) => {
+    fix: contain("diagnosticFix", "suggest a fix", async ({ context, documentPath, fullText }) => {
       const client = requireClient();
       if (client === undefined) return;
       const reply = await invoke(
@@ -171,10 +175,19 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
       // fullText was captured when the code action was CREATED — before the
       // request went out. If the user edited the file while it was in flight,
       // both sides of the diff are stale: the left no longer matches the buffer,
-      // and the splice offsets point at lines that have moved. Say so rather
-      // than opening a diff that misrepresents the change.
-      const live = liveText(context);
-      if (live !== undefined && live !== fullText) {
+      // and the splice offsets point at lines that have moved. Re-read the
+      // source by PATH — not through whatever happens to be focused now — and
+      // refuse if it cannot be resolved: a diff we cannot check against the file
+      // it claims to change is the failure worth being loud about.
+      const live = deps.textOfDocument(documentPath);
+      if (live === undefined) {
+        deps.log.debug("diagnostics: source document is no longer open; not diffing");
+        void deps.window.showWarningMessage(
+          `Nimbus: ${context.fileName} could not be re-read, so the fix could not be checked against the current file. Re-open it and re-run the action.`,
+        );
+        return;
+      }
+      if (live !== fullText) {
         deps.log.debug("diagnostics: file changed while the fix was in flight; not diffing");
         void deps.window.showWarningMessage(
           `Nimbus: ${context.fileName} changed while the fix was being generated, so the diff would be misleading. Re-run the action.`,

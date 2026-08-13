@@ -83,6 +83,9 @@ export const workspace = {
   openTextDocument: async (uri: unknown) => ({ uri }),
   isTrusted: true,
   workspaceFolders: undefined as Array<{ uri: { fsPath: string } }> | undefined,
+  // Every open document, focused or not. Assignable, so a test can seed it and
+  // drive a path-based document lookup.
+  textDocuments: [] as Array<{ uri: { fsPath: string }; getText(): string }>,
   fs: {
     writeFile: async (_uri: unknown, _content: Uint8Array) => undefined,
   },

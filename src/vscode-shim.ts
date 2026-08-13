@@ -155,6 +155,16 @@ export interface WorkspaceFolderLike {
   uri: { fsPath: string };
 }
 
+/**
+ * The slice of vscode.TextDocument needed to re-read an OPEN document by path,
+ * whether or not it has focus. `fsPath` is a local filesystem path and stays
+ * inside the extension host — nothing built from it may reach a payload.
+ */
+export interface OpenTextDocumentLike {
+  getText(range?: unknown): string;
+  uri: { fsPath: string };
+}
+
 export interface WorkspaceApi {
   getConfiguration(section: string): WorkspaceConfigSection;
   onDidChangeConfiguration(handler: (e: ConfigurationChangeEventLike) => void): DisposableLike;
@@ -162,6 +172,12 @@ export interface WorkspaceApi {
   isTrusted: boolean;
   /** Leak-check needles. Undefined when no folder is open (a loose file). */
   workspaceFolders: readonly WorkspaceFolderLike[] | undefined;
+  /**
+   * Every document VS Code currently holds open, focused or not. Focus is the
+   * wrong identity for "is this still the file the request was about" — the user
+   * moves around while a request is in flight — so lookups here match on path.
+   */
+  textDocuments: readonly OpenTextDocumentLike[];
 }
 
 export interface MementoLike {

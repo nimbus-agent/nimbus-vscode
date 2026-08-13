@@ -104,6 +104,7 @@ describe("registerDiagnosticCodeActions", () => {
     const actions = drive([diagnostic]) ?? [];
     const arg = actions[0]?.command?.arguments?.[0] as {
       context: { fileName: string; offsets: { start: number; end: number } };
+      documentPath: string;
       fullText: string;
     };
     // Redacted to a basename, and spliceable over whole lines — line 2 of the
@@ -111,6 +112,18 @@ describe("registerDiagnosticCodeActions", () => {
     expect(arg.context.fileName).toBe("a.ts");
     expect(arg.context.offsets).toEqual({ start: 19, end: 26 });
     expect(arg.fullText).toBe(fullText);
+  });
+
+  // buildArg cannot supply documentPath — the provider stamps it from the
+  // TextDocument itself, so the staleness re-read can never be pointed at some
+  // other file. It stays local: only the redacted basename is ever sent.
+  test("stamps the document's own un-redacted path, which buildArg cannot supply", () => {
+    const arg = (drive([diagnostic]) ?? [])[0]?.command?.arguments?.[0] as {
+      documentPath: string;
+      context: { fileName: string };
+    };
+    expect(arg.documentPath).toBe("/home/dev/repo/src/a.ts");
+    expect(arg.context.fileName).toBe("a.ts");
   });
 
   test("offers nothing on a hint, so the lightbulb stays quiet", () => {

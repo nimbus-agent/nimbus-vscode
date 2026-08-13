@@ -16,6 +16,7 @@ function makeWorkspace(values: Record<string, unknown>): WorkspaceApi {
     onDidChangeConfiguration: () => ({ dispose: () => undefined }),
     isTrusted: true,
     workspaceFolders: undefined,
+    textDocuments: [],
   };
 }
 

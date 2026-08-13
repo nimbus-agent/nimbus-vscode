@@ -25,28 +25,22 @@ const context: DiagnosticContext = {
 };
 
 const fullText = "const x = maybe();\nx.go();\nmore();";
-const arg: DiagnosticActionArg = { context, fullText, query: "2532 Object is possibly" };
 
-type WindowDep = Parameters<typeof createDiagnosticCommands>[0]["window"];
+// The un-redacted local path. It identifies the document for the staleness
+// re-read and nothing else — the assertions below pin that it never appears in
+// a prompt or a manifest.
+const documentPath = "/home/dev/repo/src/a.ts";
+const arg: DiagnosticActionArg = {
+  context,
+  documentPath,
+  fullText,
+  query: "2532 Object is possibly",
+};
 
-// A window whose focused editor holds `text` for `fileName` — the seam the fix
-// path reads to notice the buffer moved under it. The default harness window has
-// no activeTextEditor, which is the "cannot tell" case.
-function editorWindow(fileName: string, text: string): WindowDep {
-  return {
-    showErrorMessage: vi.fn(),
-    showInformationMessage: vi.fn(),
-    showWarningMessage: vi.fn(),
-    activeTextEditor: {
-      document: {
-        getText: () => text,
-        fileName,
-        languageId: "typescript",
-        uri: { scheme: "file" },
-      },
-      selection: { isEmpty: true, active: { line: 0 } },
-    },
-  } as unknown as WindowDep;
+// A path -> text map standing in for workspace.textDocuments. Anything not in
+// the map is "no open document has that path", which the fix path refuses on.
+function documents(open: Record<string, string>): (path: string) => string | undefined {
+  return (path) => open[path];
 }
 
 function harness(over: Partial<Parameters<typeof createDiagnosticCommands>[0]> = {}) {
@@ -61,6 +55,7 @@ function harness(over: Partial<Parameters<typeof createDiagnosticCommands>[0]> =
     agent: () => "",
     openReadonly: vi.fn().mockResolvedValue(undefined),
     openDiff: vi.fn().mockResolvedValue(undefined),
+    textOfDocument: documents({ [documentPath]: fullText }),
     search: vi.fn(),
     log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     ...over,
@@ -161,7 +156,7 @@ describe("fix", () => {
     expect(subToken.offsets).toEqual({ start: 19, end: 26 });
 
     const { cmds, deps } = harness();
-    await cmds.fix({ context: subToken, fullText, query: "2532 Object is possibly" });
+    await cmds.fix({ context: subToken, documentPath, fullText, query: "2532 Object is possibly" });
     expect(deps.openDiff).toHaveBeenCalledWith(
       expect.objectContaining({ right: "const x = maybe();\nx?.go();\nmore();" }),
     );
@@ -179,11 +174,36 @@ describe("fix", () => {
   // the agent request is in flight makes BOTH sides of the diff stale — the left
   // no longer matches the buffer and the offsets have moved — so the diff would
   // misrepresent the change.
+  //
+  // The edit is applied WHILE the agentInvoke promise is pending, which is the
+  // whole point: at the moment the request went out the document still matched.
+  // Read the liveness check before the call instead of after and this test
+  // fails, because "unchanged then, changed now" is exactly the window the
+  // guard exists to cover.
   test("refuses to diff when the file changed while the request was in flight", async () => {
+    let release: (value: unknown) => void = () => undefined;
+    const agentInvoke = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    let live = fullText;
     const { cmds, deps } = harness({
-      window: editorWindow("/home/dev/repo/src/a.ts", "const x = maybe();\n// edited\nx.go();"),
+      client: () => ({ agentInvoke }),
+      textOfDocument: (path) => (path === documentPath ? live : undefined),
     });
-    await cmds.fix(arg);
+
+    const pending = cmds.fix(arg);
+    // Let the handler run up to its await; the document is still untouched.
+    await Promise.resolve();
+    expect(agentInvoke).toHaveBeenCalledTimes(1);
+
+    // The user edits the file while the agent is still thinking.
+    live = "const x = maybe();\n// edited\nx.go();";
+    release({ reply: "```ts\nx?.go();\n```" });
+    await pending;
+
     expect(deps.openDiff).not.toHaveBeenCalled();
     expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringContaining("changed while the fix was being generated"),
@@ -191,23 +211,63 @@ describe("fix", () => {
   });
 
   test("diffs as usual when the live document still matches the snapshot", async () => {
+    const { cmds, deps } = harness();
+    await cmds.fix(arg);
+    expect(deps.openDiff).toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  // Focus is not identity: the user moving to another tab must not decide
+  // whether the check can run. The lookup is by path, so an open-but-unfocused
+  // source document still resolves and the diff opens as normal.
+  test("resolves the source document even when another file has focus", async () => {
     const { cmds, deps } = harness({
-      window: editorWindow("/home/dev/repo/src/a.ts", fullText),
+      textOfDocument: documents({
+        [documentPath]: fullText,
+        "/home/dev/repo/src/elsewhere.ts": "something else entirely",
+      }),
     });
     await cmds.fix(arg);
     expect(deps.openDiff).toHaveBeenCalled();
     expect(deps.window.showWarningMessage).not.toHaveBeenCalled();
   });
 
-  // "Unknown", not "changed": the user moved to another file while waiting, so
-  // the snapshot is the best evidence we have and refusing would be a guess.
-  test("proceeds on the snapshot when the focused editor is a different file", async () => {
+  // The old check compared redacted BASENAMES, so test/a.ts and src/a.ts were
+  // the same file. Matching on the full local path keeps them apart: the
+  // unrelated same-named document must not be mistaken for the source.
+  test("does not confuse a same-named file in another directory", async () => {
     const { cmds, deps } = harness({
-      window: editorWindow("/home/dev/repo/src/elsewhere.ts", "something else entirely"),
+      textOfDocument: documents({
+        [documentPath]: fullText,
+        "/home/dev/repo/test/a.ts": "a completely different a.ts",
+      }),
     });
     await cmds.fix(arg);
     expect(deps.openDiff).toHaveBeenCalled();
     expect(deps.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  // Refusing, not proceeding: a diff we cannot check against the file it claims
+  // to change is the unsafe direction, and it is the direction the old
+  // active-editor check defaulted to.
+  test("refuses to diff when the source document cannot be re-read", async () => {
+    const { cmds, deps } = harness({ textOfDocument: documents({}) });
+    await cmds.fix(arg);
+    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("could not be re-read"),
+    );
+  });
+
+  // documentPath is local-lookup identity, nothing more. A directory in an
+  // agent prompt is precisely what redactPath exists to prevent, and the
+  // manifest must describe what actually leaves.
+  test("never lets the local path reach the prompt or the egress manifest", async () => {
+    const { cmds, agentInvoke } = harness();
+    await cmds.fix(arg);
+    const call = agentInvoke.mock.calls[0] ?? [];
+    expect(String(call[0])).not.toContain("/home/dev/repo");
+    expect(JSON.stringify(call[2])).not.toContain("/home/dev/repo");
   });
 
   test("never applies an edit — the diff is the whole output", async () => {
