@@ -116,7 +116,7 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
 
 ### `nimbus.diagnostics.showCodeActions`
 
-`boolean` (default `true`). Puts three Nimbus actions on the lightbulb for an error or a warning: **Explain this problem**, **Suggest a fix** (shown as a diff you apply yourself — Nimbus never edits your code), and **Find prior occurrences** (a search of the local index for the same error, which reaches no model). `Information` and `Hint` diagnostics are never offered. Where a line carries several diagnostics, exactly one is chosen — highest severity first — so the lightbulb gains three entries, never three per diagnostic. The two model-bound actions route through the [pre-flight egress gate](#nimbusegressshowstatusbarbadge); all three need a connected Gateway. Set to `false` to turn the lightbulb entries off.
+`boolean` (default `true`). Puts up to three Nimbus actions on the lightbulb for an error or a warning: **Explain this problem**, **Suggest a fix** (shown as a diff you apply yourself — Nimbus never edits your code), and **Find prior occurrences** (a search of the local index for the same error, which reaches no model — offered only when the message normalizes to enough of a query to be worth searching, so some diagnostics show two entries rather than three). `Information` and `Hint` diagnostics are never offered. Where a line carries several diagnostics, exactly one is chosen — highest severity first — so the lightbulb gains at most three entries, never three per diagnostic. The two model-bound actions route through the pre-flight egress gate; all three need a connected Gateway. Set to `false` to turn the lightbulb entries off.
 
 ### `nimbus.hitlAlwaysModal`
 

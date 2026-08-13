@@ -57,6 +57,21 @@ describe("buildFixPrompt", () => {
     expect(p.toLowerCase()).toContain("replacement");
   });
 
+  // The splice consumes WHOLE LINES (see context.ts), so the prompt must ask for
+  // whole lines. A reply sized to the flagged expression would be spliced over
+  // the entire line and lose the rest of it.
+  test("asks for the whole of the flagged line, naming it", () => {
+    const p = buildFixPrompt(ctx);
+    expect(p).toContain("the whole of line 10");
+    expect(p).toContain("the entire line, not just the flagged expression");
+  });
+
+  test("names every line when the diagnostic spans more than one", () => {
+    const p = buildFixPrompt({ ...ctx, endLine: 14 });
+    expect(p).toContain("the whole of lines 10-14");
+    expect(p).toContain("every one of those lines in full");
+  });
+
   test("tells the agent not to explain, so extractCode gets a clean block", () => {
     expect(buildFixPrompt(ctx).toLowerCase()).toContain("no prose");
   });

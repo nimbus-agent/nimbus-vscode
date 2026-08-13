@@ -143,19 +143,39 @@ export class CodeAction {
   command?: { command: string; title: string; arguments?: unknown[] };
   diagnostics?: unknown[];
   isPreferred?: boolean;
+  // Declared, though real-provider.ts must never set it: a code action carrying
+  // an `edit` is APPLIED the instant the user picks it. A test can only assert
+  // it stayed undefined if the field exists to be read.
+  edit?: unknown;
   constructor(
     public title: string,
     public kind?: CodeActionKind,
   ) {}
 }
 
+export interface CodeActionsProviderLike {
+  provideCodeActions(
+    document: unknown,
+    range: unknown,
+    context: { diagnostics: readonly unknown[] },
+  ): CodeAction[] | undefined;
+}
+
 export const languages = {
   registerHoverProvider: (_selector: unknown, _provider: unknown) => ({
     dispose: () => undefined,
   }),
-  registerCodeActionsProvider: (_selector: unknown, _provider: unknown, _metadata?: unknown) => ({
-    dispose: () => undefined,
-  }),
+  // Captured, not discarded, so a test can DRIVE the registered provider.
+  // real-provider.ts guarantees every action carries a command and no `edit`,
+  // and never sets `isPreferred` — both guarantees are the ABSENCE of an
+  // assignment in glue, which nothing could observe while the provider went
+  // straight in the bin. Read it as `languages.lastCodeActionsProvider`;
+  // disposing does not clear it, so registration order is what decides.
+  lastCodeActionsProvider: undefined as CodeActionsProviderLike | undefined,
+  registerCodeActionsProvider: (_selector: unknown, provider: unknown, _metadata?: unknown) => {
+    languages.lastCodeActionsProvider = provider as CodeActionsProviderLike;
+    return { dispose: () => undefined };
+  },
 };
 export const Uri = {
   // Splits the query and fragment, as the real vscode.Uri.parse does. This

@@ -82,9 +82,10 @@ output machinery.
 
 ### Suggest a fix
 
-Sends the same context with a prompt asking for the replacement region only.
-Presentation reuses `src/scm/generate.ts` wholesale rather than growing a second
-splice path:
+Sends the same context with a prompt asking for **the whole of the diagnostic's
+lines**, rewritten — named explicitly, as *"the replacement for the whole of line
+10"* or *"…of lines 10-14"*. Presentation reuses `src/scm/generate.ts` wholesale
+rather than growing a second splice path:
 
 - `extractCode(reply)` strips the fence.
 - `isWholeFileRewrite(...)` decides whether the reply is a region or the whole
@@ -99,6 +100,17 @@ splice path:
 The diagnostic's `range` supplies the splice offsets, so unlike the docstring
 path there is never a "no selection offsets" case; the whole-file-reply case
 remains.
+
+**Reply granularity and splice granularity must be the same thing, and that
+thing is whole lines.** A diagnostic's range is usually a *sub-span of one line*
+— tsserver spans the flagged expression, ESLint the identifier — so a prompt
+that names a line while the splice consumes those few characters is a bug with a
+worked example: on `x.go();` with a TS2532 covering just the `x`, the reply
+`x?.go();` splices to `x?.go();.go();`. The whole-file guard cannot catch it,
+because it detects the opposite failure. So `buildDiagnosticContext` expands
+`offsets` to line boundaries (start of the first line, through the end of the
+last), and `buildFixPrompt` states those exact lines and asks for all of them.
+Neither half is optional: change one and the other must change with it.
 
 ### Find prior occurrences
 
@@ -289,7 +301,18 @@ At ±20 lines that clamp will effectively never fire; it is a backstop against a
 minified or single-line file where twenty "lines" is the whole bundle. It is
 reused rather than reimplemented so that if it *does* fire, the truncation
 wording and the recorded omission match every other surface, and the gate's
-preview says so instead of quietly showing less than it sends.
+preview says so instead of quietly showing less than it sends. The omission
+interpolates `QUICK_ASK_MAX_CONTEXT_CHARS` rather than spelling the number out,
+for the same reason: one budget, worded one way everywhere.
+
+The same function also produces the fix action's splice `offsets`, and those are
+**whole lines**, not the diagnostic's character-exact range: the start offset of
+`range.start.line` through the end of `range.end.line` (that line's `\n`, or the
+document end on the last line). That is the half of the contract `buildFixPrompt`
+depends on — see *Suggest a fix* above for the failure it prevents. The rest of
+the context is unaffected: `startLine` / `endLine` are 1-based display values
+used by the prompt and the egress manifest, and the ±20-line snippet is
+line-based already.
 
 ---
 
@@ -324,7 +347,8 @@ preview says so instead of quietly showing less than it sends.
 | `diagnostics-normalize.test.ts` | Table-driven over real TS, ESLint, biome, rustc and pyright messages; code prepending; path and position stripping; both quoted-token policies; that unlisted sources (rustc, pyright, gopls) fall through to `"keep"` rather than being guessed at (Part 9); the 300-char clamp; the under-12-character rejection |
 | `diagnostics-context.test.ts` | Snippet budget, clamping at both file edges, the truncation omission |
 | `diagnostics-actions.test.ts` | Severity filtering, the disconnected case (all three withheld, prior-occurrences included), the setting off, the short-query case, the one-diagnostic selection rule at every tie-break, the code-suffixed labels, the three kinds, and that no descriptor sets `isPreferred` |
-| `diagnostics-commands.test.ts` | All three commands over fake deps: spliceable and whole-file fix replies, the read-only fallback, the empty-search wording, gate cancellation |
+| `diagnostics-commands.test.ts` | All three commands over fake deps: spliceable and whole-file fix replies, a sub-token diagnostic range splicing cleanly over whole lines, the read-only fallback, the empty-search wording, gate cancellation |
+| `diagnostics-provider.test.ts` | The registered provider, driven through the vscode stub: every action carries a `command`, no `edit` and no `isPreferred`, and the chosen `vscode.Diagnostic` is attached by reference |
 | `egress-choke-point.test.ts` | Already enforces the rule; must still pass with the new call sites |
 | `egress-gate.test.ts` | The new kind prompts, its skip key round-trips, and its label renders |
 | `manifest-diagnostics.test.ts` | The three commands exist, are palette-hidden, and the setting is declared |

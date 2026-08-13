@@ -90,6 +90,7 @@ real code paths without a running editor. Keep `src/` and `test/` self-contained
 | `src/settings.ts` | Typed accessors over `nimbus.*` configuration. |
 | `src/scm/` | Dev-workflow trio (Generate Commit Message, Review Changes, Generate Tests, Generate Docstrings): pure diff/commit-message/review/generate modules behind a `GitApiLike` seam, plus `commands.ts` and `real-git.ts` (see below). |
 | `src/egress/` | The pre-flight gate: every agent-bound call routes through `gated-client.ts` (see below). Pure `leak-check.ts` / `preflight.ts`, the `gate.ts` decision table, and the `skip-store.ts` memento wrapper. |
+| `src/diagnostics/` | The lightbulb actions on an error or warning diagnostic. Pure core — `normalize.ts` (diagnostic message → index query: prepend the code, strip paths and positions, apply a per-`source` keep/drop policy to quoted tokens, reject anything too short to search on), `context.ts` (diagnostic + document → the payload, ±20 lines clamped by `clampContext`), `prompts.ts`, `actions.ts` (which actions to offer, and the single diagnostic they are offered for — one per lightbulb, by a total order, so several squiggles on a line cannot multiply the entries) — plus `commands.ts` over injected deps and `real-provider.ts`, the only file here touching `vscode`. Every action carries a `command` and no `edit`, and none sets `isPreferred`: selecting one must show a suggestion, and *Auto Fix* must never fire a model call. Explain and fix route through `gated-client.ts` under the `"diagnostic"` kind; prior-occurrences is a `searchRanked` read that reaches no model and is deliberately ungated. The fix reply is spliced back over **whole lines** — `context.ts` expands the diagnostic's range to line boundaries because `prompts.ts` asks the model for whole lines, and the two granularities must agree or a sub-token range (which is what tsserver and ESLint actually report) leaves the rest of the line behind. |
 | `src/briefs/` | The built-in agent briefs (`agentsWhy` / `agentsGhost` / `agentsConflicts` / `agentsHuddle` / `agentsJanitor` / `agentsPreflight`). Pure core — `catalog.ts` (the briefs as data), `render.ts` (brief → markdown, shared with the chat participant), `params.ts` (editor context → params, and the one place guaranteeing no **editor-derived** absolute path becomes a parameter — the prompted briefs pass user-typed refs verbatim and rely on the gate's leak warning), `namespace-store.ts` (per-workspace-folder memory of the last preflight namespace) — plus `commands.ts`. Every call routes through `gated-client.ts` under the `"brief"` egress kind, which prompts and is skippable per workspace. The chat participant's three ops briefs (`agentsCatchup` / `agentsExpert` / `agentsImpact`) route through the same seam but under the `"participant"` kind, which records rather than prompts — a modal must not interrupt a chat turn. Also `peek.ts` / `peek-hover.ts` — the `whyPeek` hover: a pure renderer plus the settle/supersede controller — behind `real-hover.ts`, which alongside `commands.ts` is the only `vscode`-touching code here. `agentsWhyPeek` is deliberately **not** gated: it takes no `timeoutMs`, returns synchronously, and carries no `brief` string or `AgentBriefBase`, so it never reaches a model. `test/unit/egress-choke-point.test.ts` discovers every `agents*` call shape in `src/` and asserts this is the only such exemption. |
 
 ## The `src/egress/` choke point
@@ -111,15 +112,19 @@ assembles context prompt by default:
 
 Two mechanisms keep it a guardrail rather than a convention:
 
-1. **Type-level.** `ScmClientLike.agentInvoke` and `LmToolsClientLike.agentInvoke`
-   take a third required `EgressMeta` argument, so a raw `NimbusClient` does not
-   satisfy them structurally — the ungated client cannot be wired in by
-   accident. Each surface gets a wrapper with its `EgressKind` fixed at wiring
-   time, so a fifth SCM command inherits the gate by construction.
+1. **By construction.** Each surface gets a wrapper with its `EgressKind` fixed
+   at wiring time, so a fifth SCM command inherits the gate rather than
+   re-deriving it. The consumer shapes (`ScmClientLike.agentInvoke`,
+   `LmToolsClientLike.agentInvoke`, `DiagnosticClientLike.agentInvoke`) take a
+   third required `EgressMeta` argument, which documents that intent and makes
+   an ungated wiring visible on sight in review. It is not, however, a
+   *type-level* guarantee, and was once commented here as if it were: TypeScript
+   assigns a function with fewer parameters to one with more, so a raw
+   `NimbusClient` satisfies those shapes unchanged. The enforcement is (2).
 2. **CI-level.** `test/unit/egress-choke-point.test.ts` asserts that
    `extension.ts` — the one place holding a real client — never touches
    `.agentInvoke` / `.askStream`, and that those call shapes appear only in
-   `gated-client.ts` plus four allowlisted consumer modules, each of which holds
+   `gated-client.ts` plus five allowlisted consumer modules, each of which holds
    an injected seam rather than a real client.
 
 Cancelling throws `EgressCancelled`; every catch treats it as a normal outcome

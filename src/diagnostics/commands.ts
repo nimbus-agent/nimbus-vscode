@@ -1,7 +1,7 @@
 import { isEgressCancelled } from "../egress/gated-client.js";
 import type { EgressMeta } from "../egress/preflight.js";
 import { errMsg, type Logger } from "../logging.js";
-import { extractReply } from "../quick-ask.js";
+import { extractReply, QUICK_ASK_MAX_CONTEXT_CHARS } from "../quick-ask.js";
 import { extractCode, isWholeFileRewrite, spliceSelection } from "../scm/generate.js";
 import type { WindowApi } from "../vscode-shim.js";
 import type { DiagnosticContext } from "./context.js";
@@ -15,8 +15,14 @@ export interface DiagnosticActionArg {
   query: string;
 }
 
-// The third argument is the guardrail: the raw NimbusClient does not satisfy
-// this shape, so only a wrapper from src/egress/gated-client.ts fits here.
+// The third argument documents intent — only a wrapper from
+// src/egress/gated-client.ts has an EgressMeta to pass — and makes an ungated
+// wiring obvious to a reviewer. It is NOT a type-level guarantee: TypeScript
+// assigns a function with fewer parameters to one with more, so the raw
+// NimbusClient's `agentInvoke(input, opts?)` satisfies this shape unchanged.
+// The real enforcement is test/unit/egress-choke-point.test.ts, which asserts
+// extension.ts — the one place holding a real client — never names the raw
+// member; this module's place on that test's ALLOWED list is honour-system.
 export interface DiagnosticClientLike {
   agentInvoke(
     input: string,
@@ -44,7 +50,12 @@ export function diagnosticMeta(ctx: DiagnosticContext, action: string): EgressMe
   const omissions = [
     `The rest of the file is not sent — only lines ${ctx.startLine}-${ctx.endLine} and their surrounding context.`,
   ];
-  if (ctx.truncated) omissions.push("Context truncated at 50000 characters.");
+  // Interpolated, not spelled out: context.ts clamps with this same constant,
+  // and every other surface words it this way. A literal would drift silently
+  // the day the budget changes.
+  if (ctx.truncated) {
+    omissions.push(`Context truncated at ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`);
+  }
   return {
     action,
     files: [

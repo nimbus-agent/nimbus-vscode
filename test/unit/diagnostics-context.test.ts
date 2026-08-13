@@ -60,10 +60,28 @@ describe("buildDiagnosticContext", () => {
     expect(ctx.endLine).toBe(10);
   });
 
-  test("carries character offsets for the splice", () => {
+  test("expands the splice offsets to whole lines, ignoring the characters", () => {
+    // at(2) is characters 2-6 of line 2, but the splice must cover the WHOLE
+    // line, because buildFixPrompt asks the model to replace whole lines.
+    // "line 0\n" + "line 1\n" is 14 chars, so line 2 starts at 14 — not 16, the
+    // character-exact start — and ends at 20, the offset of its own "\n".
     const ctx = build(lines(30), at(2));
-    // "line 0\nline 1\n" is 14 chars; +2 for the range's start character.
-    expect(ctx.offsets).toEqual({ start: 16, end: 20 });
+    expect(ctx.offsets).toEqual({ start: 14, end: 20 });
+  });
+
+  test("ends the splice at the document end on the last line, which has no newline", () => {
+    // lines(3) is "line 0\nline 1\nline 2" — 20 chars, no trailing newline.
+    const ctx = build(lines(3), at(2));
+    expect(ctx.offsets).toEqual({ start: 14, end: 20 });
+  });
+
+  test("covers every line a multi-line diagnostic spans", () => {
+    const ctx = build(lines(30), {
+      ...at(1),
+      range: { start: { line: 1, character: 4 }, end: { line: 3, character: 1 } },
+    });
+    // Line 1 starts at 7; line 3 ends at its "\n", offset 27.
+    expect(ctx.offsets).toEqual({ start: 7, end: 27 });
   });
 
   test("labels severity, mapping VS Code's numbering", () => {

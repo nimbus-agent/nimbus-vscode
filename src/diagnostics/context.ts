@@ -36,7 +36,11 @@ export interface DiagnosticContext {
   endLine: number;
   snippet: string;
   truncated: boolean;
-  /** Character offsets into the FULL document, for splicing a fix back in. */
+  /**
+   * Character offsets into the FULL document, for splicing a fix back in.
+   * WHOLE LINES: the start of the diagnostic's first line through the end of
+   * its last. See buildDiagnosticContext for why.
+   */
   offsets: { start: number; end: number };
 }
 
@@ -50,10 +54,14 @@ export function lineStartOffsets(text: string): readonly number[] {
   return starts;
 }
 
-function offsetOf(starts: readonly number[], pos: PositionLike, textLength: number): number {
-  const line = Math.min(Math.max(pos.line, 0), starts.length - 1);
-  const start = starts[line] ?? 0;
-  return Math.min(start + Math.max(pos.character, 0), textLength);
+function clampLine(starts: readonly number[], line: number): number {
+  return Math.min(Math.max(line, 0), starts.length - 1);
+}
+
+// Where a line ends: the offset its terminating "\n" sits at, or the end of the
+// document on the last line, which has none.
+function lineEndOffset(starts: readonly number[], line: number, textLength: number): number {
+  return line >= starts.length - 1 ? textLength : (starts[line + 1] ?? textLength) - 1;
 }
 
 export function buildDiagnosticContext(input: {
@@ -70,7 +78,7 @@ export function buildDiagnosticContext(input: {
   const last = Math.min(diagnostic.range.end.line + DIAGNOSTIC_CONTEXT_LINES, lastLine);
   const from = starts[first] ?? 0;
   // Everything up to the start of the line after `last` — minus its newline.
-  const to = last >= lastLine ? fullText.length : (starts[last + 1] ?? fullText.length) - 1;
+  const to = lineEndOffset(starts, last, fullText.length);
 
   // The same helper and the same budget the SCM trio uses, rather than a second
   // differently-tuned number. At 41 lines this effectively never fires; it is a
@@ -91,9 +99,15 @@ export function buildDiagnosticContext(input: {
     endLine: diagnostic.range.end.line + 1,
     snippet,
     truncated,
+    // WHOLE LINES, deliberately, and not the diagnostic's character-exact
+    // range: buildFixPrompt tells the model which whole LINES to replace, so
+    // the splice must consume exactly those lines or the two disagree. Sub-line
+    // ranges are the norm — tsserver spans the flagged expression, ESLint the
+    // identifier — and splicing a whole rewritten statement into a sub-span of
+    // one line leaves the rest of the original line behind.
     offsets: {
-      start: offsetOf(starts, diagnostic.range.start, fullText.length),
-      end: offsetOf(starts, diagnostic.range.end, fullText.length),
+      start: starts[clampLine(starts, diagnostic.range.start.line)] ?? 0,
+      end: lineEndOffset(starts, clampLine(starts, diagnostic.range.end.line), fullText.length),
     },
   };
 }

@@ -4,7 +4,7 @@ import {
   type DiagnosticActionArg,
   diagnosticMeta,
 } from "../../src/diagnostics/commands.js";
-import type { DiagnosticContext } from "../../src/diagnostics/context.js";
+import { buildDiagnosticContext, type DiagnosticContext } from "../../src/diagnostics/context.js";
 
 const context: DiagnosticContext = {
   fileName: "a.ts",
@@ -17,9 +17,10 @@ const context: DiagnosticContext = {
   endLine: 2,
   snippet: "const x = maybe();\nx.go();",
   truncated: false,
-  // 19 is the start of line 2 ("const x = maybe();\n" is 19 chars); 26 is its
-  // end. The range MUST cover the trailing ";" — stopping at 25 splices in a
-  // replacement that already ends in ";" and leaves the original's behind.
+  // Whole-line offsets, as buildDiagnosticContext produces: 19 is the start of
+  // line 2 ("const x = maybe();\n" is 19 chars) and 26 is the offset of its
+  // "\n". They must cover the WHOLE line — the model is asked to replace whole
+  // lines, so a splice stopping short leaves the rest of the original behind.
   offsets: { start: 19, end: 26 },
 };
 
@@ -113,6 +114,35 @@ describe("fix", () => {
       right: "const x = maybe();\nx?.go();\nmore();",
       fileName: "a.ts",
     });
+  });
+
+  // Regression: the fix prompt asks for whole lines, so the splice must consume
+  // whole lines. When the offsets tracked the diagnostic's character-exact range
+  // instead — which for a TS2532 is just the `x` — splicing the reply produced
+  // "x?.go();.go();": the statement went in, the rest of the original line
+  // stayed. Sub-token ranges are the norm, not a corner case, and the whole-file
+  // guard cannot catch this because it detects the opposite failure.
+  test("splices whole lines, so a sub-token diagnostic range cannot duplicate one", async () => {
+    const subToken = buildDiagnosticContext({
+      fullText,
+      fileName: "/home/dev/repo/src/a.ts",
+      languageId: "typescript",
+      // What tsserver actually reports for TS2532: the flagged expression alone.
+      diagnostic: {
+        message: "Object is possibly 'undefined'.",
+        severity: 0,
+        source: "ts",
+        code: 2532,
+        range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+      },
+    });
+    expect(subToken.offsets).toEqual({ start: 19, end: 26 });
+
+    const { cmds, deps } = harness();
+    await cmds.fix({ context: subToken, fullText, query: "2532 Object is possibly" });
+    expect(deps.openDiff).toHaveBeenCalledWith(
+      expect.objectContaining({ right: "const x = maybe();\nx?.go();\nmore();" }),
+    );
   });
 
   test("diffs whole-file rather than splicing when the reply is the whole file", async () => {

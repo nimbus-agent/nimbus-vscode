@@ -62,9 +62,18 @@ export type GatedAgentInvoke<R> = (
  */
 export type ProgressRunner = <R>(title: string, body: () => Promise<R>) => Promise<R>;
 
-// The required third argument is the type-level half of the guardrail: the raw
-// NimbusClient no longer satisfies ScmClientLike or LmToolsClientLike
-// structurally, so the ungated client cannot be wired in by accident.
+// The required third argument documents intent: a consumer's *ClientLike shape
+// takes an EgressMeta, and only a wrapper built here has one to pass, so wiring
+// a raw client is visible on sight in review.
+//
+// It is NOT a type-level guarantee, and was long commented here as if it were.
+// TypeScript assigns a function with FEWER parameters to one with more, so the
+// raw NimbusClient's `agentInvoke(input, opts?)` still satisfies ScmClientLike
+// and LmToolsClientLike structurally — verified with a standalone probe under
+// --strict --exactOptionalPropertyTypes. The enforcement that does hold is
+// test/unit/egress-choke-point.test.ts: extension.ts, the one place holding a
+// real client, is checked for the raw member access, and every other file
+// naming it must be on that test's (honour-system) ALLOWED list.
 export function gateAgentInvoke<R>(
   raw: (input: string, opts: { stream: boolean; agent?: string }) => Promise<R>,
   gate: EgressGate,
