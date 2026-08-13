@@ -103,14 +103,60 @@ remains.
 ### Find prior occurrences
 
 `searchRanked({ name: normalizedQuery, limit })` over the local index. This
-action reaches **no model and produces no egress**, so it is not gated and needs
-no connection to anything but the Gateway itself — the same standing as the
-existing Search command, which is the surface whose Quick Pick rendering it
-reuses.
+action reaches **no model and produces no egress**, so it is not gated — the
+same standing as the existing Search command, which is the surface whose Quick
+Pick rendering it reuses.
+
+It does still require the Gateway. `searchRanked` is an IPC call over the same
+socket as everything else, so "ungated" and "works offline" are not the same
+claim, and this spec makes only the first. The distinction that *does* exist is
+one the extension cannot act on: prior-occurrences needs no LLM provider
+configured, where explain and fix do — but no RPC reports provider readiness, so
+the extension has no way to offer the third action when the first two would fail.
+Both would surface as a Gateway-side error.
 
 Empty results say **"Nimbus: nothing in the local index matches this error."**
 Not "no prior occurrences" — on a thin index those are very different claims,
 and the surface must not make the stronger one.
+
+### Code action kinds, and never `isPreferred`
+
+All three carry namespaced kinds under the quick-fix family —
+`quickfix.nimbus.explain`, `quickfix.nimbus.fix`,
+`quickfix.nimbus.priorOccurrences` — and each sets `diagnostics: [diagnostic]`
+so VS Code associates it with the squiggle that produced it.
+
+Staying inside `quickfix` is deliberate: `Ctrl+.` / `Cmd+.` requests that family,
+and it is the *only* keyboard path to these actions since the commands are
+palette-hidden (Part 6). Putting explain and prior-occurrences under
+`CodeActionKind.Empty` to keep the quick-fix list clean would trade the tidier
+menu for the actions being unreachable from the keyboard — the wrong trade.
+Namespacing under `quickfix.nimbus.*` keeps them reachable while still letting a
+user or a workspace filter the whole family by prefix.
+
+**No action ever sets `isPreferred: true`.** *Auto Fix*
+(`editor.action.autoFix`, `Shift+Alt+.`) considers only preferred actions, and a
+keystroke a user presses to tidy lint must never fire a gated model call. This is
+a one-word field and the single easiest way to get this surface wrong, so it is
+pinned by a test rather than left to review.
+
+### How many actions appear
+
+A line commonly carries several diagnostics — a compiler error and a lint
+warning on the same expression is routine. Three actions per diagnostic would put
+six to nine Nimbus entries in one lightbulb, which is noise, not offering.
+
+`actions.ts` therefore selects **exactly one diagnostic** from those in the
+requested range and offers exactly three actions for it, so the Nimbus
+contribution to the lightbulb is capped at three entries always. The selection
+rule is pure and totally ordered, so it is testable and stable across repeated
+`provideCodeActions` calls: highest severity first (`Error` before `Warning`),
+then the smallest range, then the order VS Code supplied them.
+
+When the range held more than one diagnostic, the action labels name the chosen
+one — *Nimbus: Explain this problem (TS2345)* — so the user can see which
+squiggle they are about to ask about, and falls back to the plain label when the
+diagnostic has no `code`.
 
 ---
 
@@ -255,7 +301,10 @@ preview says so instead of quietly showing less than it sends.
   where formatters and spell-checkers live; a lightbulb on every one of them
   would make the surface feel like spam. Not configurable in this slice.
 - **Connection** is checked before any payload is assembled, matching the SCM
-  commands; while disconnected, `actions.ts` offers nothing.
+  commands. While disconnected, `actions.ts` offers **nothing at all** —
+  including prior-occurrences, because `searchRanked` is an IPC call over the
+  same Gateway socket and would fail identically. "Ungated" is not "offline"
+  (Part 1).
 
 ---
 
@@ -263,9 +312,9 @@ preview says so instead of quietly showing less than it sends.
 
 | File | Covers |
 | --- | --- |
-| `diagnostics-normalize.test.ts` | Table-driven over real TS, ESLint, biome, rustc and pyright messages; code prepending; path and position stripping; both quoted-token policies; the 300-char clamp; the under-12-character rejection |
+| `diagnostics-normalize.test.ts` | Table-driven over real TS, ESLint, biome, rustc and pyright messages; code prepending; path and position stripping; both quoted-token policies; that unlisted sources (rustc, pyright, gopls) fall through to `"keep"` rather than being guessed at (Part 9); the 300-char clamp; the under-12-character rejection |
 | `diagnostics-context.test.ts` | Snippet budget, clamping at both file edges, the truncation omission |
-| `diagnostics-actions.test.ts` | Severity filtering, the disconnected case, the setting off, the short-query case |
+| `diagnostics-actions.test.ts` | Severity filtering, the disconnected case (all three withheld, prior-occurrences included), the setting off, the short-query case, the one-diagnostic selection rule at every tie-break, the code-suffixed labels, the three kinds, and that no descriptor sets `isPreferred` |
 | `diagnostics-commands.test.ts` | All three commands over fake deps: spliceable and whole-file fix replies, the read-only fallback, the empty-search wording, gate cancellation |
 | `egress-choke-point.test.ts` | Already enforces the rule; must still pass with the new call sites |
 | `egress-gate.test.ts` | The new kind prompts, its skip key round-trips, and its label renders |
@@ -297,18 +346,74 @@ if someone later "tidied" all three actions onto one path.
 
 ---
 
+## Part 9 — Deferred, with triggers
+
+Three suggestions from review are deliberately not in this slice. Each is
+recorded with the evidence that would pull it in, so deferring is a decision
+rather than an omission.
+
+### Caching and debouncing `provideCodeActions`
+
+VS Code does call the provider often. The work per call is a severity filter, a
+totally-ordered pick over a handful of diagnostics, and a few regexes over one
+short string — no I/O, no RPC, no allocation of consequence. A cache would add
+an invalidation surface (diagnostics change under the same range constantly) to
+save microseconds nobody has measured.
+
+**Trigger:** a profile showing `provideCodeActions` on a hot path, or observable
+typing lag in the F5 pass. The correct first fix then is to defer normalization
+out of the provider, not to add a cache.
+
+### Configurable quoted-token policy
+
+Making the keep/drop table user-configurable would ask users to reason about
+their language server's quoting conventions to fill in a settings array. That is
+a knob almost nobody can set correctly, and it would need docs, validation, and
+tests for a decision the extension is better placed to make.
+
+Expanding the built-in table beyond `eslint` and `biome` is also deferred, and
+for a more interesting reason: **the keep/drop split is clean for linters and
+mixed for compilers.** `rustc` backtick-quotes identifiers in ``cannot borrow `x`
+as mutable`` and types in ``expected `u32`, found `String` ``. Pyright quotes an
+identifier in `"foo" is not defined` and a type in `Argument of type "int"`. A
+single per-source verdict is simply the wrong shape for those sources — which is
+precisely why the default is `"keep"` and why the table has two entries rather
+than a speculative six. Adding a source on a guess would make its queries worse,
+not better.
+
+**Trigger:** an observed bad query from a specific source, which tells us which
+way that source should map. Per-*pattern* rules, if ever needed, are a different
+design than a per-source table and would get their own review.
+
+### `nimbus.diagnostics.ignoredSources`
+
+The noise this would mute is now largely addressed upstream of it: capping the
+Nimbus contribution at three entries for one selected diagnostic (Part 1) means
+a verbose linter no longer multiplies the lightbulb. What remains is the case of
+a source whose warnings are never worth asking about at all.
+
+**Trigger:** the F5 pass, or early use, showing a source that consistently earns
+a useless lightbulb. It is a small addition — one array setting, one filter in
+`actions.ts`, one docs line — and cheaper to add on evidence than to tune blind.
+
+---
+
 ## Verification
 
 Unit tests cannot prove a code action renders. Before this merges, an Extension
 Development Host pass with a Gateway running must confirm:
 
-1. The lightbulb appears on a real TypeScript error and lists exactly the
-   expected actions — and does **not** appear on a hint.
-2. The pre-flight modal shows kind `"diagnostic"` with the redacted basename and
+1. The lightbulb appears on a real TypeScript error and lists exactly three
+   Nimbus actions — and does **not** appear on a hint. On a line carrying both a
+   compiler error and an ESLint warning, still exactly three, labelled with the
+   error's code.
+2. `Ctrl+.` reaches all three (they are palette-hidden, so this is the only
+   keyboard path), and `Shift+Alt+.` — Auto Fix — fires **none** of them.
+3. The pre-flight modal shows kind `"diagnostic"` with the redacted basename and
    the line range, and *Always send here* persists per workspace.
-3. The fix action renders a diff scoped to the fix, and the fallback path opens
+4. The fix action renders a diff scoped to the fix, and the fallback path opens
    a read-only tab rather than a whole-file mismatch.
-4. Prior occurrences opens the Quick Pick, and an empty result shows the
+5. Prior occurrences opens the Quick Pick, and an empty result shows the
    "nothing in the local index matches" wording.
 
 **Existing debt to clear in the same pass:** the Workflows view (#95) and the
