@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.16.0...v0.17.0) (2026-08-13)
+
+
+### Features
+
+* **diagnostics:** offer explain, fix and prior-occurrences on the lightbulb ([#98](https://github.com/nimbus-agent/nimbus-vscode/issues/98)) ([aebe5c9](https://github.com/nimbus-agent/nimbus-vscode/commit/aebe5c9894d611c67e3ff2c3d955236995568147))
+
 ## [0.16.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.15.0...v0.16.0) (2026-08-13)
 
 
