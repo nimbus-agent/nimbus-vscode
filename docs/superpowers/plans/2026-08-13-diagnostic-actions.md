@@ -202,7 +202,15 @@ export const NORMALIZED_QUERY_MIN_CHARS = 12;
 
 // A path token: contains a separator AND a dot-extension. The conjunction is the
 // point — it drops `src/widgets/thing.ts` while keeping `Array<string>`.
-const PATH_TOKEN = /(?:[A-Za-z]:)?[^\s'"`()]*[\\/][^\s'"`()]*\.[A-Za-z0-9]+/g;
+//
+// The optional quote group + backreference matters: messages quote their paths
+// ("Cannot find module './widgets/thing.ts'"), and the character class stops at
+// the quote, so without this the removal would leave an empty '' behind. A
+// separate empty-quote cleanup pass would be worse — it matches the closing and
+// opening quotes of two ADJACENT quoted tokens ("'a' 'b'"). A backreference to a
+// group that did not participate matches the empty string, so the unquoted
+// Windows-path case still works.
+const PATH_TOKEN = /(['"`])?(?:[A-Za-z]:)?[^\s'"`()]*[\\/][^\s'"`()]*\.[A-Za-z0-9]+\1?/g;
 
 // `line 42`, `:17:9`, `(12,4)`.
 const POSITION = /\bline \d+\b|:\d+:\d+|\(\d+,\s*\d+\)/g;
@@ -1146,7 +1154,10 @@ const context: DiagnosticContext = {
   endLine: 2,
   snippet: "const x = maybe();\nx.go();",
   truncated: false,
-  offsets: { start: 19, end: 25 },
+  // 19 is the start of line 2 ("const x = maybe();\n" is 19 chars); 26 is its
+  // end. The range MUST cover the trailing ";" — stopping at 25 splices in a
+  // replacement that already ends in ";" and leaves the original's behind.
+  offsets: { start: 19, end: 26 },
 };
 
 const fullText = "const x = maybe();\nx.go();\nmore();";
