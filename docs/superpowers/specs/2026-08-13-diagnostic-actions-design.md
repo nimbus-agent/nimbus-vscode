@@ -115,9 +115,17 @@ configured, where explain and fix do — but no RPC reports provider readiness, 
 the extension has no way to offer the third action when the first two would fail.
 Both would surface as a Gateway-side error.
 
-Empty results say **"Nimbus: nothing in the local index matches this error."**
-Not "no prior occurrences" — on a thin index those are very different claims,
-and the surface must not make the stronger one.
+Rendering reuses the whole picker, not just its rows: `extension.ts` already has
+`runSearch(initialValue, { placeholder, exclude })`, the live debounced Quick
+Pick that `Search Selection` seeds. Prior-occurrences seeds it the same way with
+the normalized query, so it inherits the debounce, the latest-wins guard, the
+duplicate badge and the open-source behaviour for free.
+
+The one addition it needs is an optional `emptyText` in that options object.
+`runSearch` currently shows `"No matching index records"` on an empty result;
+this surface must say **"Nimbus: nothing in the local index matches this
+error."** Not "no prior occurrences" — on a thin index those are very different
+claims, and the surface must not make the stronger one.
 
 ### Code action kinds, and never `isPreferred`
 
@@ -258,8 +266,9 @@ scheme for a distinction nobody has asked for.
 `EgressMeta` per action:
 
 - `action`: `"Explain Problem"` / `"Suggest Fix"`.
-- `files`: one entry, `name` redacted to a basename, `scope` reading
-  `"lines N–M around the problem"`.
+- `files`: one entry, `name` redacted to a basename, `note` reading
+  `"lines N–M around the problem"`. (`EgressFile` is `{ name, note }` — the
+  brainstorm called the second field `scope`, which is not what it is called.)
 - `omissions`: always states that the rest of the file is not sent; adds a
   truncation note when the snippet hit its budget.
 
