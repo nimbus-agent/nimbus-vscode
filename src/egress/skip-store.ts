@@ -6,7 +6,7 @@ import type { MementoLike } from "../vscode-shim.js";
 // and a workflow run, where the user picks a name and the Gateway expands saved
 // steps into model prompts. The other three never prompt, so they have nothing
 // to suppress.
-export type SkippableKind = "quickAsk" | "scm" | "brief" | "workflow";
+export type SkippableKind = "quickAsk" | "scm" | "brief" | "workflow" | "diagnostic";
 
 // Workspace-scoped by construction (the caller passes ctx.workspaceState), so
 // trusting your own repo does not carry into a client repo opened next week.
@@ -15,6 +15,7 @@ const KEYS: Record<SkippableKind, string> = {
   scm: "nimbus.preflight.skip.scm",
   brief: "nimbus.preflight.skip.brief",
   workflow: "nimbus.preflight.skip.workflow",
+  diagnostic: "nimbus.preflight.skip.diagnostic",
 };
 
 export interface PreflightSkipStore {

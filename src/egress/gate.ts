@@ -17,6 +17,7 @@ export const SKIP_LABEL: Record<SkippableKind, string> = {
   scm: "Source Control",
   brief: "Agent Briefs",
   workflow: "Workflow Runs",
+  diagnostic: "Diagnostic Actions",
 };
 
 const SEND = "Send";
@@ -28,9 +29,17 @@ const CANCEL = "Cancel";
 // upstream by its own inline card. Briefs prompt because the extension derives
 // their parameters from the editor, not from a user keystroke. A workflow run
 // prompts for the same reason and then some: one click can send many model
-// prompts, expanded Gateway-side from steps saved long before.
+// prompts, expanded Gateway-side from steps saved long before. A diagnostic
+// action prompts because the extension assembles the snippet from the editor,
+// not from a user keystroke.
 function skippableKind(kind: EgressKind): SkippableKind | undefined {
-  if (kind === "quickAsk" || kind === "scm" || kind === "brief" || kind === "workflow") {
+  if (
+    kind === "quickAsk" ||
+    kind === "scm" ||
+    kind === "brief" ||
+    kind === "workflow" ||
+    kind === "diagnostic"
+  ) {
     return kind;
   }
   return undefined;
