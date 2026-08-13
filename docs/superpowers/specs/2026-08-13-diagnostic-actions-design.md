@@ -111,11 +111,26 @@ difference is whether the right-hand side was spliced.
 The fix path also checks the document has not moved under it. `fullText` is
 captured when the code action is created; if the user edits the file while the
 request is in flight, both sides of the diff are stale — the left no longer
-matches the buffer and the offsets point at lines that have shifted. Before
-opening the diff the command compares the focused editor's live text against the
-snapshot and, when they differ, says so and opens nothing. A focused editor for
-a *different* file is "cannot tell", not "changed", and the command proceeds on
-its snapshot.
+matches the buffer and the offsets point at lines that have shifted. So the
+command re-reads the source **by its full local path** (`textOfDocument`, over
+`workspace.textDocuments`) rather than through whatever editor happens to be
+focused: the user moving to another tab must not decide whether the check can
+run, and a basename comparison would confuse `src/a.ts` with `test/a.ts`.
+
+That read happens **twice, and the two are not interchangeable**:
+
+- **Before `agentInvoke`.** A source document already closed when the lightbulb
+  is clicked can only ever be refused, so refusing up front spends no model call
+  and raises no pre-flight gate prompt.
+- **After the reply.** This is the only read that can see the file changing
+  *while the request was in flight* — unchanged when the request went out,
+  changed by the time it came back. Unresolvable **or** different from the
+  snapshot both refuse: a diff that cannot be checked against the file it claims
+  to change is the unsafe direction.
+
+Hoisting the second read above the call would collapse the pair and lose that
+window, so it stays where it is; the two refusals are worded differently ("is
+not open" vs "could not be re-read") so the situations are told apart.
 
 **Reply granularity and splice granularity must be the same thing, and that
 thing is whole lines.** A diagnostic's range is usually a *sub-span of one line*
@@ -127,6 +142,19 @@ because it detects the opposite failure. So `buildDiagnosticContext` expands
 `offsets` to line boundaries (start of the first line, through the end of the
 last), and `buildFixPrompt` states those exact lines and asks for all of them.
 Neither half is optional: change one and the other must change with it.
+
+**Which line is "the last" is not `range.end.line`.** A `vscode.Diagnostic`'s
+range end is **exclusive**, and plenty of producers report a single-line problem
+as `end: { line: N + 1, character: 0 }` rather than the end of line `N`. Taken
+literally, whole-line expansion then swallows line `N + 1` — an untouched line
+pulled into the display range, the snippet and the splice, so the model is asked
+to reproduce code it has no reason to change and any byte it fails to echo back
+reads as a modification in the diff. So an end at `character === 0` on a line
+*after* the start line backs off to the previous line, clamped so it can never
+precede the start; an end at `character > 0` is an ordinary intra-line end and
+is used as-is. One helper computes that effective last line and all three
+consumers — `endLine`, the snippet's last line and `offsets.end` — read it, so
+they cannot drift apart.
 
 ### Find prior occurrences
 
@@ -323,8 +351,12 @@ for the same reason: one budget, worded one way everywhere.
 
 The same function also produces the fix action's splice `offsets`, and those are
 **whole lines**, not the diagnostic's character-exact range: the start offset of
-`range.start.line` through the end of `range.end.line` (that line's `\n`, or the
-document end on the last line). That is the half of the contract `buildFixPrompt`
+`range.start.line` through the end of the diagnostic's *effective* last line —
+`range.end.line`, or the line before it when the exclusive end sits at column
+zero (that line's `\n`, or the document end on the last line). That effective
+last line is also what `endLine` and the ±20-line window are measured from, so
+display, snippet and splice cannot disagree. That is the half of the contract
+`buildFixPrompt`
 depends on — see *Suggest a fix* above for the failure it prevents. The rest of
 the context is unaffected: `startLine` / `endLine` are 1-based display values
 used by the prompt and the egress manifest, and the ±20-line snippet is
@@ -361,9 +393,9 @@ line-based already.
 | File | Covers |
 | --- | --- |
 | `diagnostics-normalize.test.ts` | Table-driven over real TS, ESLint, biome, rustc and pyright messages; code prepending; path and position stripping; both quoted-token policies; that unlisted sources (rustc, pyright, gopls) fall through to `"keep"` rather than being guessed at (Part 9); the 300-char clamp; the under-12-character rejection |
-| `diagnostics-context.test.ts` | Snippet budget, clamping at both file edges, the truncation omission |
+| `diagnostics-context.test.ts` | Snippet budget, clamping at both file edges, the truncation omission, whole-line splice offsets, and the exclusive range end at column zero (single-line, genuinely multi-line, and degenerate) |
 | `diagnostics-actions.test.ts` | Severity filtering, the disconnected case (all three withheld, prior-occurrences included), the setting off, the short-query case, the one-diagnostic selection rule at every tie-break, the code-suffixed labels, the three kinds, and that no descriptor sets `isPreferred` |
-| `diagnostics-commands.test.ts` | All three commands over fake deps: spliceable and whole-file fix replies (both end in a diff — there is no read-only fallback here), a sub-token diagnostic range splicing cleanly over whole lines, the stale-document refusal and the two cases it must not fire on, the empty-search wording, gate cancellation |
+| `diagnostics-commands.test.ts` | All three commands over fake deps: spliceable and whole-file fix replies (both end in a diff — there is no read-only fallback here), a sub-token diagnostic range splicing cleanly over whole lines, the pre-send refusal when the document is already closed (no `agentInvoke` at all), the post-reply stale-document refusal and the two cases it must not fire on, the empty-search wording, gate cancellation |
 | `diagnostics-provider.test.ts` | The registered provider, driven through the vscode stub: every action carries a `command`, no `edit` and no `isPreferred`, and the chosen `vscode.Diagnostic` is attached by reference |
 | `egress-choke-point.test.ts` | Already enforces the rule; must still pass with the new call sites |
 | `egress-gate.test.ts` | The new kind prompts, its skip key round-trips, and its label renders |

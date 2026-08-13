@@ -165,6 +165,20 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
     fix: contain("diagnosticFix", "suggest a fix", async ({ context, documentPath, fullText }) => {
       const client = requireClient();
       if (client === undefined) return;
+      // TWO reads, two distinct failures. This one runs BEFORE the request: if
+      // the source document is already closed when the action is triggered, the
+      // fix can only ever be refused, so refusing now spends no model call and
+      // raises no pre-flight gate prompt. It does NOT replace the post-reply
+      // read below and must not be confused for it — that one exists to catch
+      // the document changing WHILE the request is in flight, a window this
+      // check cannot see.
+      if (deps.textOfDocument(documentPath) === undefined) {
+        deps.log.debug("diagnostics: source document is not open; not requesting a fix");
+        void deps.window.showWarningMessage(
+          `Nimbus: the source document ${context.fileName} is not open, so a fix could not be checked against it. Open it and re-run the action.`,
+        );
+        return;
+      }
       const reply = await invoke(
         client,
         buildFixPrompt(context),
@@ -178,7 +192,9 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
       // and the splice offsets point at lines that have moved. Re-read the
       // source by PATH — not through whatever happens to be focused now — and
       // refuse if it cannot be resolved: a diff we cannot check against the file
-      // it claims to change is the failure worth being loud about.
+      // it claims to change is the failure worth being loud about. This is the
+      // SECOND read, and it stays after the reply on purpose: hoisting it above
+      // the agent call would close exactly the in-flight window it covers.
       const live = deps.textOfDocument(documentPath);
       if (live === undefined) {
         deps.log.debug("diagnostics: source document is no longer open; not diffing");

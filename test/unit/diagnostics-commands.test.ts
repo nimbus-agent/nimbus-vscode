@@ -249,13 +249,35 @@ describe("fix", () => {
 
   // Refusing, not proceeding: a diff we cannot check against the file it claims
   // to change is the unsafe direction, and it is the direction the old
-  // active-editor check defaulted to.
+  // active-editor check defaulted to. The document resolves when the request
+  // goes out and is gone by the time the reply lands, which is the only way to
+  // reach the POST-reply branch now that a closed document is caught up front.
   test("refuses to diff when the source document cannot be re-read", async () => {
-    const { cmds, deps } = harness({ textOfDocument: documents({}) });
+    let reads = 0;
+    const { cmds, deps } = harness({
+      textOfDocument: (path) => {
+        reads += 1;
+        return path === documentPath && reads === 1 ? fullText : undefined;
+      },
+    });
     await cmds.fix(arg);
     expect(deps.openDiff).not.toHaveBeenCalled();
     expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringContaining("could not be re-read"),
+    );
+  });
+
+  // The other half of the pair: a document already closed when the lightbulb is
+  // clicked can only ever be refused, so refusing BEFORE the request spends no
+  // model call and raises no pre-flight gate prompt. Distinct wording, because
+  // "never open" and "closed mid-request" are different situations.
+  test("refuses before sending — no model call — when the document is already closed", async () => {
+    const { cmds, deps, agentInvoke } = harness({ textOfDocument: documents({}) });
+    await cmds.fix(arg);
+    expect(agentInvoke).not.toHaveBeenCalled();
+    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("is not open"),
     );
   });
 

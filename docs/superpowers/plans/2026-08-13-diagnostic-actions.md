@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-13-diagnostic-actions-design.md` — read it before Task 1. Its review record is `docs/superpowers/specs/2026-08-13-diagnostic-actions-design-feedback.md`.
 
-> **Correction, 2026-08-13 (post-review).** As first written, this plan had `buildDiagnosticContext` carry the diagnostic's **character-exact** offsets and `buildFixPrompt` ask for "the replacement for the flagged region only". Review found that pairing splices a whole rewritten statement into a sub-token span — a TS2532 flags just the `x`, so `x?.go();` went in and the rest of the line stayed, giving `x?.go();.go();`. Sub-line ranges are the norm, not a corner case. The shipped contract is **whole lines**: the offsets expand to the start of the diagnostic's first line through the end of its last, and the prompt names those lines and asks for all of them in full. The Task 2, 3 and 6 snippets below have been corrected to the shipped contract; see the spec for the reasoning. A second review pass replaced the fix path's staleness check — it originally read the *focused* editor and compared redacted basenames, which both misidentified the document and defaulted to proceeding on a stale snapshot; it now re-reads the source by full local path and refuses when it cannot. Tasks 6 and 7 reflect that too. The narrative is otherwise left as it was written.
+> **Correction, 2026-08-13 (post-review).** As first written, this plan had `buildDiagnosticContext` carry the diagnostic's **character-exact** offsets and `buildFixPrompt` ask for "the replacement for the flagged region only". Review found that pairing splices a whole rewritten statement into a sub-token span — a TS2532 flags just the `x`, so `x?.go();` went in and the rest of the line stayed, giving `x?.go();.go();`. Sub-line ranges are the norm, not a corner case. The shipped contract is **whole lines**: the offsets expand to the start of the diagnostic's first line through the end of its last, and the prompt names those lines and asks for all of them in full. The Task 2, 3 and 6 snippets below have been corrected to the shipped contract; see the spec for the reasoning. A second review pass replaced the fix path's staleness check — it originally read the *focused* editor and compared redacted basenames, which both misidentified the document and defaulted to proceeding on a stale snapshot; it now re-reads the source by full local path and refuses when it cannot. Tasks 6 and 7 reflect that too. A third review pass corrected two more things, and the Task 2 and Task 6 snippets carry those too: `range.end` is **exclusive**, so an end at `character === 0` on a later line names a line the diagnostic does not cover — `effectiveLastLine` backs it off by one (clamped at `start.line`) and all three consumers, `endLine`, the snippet's last line and `offsets.end`, use that one value; and the fix path now reads the source document **before** `agentInvoke` as well as after, so an already-closed document is refused without spending a model call, while the post-reply read stays exactly where it was because it covers a different window. The narrative is otherwise left as it was written.
 
 ## Global Constraints
 
@@ -398,6 +398,43 @@ describe("buildDiagnosticContext", () => {
     expect(ctx.offsets).toEqual({ start: 7, end: 27 });
   });
 
+  // `range.end` is EXCLUSIVE, and plenty of producers report a single-line
+  // problem as "start of the next line" rather than "end of this one".
+  test("treats an exclusive end at column zero as ending on the previous line", () => {
+    const exclusive = build(lines(30), {
+      ...at(2),
+      range: { start: { line: 2, character: 0 }, end: { line: 3, character: 0 } },
+    });
+    const intraLine = build(lines(30), {
+      ...at(2),
+      range: { start: { line: 2, character: 0 }, end: { line: 2, character: 6 } },
+    });
+    expect(exclusive).toEqual(intraLine);
+    expect(exclusive.endLine).toBe(3);
+    expect(exclusive.offsets).toEqual({ start: 14, end: 20 });
+    expect(exclusive.snippet.endsWith("line 22")).toBe(true);
+  });
+
+  test("keeps every genuinely spanned line when a multi-line range ends at column zero", () => {
+    const ctx = build(lines(30), {
+      ...at(1),
+      range: { start: { line: 1, character: 4 }, end: { line: 4, character: 0 } },
+    });
+    expect(ctx.startLine).toBe(2);
+    expect(ctx.endLine).toBe(4);
+    expect(ctx.offsets).toEqual({ start: 7, end: 27 });
+  });
+
+  test("handles a degenerate empty range at column zero without going backwards", () => {
+    const ctx = build(lines(30), {
+      ...at(2),
+      range: { start: { line: 2, character: 0 }, end: { line: 2, character: 0 } },
+    });
+    expect(ctx.startLine).toBe(3);
+    expect(ctx.endLine).toBe(3);
+    expect(ctx.offsets).toEqual({ start: 14, end: 20 });
+  });
+
   test("labels severity, mapping VS Code's numbering", () => {
     expect(build(lines(5), { ...at(1), severity: 0 }).severityLabel).toBe("error");
     expect(build(lines(5), { ...at(1), severity: 1 }).severityLabel).toBe("warning");
@@ -500,6 +537,31 @@ function lineEndOffset(starts: readonly number[], line: number, textLength: numb
   return line >= starts.length - 1 ? textLength : (starts[line + 1] ?? textLength) - 1;
 }
 
+/**
+ * The last line a diagnostic actually covers.
+ *
+ * `vscode.Diagnostic.range.end` is EXCLUSIVE, and plenty of producers report a
+ * single-line problem as `end: { line: N + 1, character: 0 }` rather than the
+ * end of line N. Taken literally that pulls an untouched line into the display
+ * range, the snippet and the splice: the model is then asked to reproduce a
+ * line it has no reason to change, and any byte it does not echo back shows up
+ * as a spurious modification in the diff.
+ *
+ * Only column zero is special. An end at `character > 0` is an ordinary
+ * intra-line end and the line it names is genuinely covered.
+ *
+ * ONE helper, used by all three consumers — `endLine`, the snippet's last line
+ * and `offsets.end` — because three separate adjustments would drift and the
+ * whole-line contract only holds while the prompt and the splice agree.
+ */
+function effectiveLastLine(range: { start: PositionLike; end: PositionLike }): number {
+  if (range.end.character === 0 && range.end.line > range.start.line) {
+    // Clamped so a range can never end before it begins.
+    return Math.max(range.end.line - 1, range.start.line);
+  }
+  return range.end.line;
+}
+
 export function buildDiagnosticContext(input: {
   fullText: string;
   fileName: string;
@@ -510,8 +572,10 @@ export function buildDiagnosticContext(input: {
   const starts = lineStartOffsets(fullText);
   const lastLine = starts.length - 1;
 
+  const endLine = effectiveLastLine(diagnostic.range);
+
   const first = Math.max(diagnostic.range.start.line - DIAGNOSTIC_CONTEXT_LINES, 0);
-  const last = Math.min(diagnostic.range.end.line + DIAGNOSTIC_CONTEXT_LINES, lastLine);
+  const last = Math.min(endLine + DIAGNOSTIC_CONTEXT_LINES, lastLine);
   const from = starts[first] ?? 0;
   // Everything up to the start of the line after `last` — minus its newline.
   const to = lineEndOffset(starts, last, fullText.length);
@@ -532,7 +596,7 @@ export function buildDiagnosticContext(input: {
     source: diagnostic.source ?? "",
     code: diagnostic.code === undefined ? "" : String(diagnostic.code),
     startLine: diagnostic.range.start.line + 1,
-    endLine: diagnostic.range.end.line + 1,
+    endLine: endLine + 1,
     snippet,
     truncated,
     // WHOLE LINES, deliberately, and not the diagnostic's character-exact
@@ -540,10 +604,12 @@ export function buildDiagnosticContext(input: {
     // the splice must consume exactly those lines or the two disagree. Sub-line
     // ranges are the norm — tsserver spans the flagged expression, ESLint the
     // identifier — and splicing a whole rewritten statement into a sub-span of
-    // one line leaves the rest of the original line behind.
+    // one line leaves the rest of the original line behind. The last line is
+    // the EFFECTIVE one — see effectiveLastLine — so an exclusive end at column
+    // zero does not drag an untouched line into the splice.
     offsets: {
       start: starts[clampLine(starts, diagnostic.range.start.line)] ?? 0,
-      end: lineEndOffset(starts, clampLine(starts, diagnostic.range.end.line), fullText.length),
+      end: lineEndOffset(starts, clampLine(starts, endLine), fullText.length),
     },
   };
 }
@@ -552,7 +618,7 @@ export function buildDiagnosticContext(input: {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bunx vitest run test/unit/diagnostics-context.test.ts`
-Expected: PASS, 13 tests.
+Expected: PASS, 16 tests.
 
 - [ ] **Step 5: Lint and typecheck**
 
@@ -1217,7 +1283,7 @@ git commit -m "feat(egress): add the diagnostic pre-flight kind"
 
 The handlers take `unknown` because VS Code hands back whatever the code action put in `command.arguments`; each one narrows before use.
 
-**On the fix action's output.** Every reply shape ends in a **diff** — a region reply spliced, a whole-file reply diffed whole-file. There is deliberately **no read-only fallback** here, unlike `generateDocstrings`: its read-only trigger is *no selection offsets*, and a diagnostic always carries a range, so that case cannot arise. What the fix path does guard is **staleness** — `fullText` is a snapshot taken when the code action was created, so before diffing it re-reads the source document **by its full local path** (`textOfDocument`, wired over `workspace.textDocuments`) and refuses to open a misleading diff when the two differ. Focus is deliberately *not* the identity: the user moves between tabs while a request is in flight, and a basename comparison would confuse `src/a.ts` with `test/a.ts`. If the document cannot be resolved at all the path **refuses** rather than proceeding — a diff that cannot be checked against the file it claims to change is the unsafe direction.
+**On the fix action's output.** Every reply shape ends in a **diff** — a region reply spliced, a whole-file reply diffed whole-file. There is deliberately **no read-only fallback** here, unlike `generateDocstrings`: its read-only trigger is *no selection offsets*, and a diagnostic always carries a range, so that case cannot arise. What the fix path does guard is **staleness** — `fullText` is a snapshot taken when the code action was created, so before diffing it re-reads the source document **by its full local path** (`textOfDocument`, wired over `workspace.textDocuments`) and refuses to open a misleading diff when the two differ. Focus is deliberately *not* the identity: the user moves between tabs while a request is in flight, and a basename comparison would confuse `src/a.ts` with `test/a.ts`. If the document cannot be resolved at all the path **refuses** rather than proceeding — a diff that cannot be checked against the file it claims to change is the unsafe direction. The document is read **twice**, and the two reads are not interchangeable: one **before** `agentInvoke`, so a document that is already closed at trigger time is refused without spending a model call or raising a gate prompt; one **after** the reply, which is the only read that can see the file changing *while the request was in flight*. Hoisting the second read above the call would collapse the pair and lose that window — a test pins it by mutating the document with the `agentInvoke` promise still pending. The two refusals are worded differently on purpose ("is not open" vs "could not be re-read") so the two situations are told apart.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1412,12 +1478,35 @@ describe("fix", () => {
     expect(deps.window.showWarningMessage).not.toHaveBeenCalled();
   });
 
+  // The document resolves when the request goes out and is gone by the time the
+  // reply lands — the only way to reach the POST-reply branch now that a closed
+  // document is caught up front.
   test("refuses to diff when the source document cannot be re-read", async () => {
-    const { cmds, deps } = harness({ textOfDocument: documents({}) });
+    let reads = 0;
+    const { cmds, deps } = harness({
+      textOfDocument: (path) => {
+        reads += 1;
+        return path === documentPath && reads === 1 ? fullText : undefined;
+      },
+    });
     await cmds.fix(arg);
     expect(deps.openDiff).not.toHaveBeenCalled();
     expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
       expect.stringContaining("could not be re-read"),
+    );
+  });
+
+  // The other half of the pair: a document already closed when the lightbulb is
+  // clicked can only ever be refused, so refusing BEFORE the request spends no
+  // model call and raises no pre-flight gate prompt. Distinct wording, because
+  // "never open" and "closed mid-request" are different situations.
+  test("refuses before sending — no model call — when the document is already closed", async () => {
+    const { cmds, deps, agentInvoke } = harness({ textOfDocument: documents({}) });
+    await cmds.fix(arg);
+    expect(agentInvoke).not.toHaveBeenCalled();
+    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).toHaveBeenCalledWith(
+      expect.stringContaining("is not open"),
     );
   });
 
@@ -1604,6 +1693,20 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
     fix: contain("diagnosticFix", "suggest a fix", async ({ context, documentPath, fullText }) => {
       const client = requireClient();
       if (client === undefined) return;
+      // TWO reads, two distinct failures. This one runs BEFORE the request: if
+      // the source document is already closed when the action is triggered, the
+      // fix can only ever be refused, so refusing now spends no model call and
+      // raises no pre-flight gate prompt. It does NOT replace the post-reply
+      // read below and must not be confused for it — that one exists to catch
+      // the document changing WHILE the request is in flight, a window this
+      // check cannot see.
+      if (deps.textOfDocument(documentPath) === undefined) {
+        deps.log.debug("diagnostics: source document is not open; not requesting a fix");
+        void deps.window.showWarningMessage(
+          `Nimbus: the source document ${context.fileName} is not open, so a fix could not be checked against it. Open it and re-run the action.`,
+        );
+        return;
+      }
       const reply = await invoke(
         client,
         buildFixPrompt(context),
@@ -1617,7 +1720,9 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
       // and the splice offsets point at lines that have moved. Re-read the
       // source by PATH — not through whatever happens to be focused now — and
       // refuse if it cannot be resolved: a diff we cannot check against the file
-      // it claims to change is the failure worth being loud about.
+      // it claims to change is the failure worth being loud about. This is the
+      // SECOND read, and it stays after the reply on purpose: hoisting it above
+      // the agent call would close exactly the in-flight window it covers.
       const live = deps.textOfDocument(documentPath);
       if (live === undefined) {
         deps.log.debug("diagnostics: source document is no longer open; not diffing");
@@ -1665,7 +1770,7 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bunx vitest run test/unit/diagnostics-commands.test.ts`
-Expected: PASS, 19 tests.
+Expected: PASS, 20 tests.
 
 - [ ] **Step 5: Run the choke-point test — it must still hold**
 
