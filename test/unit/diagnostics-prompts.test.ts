@@ -40,8 +40,12 @@ describe("buildExplainPrompt", () => {
   });
 
   test("omits the source/code clause when the diagnostic carries neither", () => {
+    // Asserted on the header line, not the whole prompt: the fenced snippet
+    // legitimately contains "maybe()", so a prompt-wide `not.toContain("()")`
+    // tests the fixture rather than origin(). An exact header match is both
+    // narrower and stronger — it pins the whole clause, not just its absence.
     const p = buildExplainPrompt({ ...ctx, source: "", code: "" });
-    expect(p).not.toContain("()");
+    expect(p.split("\n")[0]).toBe("Explain this error reported at line 10 of a.ts:");
     expect(p).toContain("Object is possibly 'undefined'.");
   });
 });
