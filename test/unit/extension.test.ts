@@ -16,6 +16,7 @@ import {
 import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
 import type {
+  CancellationTokenLike,
   CommandsApi,
   ConfigurationChangeEventLike,
   ExtensionContextLike,
@@ -404,8 +405,14 @@ function makeFixture(opts: {
               uri: { scheme: opts.activeEditor?.scheme ?? "file" },
             },
           },
-    withProgress: (async (_opts: unknown, task: () => Promise<unknown>) =>
-      task()) as WindowApi["withProgress"],
+    withProgress: (async (
+      _opts: unknown,
+      task: (token: CancellationTokenLike) => Promise<unknown>,
+    ) =>
+      // A token that never fires: nothing in these tests cancels a send.
+      task({
+        onCancellationRequested: () => ({ dispose: () => undefined }),
+      })) as WindowApi["withProgress"],
   };
 
   const workspace: WorkspaceApi = {
@@ -2961,5 +2968,152 @@ describe("client wrappers forward to the real NimbusClient prototype (own-vs-pro
     await cmd(f, "nimbus.openSession")("s9");
     const call = fake.calls["getSessionTranscript"]?.[0] as { sessionId: string } | undefined;
     expect(call?.sessionId).toBe("s9");
+  });
+});
+
+describe("workflow run wiring", () => {
+  const WF_ROW = {
+    id: "wf-1",
+    name: "nightly-sync",
+    description: "Sync everything overnight",
+    steps_json: JSON.stringify([{ label: "collect", run: "gather" }]),
+    created_at: 1,
+    updated_at: 2,
+  };
+
+  const RUN_RESULT = {
+    runId: "run-1",
+    status: "done",
+    dryRun: false,
+    stepResults: [{ label: "collect", status: "done", output: "ok" }],
+  };
+
+  // The fixture's showQuickPick returns a canned answer rather than echoing an
+  // item, so the answer must carry the `row` the command reads back off it.
+  function pickWorkflow(): Array<{ label: string }> {
+    return [{ label: "nightly-sync", row: WF_ROW }] as unknown as Array<{ label: string }>;
+  }
+
+  function runHandle(): Record<string, unknown> {
+    return {
+      streamId: "sid-1",
+      result: Promise.resolve(RUN_RESULT),
+      cancel: async () => ({ cancelled: true }),
+      [Symbol.asyncIterator]: () => {
+        let sent = false;
+        return {
+          next: async () => {
+            if (sent) return { value: undefined, done: true };
+            sent = true;
+            return { value: { type: "done", result: RUN_RESULT }, done: false };
+          },
+        };
+      },
+    };
+  }
+
+  test("nimbus.runWorkflow lists workflows and streams the chosen one", async () => {
+    const workflowList = vi.fn(async () => ({ workflows: [WF_ROW] }));
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      // Approve the pre-flight — the run is a gated, prompting surface.
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList,
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")();
+    expect(workflowList).toHaveBeenCalled();
+    expect(workflowRunStream).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "nightly-sync", dryRun: false }),
+    );
+    expect(f.openedDocs[0]?.title).toContain("run-1");
+  });
+
+  test("nimbus.dryRunWorkflow asks the Gateway for a dry run", async () => {
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.dryRunWorkflow")();
+    expect(workflowRunStream).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
+  });
+
+  test("a run invoked from a tree row uses that row's workflow, skipping the picker", async () => {
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      // Deliberately empty: if the picker were consulted this would run nothing.
+      quickPickAnswers: [],
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")({ payload: { workflowName: "nightly-sync" } });
+    expect(workflowRunStream).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "nightly-sync" }),
+    );
+  });
+
+  test("a tree argument with no usable payload falls back to the picker", async () => {
+    // VS Code hands the node itself; a malformed or foreign one must not be
+    // trusted into a run.
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")({ payload: { workflowName: 42 } });
+    expect(workflowRunStream).toHaveBeenCalled();
+    expect(
+      (f.deps.window.showQuickPick as unknown as ReturnType<typeof vi.fn>).mock.calls.length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("declining the pre-flight starts no run", async () => {
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      // Dismissed — the gate fails closed.
+      warnMessageClicks: [undefined],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")();
+    expect(workflowRunStream).not.toHaveBeenCalled();
+    expect(f.openedDocs).toEqual([]);
+    expect(f.errorMessages).toEqual([]);
+  });
+
+  test("running while disconnected reports it instead of throwing", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")();
+    expect(f.errorMessages.join(" ")).toMatch(/not connected/i);
   });
 });

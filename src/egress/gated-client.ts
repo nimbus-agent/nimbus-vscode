@@ -196,6 +196,41 @@ export function gateRawBriefs(
 }
 
 // ---------------------------------------------------------------------------
+// Workflow runs.
+//
+// Agent-bound, and the heaviest of the lot: one click can send MANY model
+// prompts, expanded Gateway-side from steps saved long before. The extension
+// sends only a workflow name, so unlike every other surface here the previewed
+// text is a manifest rather than the literal bytes — buildRunManifest says so
+// in its omissions instead of implying byte-exactness.
+//
+// The gate is awaited BEFORE the stream starts. That ordering is the point: a
+// run started and then cancelled has already reached the model, and (because
+// cancellation lands at the next step boundary) cannot be stopped mid-step.
+
+export interface RawWorkflowRunner<P, H> {
+  workflowRunStream(params: P): H;
+}
+
+/** A workflow run that has passed the gate. Throws EgressCancelled if not. */
+export type GatedWorkflowRun<P, H> = (
+  params: P,
+  /** The rendered manifest — what the pre-flight modal shows. */
+  manifest: string,
+  meta: EgressMeta,
+) => Promise<H>;
+
+export function gateRawWorkflowRun<P, H>(
+  client: RawWorkflowRunner<P, H>,
+  gate: EgressGate,
+): GatedWorkflowRun<P, H> {
+  return async (params, manifest, meta) => {
+    if ((await gate.check("workflow", manifest, meta)) === "cancel") throw new EgressCancelled();
+    return client.workflowRunStream(params);
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Participant briefs.
 //
 // The chat participant's three ops briefs take an argument the user typed after
