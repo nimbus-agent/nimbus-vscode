@@ -75,7 +75,7 @@ real code paths without a running editor. Keep `src/` and `test/` self-contained
 | Area | Responsibility |
 | --- | --- |
 | `src/extension.ts` | Activation entry: registers commands, wires the connection manager, status bar, and HITL router. |
-| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, …) stay `vscode`-free. |
+| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free. Workflows is the one view with lazily-loaded children (`createDataView`'s optional `loadChildren`), because eager children would cost one `workflow.listRuns` round trip per saved workflow on every open. |
 | `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). |
 | `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. |
 | `src/lm-tools/` | The `nimbus_search` / `nimbus_ask` Language Model tools (`contributes.languageModelTools`): pure `lm-tools.ts` handlers + the `real-lm-tools.ts` vscode-glue adapter. |
@@ -184,7 +184,9 @@ let other chat extensions and agents call Nimbus as a tool; a
 Message` (staged diff → SCM input box), `Review Changes` (all local changes →
 findings tab), and `Generate Tests` / `Generate Docstrings` (selection → test
 buffer / docstring diff), output always a suggestion; a Nimbus sidebar with
-Audit, Sessions, Index, Agents, and an **Egress** ledger viewer (with
+Audit, Sessions, Index, Agents, a read-only **Workflows** view (saved workflows,
+each one's recent runs loaded on expand — monitoring only; running and
+cancelling are not shipped), and an **Egress** ledger viewer (with
 Verify-ledger and Prove-window commands) plus an **egress status-bar badge**; a
 **connection troubleshooter** (state-aware modal, no RPC); a **Get Started
 walkthrough** (first-run onboarding via the VS Code Walkthroughs API, no RPC);
