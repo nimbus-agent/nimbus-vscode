@@ -1124,6 +1124,9 @@ git commit -m "feat(egress): add the diagnostic pre-flight kind"
 **Files:**
 - Create: `src/diagnostics/commands.ts`
 - Test: `test/unit/diagnostics-commands.test.ts`
+- Modify: `test/unit/egress-choke-point.test.ts` — add `"diagnostics/commands.ts"` to `ALLOWED`
+
+**On widening `ALLOWED`.** That test's header says "Do NOT widen ALLOWED — that defeats the entire point," and that warning is about files reaching a **raw** client. The list already holds four consumer modules, and its own comment states the rule: a consumer only ever holds a seam injected by `extension.ts`, and for `agentInvoke` that seam's type requires the `EgressMeta` argument, so a raw `NimbusClient` does not structurally satisfy it. `DiagnosticClientLike` is shape-identical to `ScmClientLike` on that point, so this module qualifies on the same grounds as the existing four. The entry the list must never gain is `extension.ts`.
 
 **Interfaces:**
 - Consumes: `DiagnosticContext` (Task 2); `buildExplainPrompt`/`buildFixPrompt` (Task 3); `extractCode`, `isWholeFileRewrite`, `spliceSelection` from `../scm/generate.js`; `extractReply` from `../quick-ask.js`; `isEgressCancelled` from `../egress/gated-client.js`; `EgressMeta` from `../egress/preflight.js`; `WindowApi` from `../vscode-shim.js`; `Logger` from `../logging.js`.
