@@ -10,7 +10,7 @@
       },
       "devDependencies": {
         "@biomejs/biome": "^2.5.7",
-        "@nimbus-dev/client": "^0.16.0",
+        "@nimbus-dev/client": "^0.17.0",
         "@types/chai": "5",
         "@types/mocha": "10",
         "@types/node": "^26.1.2",
@@ -237,7 +237,7 @@
 
     "@napi-rs/wasm-runtime": ["@napi-rs/wasm-runtime@0.2.12", "", { "dependencies": { "@emnapi/core": "^1.4.3", "@emnapi/runtime": "^1.4.3", "@tybys/wasm-util": "^0.10.0" } }, "sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ=="],
 
-    "@nimbus-dev/client": ["@nimbus-dev/client@0.16.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.6.0" } }, "sha512-kuozpxC//CHBFIMoWAtrGTj56I/csjJKMqjthjzH0gPvToZXZtipPmHHAalkN+4UkEjkRQHpwn7MipLV0gsk/A=="],
+    "@nimbus-dev/client": ["@nimbus-dev/client@0.17.0", "", { "dependencies": { "@nimbus-dev/sdk": "^1.6.0" } }, "sha512-XI51A/GcpkZAif4trhGWg+uKc9WW7jkuCfnuwxRGhlPQF8GIU7GzRH66ywGj3/10jM3KWApi9eUS0ki7Pd8BXg=="],
 
     "@nimbus-dev/sdk": ["@nimbus-dev/sdk@1.16.0", "", {}, "sha512-vaorBNoXqq4Vcd40KtJxoL7xiA/tX5pTEvNQ4vaBLOvupptNEwreLWbkeHRDNVkYbRsqbOLTAtU6PMy1dFKzYw=="],
 
