@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.17.0...v0.17.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **workflows:** forward the cancellation token, not the progress reporter ([#100](https://github.com/nimbus-agent/nimbus-vscode/issues/100)) ([be5156c](https://github.com/nimbus-agent/nimbus-vscode/commit/be5156c12ea24ee4d2c273fde067843350f7d8cf))
+
 ## [0.17.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.16.0...v0.17.0) (2026-08-13)
 
 
