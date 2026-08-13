@@ -159,6 +159,7 @@ are for.
 | **Agents view shows the built-ins** — two-group sidebar view: the built-in briefs, plus the chat scopes from the `nimbus.agents` setting (never empty on a fresh install) | the `agents*` family |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
 | **Get Started walkthrough** — first-run walkthrough (install → connect Gateway → try Ask/Search/Quick Ask), on the Welcome page and via `Nimbus: Open Walkthrough` | *VS Code Walkthroughs API — no RPC* |
+| **Diagnostic actions** — three Nimbus actions on the lightbulb for an error or warning diagnostic: **Explain this problem** and **Suggest a fix** (reply spliced into a diff against the real file — never an applied edit), both behind the pre-flight gate under a new `"diagnostic"` kind, and **Find prior occurrences** (a local-index search for the same error, reaching no model and so ungated, but still needing the Gateway socket, and only as good as what is indexed). Errors and warnings only; where a line carries several diagnostics, exactly one is chosen, so the lightbulb never grows past three entries. Toggle `nimbus.diagnostics.showCodeActions`; not yet exercised in a real editor | `agentInvoke`, `searchRanked` |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
 
 ---
@@ -201,8 +202,7 @@ story. Still no SDK change required.
 | **Raw SQL query panel** (power users) | Ad-hoc queries over the local index | `querySql` | M |
 | **Session browser depth** — search / rename / pin / export transcript | Manage long histories | `getSessionTranscript` | M |
 | **Index browsing depth** — filter / paginate | Navigate a large index | `queryItems` | M |
-| Quick-ask **code-editing actions** — offer the reply as a diff the user applies themselves (the pattern Generate Docstrings already uses); the extension never applies a `WorkspaceEdit` | Turn answers into edits without ever taking the edit out of the user's hands | `agentInvoke` | M |
-| **"Ask Nimbus about this problem"** code action on a diagnostic | Editor-native debugging from a squiggle | `agentInvoke` | M |
+| Quick-ask **code-editing actions** — offer the reply as a diff the user applies themselves (the pattern Generate Docstrings already uses); the extension never applies a `WorkspaceEdit`. The diagnostic **fix** action now delivers this pattern for diagnostics specifically; the rest of quick-ask still replies in a read-only tab | Turn answers into edits without ever taking the edit out of the user's hands | `agentInvoke` | M |
 | **Multi-agent compare** — ask N agents, diff their answers; per-action agent picker | Exploit the agent model; pick the best take | `agentInvoke` (fan-out) | M |
 | **Live egress feed** panel + **HITL history/notification center** + "what has Nimbus sent about this file/session?" | A complete, glanceable trust surface | `egressList` / `subscribeHitl` | M |
 | **Saved searches / history**; **CodeLens** "Ask Nimbus" over functions | Everyday ergonomics | `searchRanked` / `agentInvoke` | S |
