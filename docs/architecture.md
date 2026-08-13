@@ -99,16 +99,30 @@ Before anything reaches the agent, it passes through one seam that can render
 exactly what would leave — paths already redacted — and refuse to send it. The
 gate is the point; the transparency is the payoff.
 
-Five outbound paths route through it. Only the two where the **extension**
-assembles context prompt by default:
+**Eight** outbound paths route through it — one per `EgressKind` in
+`src/egress/preflight.ts`. The **five where the extension assembles the context**
+prompt by default; the three where the payload is text the user just typed, or is
+confirmed by someone else's UI, route and record without a modal. The prompting
+set is exactly `skippableKind()` in `src/egress/gate.ts`, which is the
+authoritative list — this table is a description of it, not a second source of
+truth:
 
-| Surface | Call | Gate behaviour |
-| --- | --- | --- |
-| Quick Ask | `agentInvoke` | **prompts** — extension picks the context (a whole file, when there is no selection) |
-| SCM trio (4 commands) | `agentInvoke` | **prompts** — extension picks the context (diffs of up to 100 files) |
-| Ask panel | `askStream` | routes and records; no prompt — the user typed it |
-| `@nimbus` participant | `askStream` | routes and records; no prompt — the user typed it |
-| LM tools (`nimbus_ask`) | `agentInvoke` | native `prepareInvocation` card, rendered inline by the *calling* chat |
+| Surface | Kind | Call | Gate behaviour |
+| --- | --- | --- | --- |
+| Quick Ask | `quickAsk` | `agentInvoke` | **prompts** — extension picks the context (a whole file, when there is no selection) |
+| SCM trio (4 commands) | `scm` | `agentInvoke` | **prompts** — extension picks the context (diffs of up to 100 files) |
+| Built-in briefs (6 commands) | `brief` | `agents*` | **prompts** — extension derives the parameters from the editor |
+| Workflow run / dry run | `workflow` | `workflowRunStream` | **prompts** — and its preview is a **manifest**, not the literal bytes: the extension sends a workflow name and the Gateway expands the saved steps, so `buildRunManifest` states that in its omissions rather than implying byte-exactness |
+| Diagnostic actions (explain, fix) | `diagnostic` | `agentInvoke` | **prompts** — extension assembles the snippet around the squiggle |
+| Ask panel | `ask` | `askStream` | routes and records; no prompt — the user typed it |
+| `@nimbus` participant (incl. its 3 ops briefs) | `participant` | `askStream`, `agents*` | routes and records; no prompt — a modal must not interrupt a chat turn, and a slash-command argument is text the user just typed |
+| LM tools (`nimbus_ask`) | `lmTool` | `agentInvoke` | native `prepareInvocation` card, rendered inline by the *calling* chat |
+
+Each prompting kind carries its own per-workspace *Always send here* skip
+(`SKIP_LABEL` in `gate.ts`); the recording kinds have none, because they never
+show a modal to skip. One agent-bound call is deliberately **outside** this
+table: `agentsWhyPeek`, the blame hover, which reaches no model —
+`test/unit/egress-choke-point.test.ts` asserts it is the only such exemption.
 
 Two mechanisms keep it a guardrail rather than a convention:
 

@@ -1,6 +1,6 @@
 # Feedback & Suggestions: Diagnostic Actions Design
 
-This document contains open questions, suggestions, and proposed improvements for the [Diagnostic Actions Design Spec](file:///C:/gitrep/nimbus-vscode/docs/superpowers/specs/2026-08-13-diagnostic-actions-design.md).
+This document contains open questions, suggestions, and proposed improvements for the [Diagnostic Actions Design Spec](./2026-08-13-diagnostic-actions-design.md).
 
 ---
 

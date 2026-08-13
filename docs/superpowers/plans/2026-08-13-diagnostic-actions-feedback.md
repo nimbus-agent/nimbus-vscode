@@ -1,6 +1,6 @@
 # Feedback & Suggestions: Diagnostic Actions Implementation Plan
 
-This document contains open questions, suggestions, and proposed improvements for the [Diagnostic Actions Implementation Plan](file:///C:/gitrep/nimbus-vscode/.claude/worktrees/diagnostic-actions/docs/superpowers/plans/2026-08-13-diagnostic-actions.md).
+This document contains open questions, suggestions, and proposed improvements for the [Diagnostic Actions Implementation Plan](./2026-08-13-diagnostic-actions.md).
 
 ---
 

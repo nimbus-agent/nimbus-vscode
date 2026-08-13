@@ -1,7 +1,10 @@
 # Diagnostic actions — design
 
 **Date:** 2026-08-13
-**Status:** approved, not yet implemented
+**Status:** implemented on `worktree-diagnostic-actions` (PR #98). The local gate
+— tests, typecheck, lint, build, the bundle and `.vsix` guards — is green; the
+Extension Development Host pass in Part 8 has **not** been run, so nothing here
+is verified at runtime yet.
 **Repos:** `nimbus-vscode` only — no Gateway or client work
 
 ## Problem
@@ -93,13 +96,26 @@ rather than growing a second splice path:
 - `spliceSelection(fullText, start, end, rewritten)` splices the region back in
   so the diff shows only the fix.
 - `deps.openDiff({ title, left, right, fileName })` renders it.
-- When the reply is not honestly spliceable, fall back to a read-only tab rather
-  than a misleading diff — the rule `generateDocstrings` already follows, and
-  the log line it already emits.
+- When the reply is the whole file rather than the region, it is **diffed
+  whole-file** — `left` the document, `right` the reply, unspliced — because
+  that is what the reply actually is; splicing it would duplicate everything
+  around the diagnostic. This is the rule `generateDocstrings` already follows,
+  and the same log line it emits.
 
-The diagnostic's `range` supplies the splice offsets, so unlike the docstring
-path there is never a "no selection offsets" case; the whole-file-reply case
-remains.
+**There is no read-only fallback on this action**, and none is needed. The one
+trigger `generateDocstrings` has for it is *no selection offsets*, which cannot
+occur here: a diagnostic always carries a `range`, so offsets always exist. Both
+reply shapes — region and whole file — therefore end in a diff, and the only
+difference is whether the right-hand side was spliced.
+
+The fix path also checks the document has not moved under it. `fullText` is
+captured when the code action is created; if the user edits the file while the
+request is in flight, both sides of the diff are stale — the left no longer
+matches the buffer and the offsets point at lines that have shifted. Before
+opening the diff the command compares the focused editor's live text against the
+snapshot and, when they differ, says so and opens nothing. A focused editor for
+a *different* file is "cannot tell", not "changed", and the command proceeds on
+its snapshot.
 
 **Reply granularity and splice granularity must be the same thing, and that
 thing is whole lines.** A diagnostic's range is usually a *sub-span of one line*
@@ -184,7 +200,7 @@ diagnostic has no `code`.
 
 Following the repo's pure/glue split:
 
-```
+```text
 src/diagnostics/
   normalize.ts       pure — diagnostic message → index query
   context.ts         pure — diagnostic + document → payload context
@@ -347,7 +363,7 @@ line-based already.
 | `diagnostics-normalize.test.ts` | Table-driven over real TS, ESLint, biome, rustc and pyright messages; code prepending; path and position stripping; both quoted-token policies; that unlisted sources (rustc, pyright, gopls) fall through to `"keep"` rather than being guessed at (Part 9); the 300-char clamp; the under-12-character rejection |
 | `diagnostics-context.test.ts` | Snippet budget, clamping at both file edges, the truncation omission |
 | `diagnostics-actions.test.ts` | Severity filtering, the disconnected case (all three withheld, prior-occurrences included), the setting off, the short-query case, the one-diagnostic selection rule at every tie-break, the code-suffixed labels, the three kinds, and that no descriptor sets `isPreferred` |
-| `diagnostics-commands.test.ts` | All three commands over fake deps: spliceable and whole-file fix replies, a sub-token diagnostic range splicing cleanly over whole lines, the read-only fallback, the empty-search wording, gate cancellation |
+| `diagnostics-commands.test.ts` | All three commands over fake deps: spliceable and whole-file fix replies (both end in a diff — there is no read-only fallback here), a sub-token diagnostic range splicing cleanly over whole lines, the stale-document refusal and the two cases it must not fire on, the empty-search wording, gate cancellation |
 | `diagnostics-provider.test.ts` | The registered provider, driven through the vscode stub: every action carries a `command`, no `edit` and no `isPreferred`, and the chosen `vscode.Diagnostic` is attached by reference |
 | `egress-choke-point.test.ts` | Already enforces the rule; must still pass with the new call sites |
 | `egress-gate.test.ts` | The new kind prompts, its skip key round-trips, and its label renders |
@@ -366,9 +382,10 @@ if someone later "tidied" all three actions onto one path.
   table is a starting point, not coverage. The mitigation is the design, not
   optimism: default to `"keep"`, reject queries too short to be useful, and say
   "nothing indexed matches" rather than "no prior occurrences".
-- **The splice heuristic will sometimes fall back** to a read-only tab. That is
-  the correct failure — `generateDocstrings` already behaves this way, and a
-  wrong diff is worse than no diff.
+- **The splice heuristic will sometimes decline to splice.** When the reply is
+  the whole file, the diff is whole-file rather than a region — a bigger diff
+  than the user asked for, but an honest one. `generateDocstrings` already
+  behaves this way, and a wrong diff is worse than a wide one.
 - **Prior occurrences is only as good as the index.** On a fresh install with
   nothing but `local_files` indexed, the third action will mostly return
   nothing. That is a real first-run weakness and it argues for the wording
@@ -444,8 +461,8 @@ Development Host pass with a Gateway running must confirm:
    keyboard path), and `Shift+Alt+.` — Auto Fix — fires **none** of them.
 3. The pre-flight modal shows kind `"diagnostic"` with the redacted basename and
    the line range, and *Always send here* persists per workspace.
-4. The fix action renders a diff scoped to the fix, and the fallback path opens
-   a read-only tab rather than a whole-file mismatch.
+4. The fix action renders a diff scoped to the fix, and a whole-file reply
+   renders a whole-file diff rather than a duplicated region.
 5. Prior occurrences opens the Quick Pick, and an empty result shows the
    "nothing in the local index matches" wording.
 

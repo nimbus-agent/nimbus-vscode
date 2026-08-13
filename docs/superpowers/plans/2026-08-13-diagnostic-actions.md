@@ -200,8 +200,15 @@ export const NORMALIZED_QUERY_MAX_CHARS = 300;
 // actions.ts withholds the action entirely rather than offering a dud.
 export const NORMALIZED_QUERY_MIN_CHARS = 12;
 
-// A path token: contains a separator AND a dot-extension. The conjunction is the
-// point — it drops `src/widgets/thing.ts` while keeping `Array<string>`.
+// One token: an optional opening quote, a run of non-space, non-quote,
+// non-paren characters, and the matching closing quote. `:` and `\` are inside
+// the run, so a Windows path arrives as one token without a drive-letter clause.
+//
+// Path detection is a PREDICATE on each token, not a pattern that backtracks
+// inside one regex. A single pattern with two unbounded runs straddling a
+// required separator and a trailing dot-extension is cubic on separator-heavy
+// input (8 000 characters took ~31 s), and this runs synchronously inside
+// provideCodeActions on every cursor move, before the 300-char clamp.
 //
 // The optional quote group + backreference matters: messages quote their paths
 // ("Cannot find module './widgets/thing.ts'"), and the character class stops at
@@ -210,7 +217,15 @@ export const NORMALIZED_QUERY_MIN_CHARS = 12;
 // opening quotes of two ADJACENT quoted tokens ("'a' 'b'"). A backreference to a
 // group that did not participate matches the empty string, so the unquoted
 // Windows-path case still works.
-const PATH_TOKEN = /(['"`])?(?:[A-Za-z]:)?[^\s'"`()]*[\\/][^\s'"`()]*\.[A-Za-z0-9]+\1?/g;
+const TOKEN = /(['"`])?([^\s'"`()]+)\1?/g;
+
+// A path: a separator AND a dot-extension after the LAST separator. The
+// conjunction drops `src/widgets/thing.ts` while keeping `Array<string>`; the
+// "last separator" half keeps `a.ts/b` from reading as a file.
+function looksLikePath(token: string): boolean {
+  const lastSep = Math.max(token.lastIndexOf("/"), token.lastIndexOf("\\"));
+  return lastSep !== -1 && /\.[A-Za-z0-9]/.test(token.slice(lastSep + 1));
+}
 
 // `line 42`, `:17:9`, `(12,4)`.
 const POSITION = /\bline \d+\b|:\d+:\d+|\(\d+,\s*\d+\)/g;
@@ -239,7 +254,9 @@ export function normalizeDiagnosticMessage(input: {
   let text = input.message;
   // Paths first: a path can contain digits that POSITION would otherwise eat,
   // leaving a fragment behind instead of removing the whole token.
-  text = text.replace(PATH_TOKEN, " ");
+  text = text.replace(TOKEN, (match: string, _quote: string | undefined, token: string) =>
+    looksLikePath(token) ? " " : match,
+  );
   text = text.replace(POSITION, " ");
   if (policyFor(input.source) === "drop") text = text.replace(QUOTED, " ");
   // Collapse last: every rule above leaves gaps behind.
@@ -1129,7 +1146,7 @@ git commit -m "feat(egress): add the diagnostic pre-flight kind"
 **On widening `ALLOWED`.** That test's header says "Do NOT widen ALLOWED — that defeats the entire point," and that warning is about files reaching a **raw** client. The list already holds four consumer modules, and its own comment states the rule: a consumer only ever holds a seam injected by `extension.ts`, and for `agentInvoke` that seam's type requires the `EgressMeta` argument, so a raw `NimbusClient` does not structurally satisfy it. `DiagnosticClientLike` is shape-identical to `ScmClientLike` on that point, so this module qualifies on the same grounds as the existing four. The entry the list must never gain is `extension.ts`.
 
 **Interfaces:**
-- Consumes: `DiagnosticContext` (Task 2); `buildExplainPrompt`/`buildFixPrompt` (Task 3); `extractCode`, `isWholeFileRewrite`, `spliceSelection` from `../scm/generate.js`; `extractReply` from `../quick-ask.js`; `isEgressCancelled` from `../egress/gated-client.js`; `EgressMeta` from `../egress/preflight.js`; `WindowApi` from `../vscode-shim.js`; `Logger` from `../logging.js`.
+- Consumes: `DiagnosticContext` (Task 2); `buildExplainPrompt`/`buildFixPrompt` (Task 3); `extractCode`, `isWholeFileRewrite`, `spliceSelection` from `../scm/generate.js`; `extractReply` and `redactPath` from `../quick-ask.js`; `isEgressCancelled` from `../egress/gated-client.js`; `EgressMeta` from `../egress/preflight.js`; `WindowApi` from `../vscode-shim.js`; `Logger` from `../logging.js`.
 - Produces:
   - `interface DiagnosticActionArg { context: DiagnosticContext; fullText: string; query: string }`
   - `interface DiagnosticClientLike { agentInvoke(input: string, opts: { stream: boolean; agent?: string }, meta: EgressMeta, progressTitle?: string): Promise<unknown> }`
@@ -1138,6 +1155,8 @@ git commit -m "feat(egress): add the diagnostic pre-flight kind"
   - `function createDiagnosticCommands(deps: DiagnosticCommandDeps): { explain(arg: unknown): Promise<void>; fix(arg: unknown): Promise<void>; priorOccurrences(arg: unknown): Promise<void> }`
 
 The handlers take `unknown` because VS Code hands back whatever the code action put in `command.arguments`; each one narrows before use.
+
+**On the fix action's output.** Every reply shape ends in a **diff** — a region reply spliced, a whole-file reply diffed whole-file. There is deliberately **no read-only fallback** here, unlike `generateDocstrings`: its read-only trigger is *no selection offsets*, and a diagnostic always carries a range, so that case cannot arise. What the fix path does guard is **staleness** — `fullText` is a snapshot taken when the code action was created, so before diffing it compares the focused editor's live text against it and refuses to open a misleading diff when they differ.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1402,6 +1421,15 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
     return client;
   };
 
+  // Live text of the document this diagnostic came from, or undefined when we
+  // cannot tell it is the same document. Compared on the redacted basename,
+  // which is all DiagnosticContext carries.
+  const liveText = (ctx: DiagnosticContext): string | undefined => {
+    const doc = deps.window.activeTextEditor?.document;
+    if (doc === undefined) return undefined;
+    return redactPath(doc.fileName) === ctx.fileName ? doc.getText() : undefined;
+  };
+
   const invoke = async (
     client: DiagnosticClientLike,
     prompt: string,
@@ -1443,11 +1471,26 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
         diagnosticMeta(context, "Suggest Fix"),
       );
       if (reply === undefined) return;
+      // fullText was captured when the code action was CREATED. An edit landing
+      // while the request was in flight makes both sides of the diff stale, so
+      // say so instead of opening one. A focused editor for a DIFFERENT file is
+      // "cannot tell", not "changed", and the command proceeds on the snapshot.
+      const live = liveText(context);
+      if (live !== undefined && live !== fullText) {
+        deps.log.debug("diagnostics: file changed while the fix was in flight; not diffing");
+        void deps.window.showWarningMessage(
+          `Nimbus: ${context.fileName} changed while the fix was being generated, so the diff would be misleading. Re-run the action.`,
+        );
+        return;
+      }
       const rewritten = extractCode(reply);
       const { start, end } = context.offsets;
       // A whole-file reply to a region prompt must not be spliced — that would
       // duplicate everything around the diagnostic. Diff whole-file instead,
       // which is what the reply actually is. Same rule as generateDocstrings.
+      // NOT a read-only fallback: generateDocstrings' read-only trigger is "no
+      // selection offsets", which cannot happen here — a diagnostic always
+      // carries a range — so both reply shapes end in a diff.
       const spliceable = !isWholeFileRewrite(rewritten, fullText, start, end);
       if (!spliceable) {
         deps.log.debug("diagnostics: fix reply looks whole-file; diffing without splicing");
