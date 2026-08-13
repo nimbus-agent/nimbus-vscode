@@ -44,17 +44,27 @@ function rangeSpan(d: DiagnosticLike): number {
 // `likes.indexOf(chosen)`; a clone would silently break the association between
 // each action and its squiggle. Pinned by "returns the SAME OBJECT it was
 // given" in test/unit/diagnostics-actions.test.ts.
+// Strictly better, never merely equal: on a full tie the incumbent stays, which
+// is what makes the supplied order the last tie-break.
+function beats(next: DiagnosticLike, best: DiagnosticLike): boolean {
+  if (next.severity !== best.severity) return next.severity < best.severity;
+  return rangeSpan(next) < rangeSpan(best);
+}
+
 export function selectDiagnostic(
   diagnostics: readonly DiagnosticLike[],
 ): DiagnosticLike | undefined {
-  const offered = diagnostics.filter(isOffered);
-  if (offered.length === 0) return undefined;
-  return offered.reduce((best, next) => {
-    if (next.severity !== best.severity) return next.severity < best.severity ? next : best;
-    // Strictly less-than keeps the earlier one on a full tie, so the supplied
-    // order is the last tie-break.
-    return rangeSpan(next) < rangeSpan(best) ? next : best;
-  });
+  // A plain loop rather than filter().reduce(): a bare reduce() throws on an
+  // empty array, so it needs a length guard standing over it to be safe, and
+  // Sonar flags the shape as a reliability bug on that basis. The loop also
+  // drops the intermediate array. Assigning `best` from the input — never
+  // rebuilding it — is what upholds the by-reference contract above.
+  let best: DiagnosticLike | undefined;
+  for (const next of diagnostics) {
+    if (!isOffered(next)) continue;
+    if (best === undefined || beats(next, best)) best = next;
+  }
+  return best;
 }
 
 const TITLES: Record<DiagnosticActionId, string> = {
