@@ -712,6 +712,18 @@ describe("selectDiagnostic", () => {
     expect(selectDiagnostic([d({ code: "FIRST" }), d({ code: "SECOND" })])?.code).toBe("FIRST");
   });
 
+  test("returns the SAME OBJECT it was given, never a copy", () => {
+    // real-provider.ts recovers the underlying vscode.Diagnostic by index
+    // identity. If this ever returns a clone, indexOf yields -1 and the actions
+    // silently stop being associated with their squiggle — a failure nothing
+    // else would catch. This test is the contract.
+    const first = d({ code: "FIRST" });
+    const second = d({ code: "SECOND", severity: 1 });
+    const input = [second, first];
+    expect(selectDiagnostic(input)).toBe(first);
+    expect(input.indexOf(first)).toBe(1);
+  });
+
   test("ignores Information and Hint, where formatters and spell-checkers live", () => {
     expect(selectDiagnostic([d({ severity: 2 }), d({ severity: 3 })])).toBeUndefined();
   });
@@ -843,6 +855,12 @@ function rangeSpan(d: DiagnosticLike): number {
 // would put six to nine Nimbus entries in one lightbulb, which is noise rather
 // than offering — so exactly one diagnostic is chosen, by a total order that is
 // stable across the repeated provideCodeActions calls VS Code makes.
+//
+// CONTRACT: returns one of the objects it was given, BY REFERENCE, never a
+// copy. real-provider.ts recovers the underlying vscode.Diagnostic with
+// `likes.indexOf(chosen)`; a clone would silently break the association between
+// each action and its squiggle. Pinned by "returns the SAME OBJECT it was
+// given" in test/unit/diagnostics-actions.test.ts.
 export function selectDiagnostic(
   diagnostics: readonly DiagnosticLike[],
 ): DiagnosticLike | undefined {
@@ -907,7 +925,7 @@ export function diagnosticActionsFor(input: {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `bunx vitest run test/unit/diagnostics-actions.test.ts`
-Expected: PASS, 14 tests.
+Expected: PASS, 15 tests.
 
 - [ ] **Step 5: Lint and typecheck**
 
@@ -1681,7 +1699,16 @@ export function registerDiagnosticCodeActions(opts: {
 
 - [ ] **Step 8: Wire it in `extension.ts`**
 
-First, add the empty-state override to `runSearch` (around line 806). Extend its `opts` type with `emptyText?: string`, and change the empty branch:
+First, add the empty-state override to `runSearch` (around line 806). Its signature already is:
+
+```ts
+  const runSearch = (
+    initialValue?: string,
+    opts?: { placeholder?: string; exclude?: (r: RankedResult) => boolean },
+  ): void => {
+```
+
+so `placeholder` needs nothing — `emptyText?: string` is the only addition to that `opts` type. Then change the empty branch:
 
 ```ts
           qp.items = picks.length > 0 ? picks : [statusPick(opts?.emptyText ?? "No matching index records")];
