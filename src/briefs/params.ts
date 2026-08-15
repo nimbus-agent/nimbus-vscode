@@ -13,7 +13,7 @@ export interface EditorTarget {
 }
 
 function normalise(p: string): string {
-  return p.replace(/\\/g, "/");
+  return p.replaceAll("\\", "/");
 }
 
 function basename(p: string): string {

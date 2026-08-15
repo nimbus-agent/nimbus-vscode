@@ -112,7 +112,7 @@ describe("the Workflows view", () => {
     const nightly = await waitForRow(section, NIGHTLY_TRIAGE.name);
     expect(await nightly.isExpandable()).to.equal(true);
     const runs = await nightly.getChildren();
-    expect(runs.length).to.equal(2);
+    expect(runs).to.have.lengthOf(2);
     await nightly.collapse();
 
     const release = await waitForRow(section, RELEASE_CHECKLIST.name);

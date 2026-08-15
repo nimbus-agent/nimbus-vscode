@@ -270,7 +270,7 @@ describe("running a workflow", () => {
       () => `the confirmed dry run never reached the Gateway; the fake saw ${methodsSeen()}`,
     );
     const runs = recorded("workflow.run");
-    expect(runs.length).to.equal(1);
+    expect(runs).to.have.lengthOf(1);
     expect(field(runs[0]?.params, "name")).to.equal(NIGHTLY_TRIAGE.name);
     expect(field(runs[0]?.params, "dryRun")).to.equal(true);
   });

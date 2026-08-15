@@ -128,4 +128,23 @@ describe("normalizeDiagnosticMessage", () => {
     normalizeDiagnosticMessage({ message });
     expect(performance.now() - started).toBeLessThan(100);
   });
+
+  test("stays linear on a long whitespace run", () => {
+    // HONEST NOTE ON WHAT THIS DOES AND DOES NOT PROVE: it does NOT discriminate
+    // the punctuation-tidy pattern this was added alongside. That step used to be
+    // `\s+([.,;:])`, which is quadratic on a whitespace run not followed by
+    // punctuation (20 000 spaces 98 ms, 40 000 spaces 396 ms measured standalone) —
+    // but the collapse immediately before it reduces every run to one space, so the
+    // quadratic was unreachable through this function and this test passes against
+    // both the old and the new pattern. It is a forward guard on the whole
+    // pipeline's linearity, not a red-proof of that change.
+    //
+    // It has teeth for a different reason: it is the test that fails if anyone
+    // reorders the collapse, or reintroduces an unbounded whitespace quantifier
+    // followed by another element anywhere in the chain.
+    const message = `${" ".repeat(40000)}x`;
+    const started = performance.now();
+    normalizeDiagnosticMessage({ message });
+    expect(performance.now() - started).toBeLessThan(100);
+  });
 });

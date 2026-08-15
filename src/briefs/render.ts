@@ -77,7 +77,7 @@ export function renderConflicts(brief: ConflictBrief, now: number): string {
   }
   const lines = brief.collisions.map((c) => {
     const who = c.who ?? "unattributed";
-    const kind = c.collisionType.replace(/_/g, " ");
+    const kind = c.collisionType.replaceAll("_", " ");
     const when = formatRelativeTime(now, c.modifiedAt);
     return `- **${who}** — ${kind} in ${c.service}, ${when}: ${c.title}`;
   });

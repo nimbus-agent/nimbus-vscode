@@ -443,8 +443,8 @@ describe("retry", () => {
     const h = harness({}, new Error("gateway down"), ["release-1.4", "billing"]);
     h.retryOnce = true;
     await createBriefCommands(h.deps).preflight();
-    expect(h.prompts.length).toBe(2);
-    expect(h.calls.length).toBe(2);
+    expect(h.prompts).toHaveLength(2);
+    expect(h.calls).toHaveLength(2);
     expect(h.calls[1]?.params).toEqual({ ref: "release-1.4", namespace: "billing" });
   });
 

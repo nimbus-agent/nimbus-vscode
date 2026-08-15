@@ -152,7 +152,7 @@ describe("buildDiagnosticContext", () => {
       range: { start: { line: 0, character: 0 }, end: { line: 0, character: 4 } },
     });
     expect(ctx.truncated).toBe(true);
-    expect(ctx.snippet.length).toBe(50_000);
+    expect(ctx.snippet).toHaveLength(50_000);
   });
 
   test("does not flag truncation for an ordinary file", () => {
