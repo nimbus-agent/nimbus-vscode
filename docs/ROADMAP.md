@@ -29,7 +29,7 @@ That is why, for the Gateway-backed items, the phase boundary that matters most
 is "does the RPC exist yet?":
 
 - **Phases 1–3** need nothing new from the SDK. They deepen surfaces and exploit
-  RPCs that a published client already exposes (the repo pins `^0.14.0`).
+  RPCs that a published client already exposes (see the pin in `package.json`).
 - **Phase 4** is blocked until a published `@nimbus-dev/client` surfaces the
   required RPC, typed. An item graduates out of Phase 4 the moment its RPC ships.
   `0.14.0` widens the surface well past the egress-era client: it exposes the
@@ -85,7 +85,7 @@ rather than *offered*, exactly as above.
   catchup, conflicts, expert, ghost, glossary, huddle, impact, janitor,
   preflight, why, why-peek — and dispatches all eleven over the `agents.*` IPC
   namespace (`packages/gateway/src/ipc/agents-rpc.ts`).
-- The published client (`0.16.0`) types **ten** of them — all but glossary,
+- The published (pinned) client types **ten** of them — all but glossary,
   which is a client-packaging gap, not a missing Gateway method — as
   `agentsCatchup`, `agentsConflicts`, `agentsExpert`, `agentsGhost`,
   `agentsHuddle`, `agentsImpact`, `agentsJanitor`, `agentsPreflight`,
