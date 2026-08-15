@@ -82,7 +82,7 @@ real code paths without a running editor. Keep `src/` and `test/` self-contained
 | `src/lm-tools/` | The `nimbus_search` / `nimbus_ask` Language Model tools (`contributes.languageModelTools`): pure `lm-tools.ts` handlers + the `real-lm-tools.ts` vscode-glue adapter. |
 | `src/search.ts` | Pure parse/rank helpers behind Search and Find related (`searchRanked` results → Quick Pick items). |
 | `src/quick-ask.ts` | Pure quick-ask helpers: context clamping, path redaction, prompt building, reply extraction. Shared by quick-ask, ask-about-selection and the chat participant. |
-| `src/quick-ask-presets.ts` | Resolves the configurable quick-ask preset actions (Explain / Fix / Review / Docstring). |
+| `src/quick-ask-presets.ts` | Resolves the configurable quick-ask preset actions (Explain / Fix / Review / Docstring / Write tests), plus the infra-file ops presets (Blast radius / Ownership / Recent changes) prepended to them. |
 | `src/connection/` | Connection manager, the troubleshooter, and optional `nimbus start` auto-start. |
 | `src/hitl/` | Human-in-the-loop consent: router + modal / toast / details surfaces. |
 | `src/status-bar/` | Connector-health status bar item and the egress badge. |
@@ -219,9 +219,13 @@ the IPC socket or spawn a process).
 
 The **share** surface is **not** implemented — it is blocked upstream, not
 deferred by choice: no published `@nimbus-dev/client` exposes those RPCs (checked
-through `0.14.0`, the pinned version), and the IPC-only non-negotiable forbids
-reaching past the typed client. Workflow and connector surfaces are no longer
-blocked — `0.14.0` exposes `workflowList`/`workflowSave`/`workflowDelete`/
-`workflowListRuns`/`workflowRun`/`workflowRunStream`, the full `connector*`
-suite, and `subscribeConnectorConfigChanged` — they are simply unbuilt. See
-[ROADMAP.md](./ROADMAP.md).
+through the pinned client — see `package.json`), and the IPC-only non-negotiable
+forbids reaching past the typed client.
+
+The **connector** surface is no longer blocked either — the pinned client exposes
+the full `connector*` suite and `subscribeConnectorConfigChanged` — it is simply
+unbuilt. The **workflow** family, by contrast, is built for monitor + run +
+cancel (`src/workflows/`, above); only authoring (`workflowSave` /
+`workflowDelete`) is outstanding, deferred on purpose because `steps_json` is
+opaque at save time, so a malformed DAG saves cleanly and fails only at run time.
+See [ROADMAP.md](./ROADMAP.md).
