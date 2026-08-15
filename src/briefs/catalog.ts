@@ -4,7 +4,7 @@
 //
 // PR 1 carried four; PR 3 adds `janitor`/`preflight`. `whyPeek` is a hover, not
 // a row, and stays out of this catalog — see
-// docs/superpowers/specs/2026-08-10-built-in-briefs-design.md.
+// `git show edc2c81:docs/superpowers/specs/2026-08-10-built-in-briefs-design.md`.
 
 export type BriefId = "why" | "ghost" | "conflicts" | "huddle" | "janitor" | "preflight";
 
