@@ -179,7 +179,8 @@ export function createWorkflowCommands(deps: WorkflowCommandDeps): WorkflowComma
 
 function summarizeStepCount(row: WorkflowRow): string {
   const n = countSteps(row.steps_json);
-  return n === undefined ? "steps unreadable" : `${n} step${n === 1 ? "" : "s"}`;
+  if (n === undefined) return "steps unreadable";
+  return `${n} ${n === 1 ? "step" : "steps"}`;
 }
 
 function countSteps(stepsJson: string): number | undefined {

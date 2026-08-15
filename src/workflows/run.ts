@@ -107,7 +107,9 @@ export function describeRunOutcome(name: string, result: WorkflowRunResult): str
 }
 
 function renderStep(step: WorkflowStepResult, i: number): string[] {
-  const lines = [`${i + 1}. ${step.label ?? `step ${i + 1}`} — ${step.status}`];
+  const position = i + 1;
+  const label = step.label ?? `step ${position}`;
+  const lines = [`${position}. ${label} — ${step.status}`];
   if (step.output !== undefined) lines.push(indent(step.output));
   if (step.error !== undefined) lines.push(indent(`error: ${step.error}`));
   return lines;

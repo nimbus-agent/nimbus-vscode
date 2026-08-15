@@ -175,7 +175,7 @@ describe("the brief kind", () => {
     const h = harness({ answers: ["Send"] });
     const decision = await h.gate.check("brief", '{"ref":"src/a.ts","line":42}', BRIEF_META);
     expect(decision).toBe("send");
-    expect(h.shown.length).toBe(1);
+    expect(h.shown).toHaveLength(1);
     expect(h.shown[0]?.modal).toBe(true);
   });
 
@@ -201,7 +201,7 @@ describe("the brief kind", () => {
     const h = harness({ answers: ["Send"], trusted: false });
     await h.deps.skips.setSkipped("brief");
     expect(await h.gate.check("brief", "{}", BRIEF_META)).toBe("send");
-    expect(h.shown.length).toBe(1);
+    expect(h.shown).toHaveLength(1);
     expect(h.shown[0]?.items).not.toContain("Always send Agent Briefs here");
   });
 });

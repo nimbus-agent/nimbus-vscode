@@ -3146,7 +3146,7 @@ describe("workflow run wiring", () => {
 
     // The body subscribed on the object that HAS onCancellationRequested — the
     // token. Handed the progress reporter instead, the run throws before this.
-    expect(cancelSubscribers.length).toBe(1);
+    expect(cancelSubscribers).toHaveLength(1);
     // And the subscription is live: firing it reaches workflow.cancel.
     expect(handleCancel).toHaveBeenCalled();
     expect(f.errorMessages).toEqual([]);

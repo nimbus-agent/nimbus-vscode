@@ -202,14 +202,14 @@ function renderCompleteness(completeness: Record<string, unknown>): string {
   }
 
   const observed = EGRESS_COVERAGE_CLASSES.filter((c) => granularityOf(c) !== "none");
+  const observedList = observed.map((c) => `<code>${escapeHtml(c)}</code>`).join(", ");
   const scope =
-    observed.length === 0
-      ? "no egress class was observed"
-      : `observed classes: ${observed.map((c) => `<code>${escapeHtml(c)}</code>`).join(", ")}`;
+    observed.length === 0 ? "no egress class was observed" : `observed classes: ${observedList}`;
+  const eventNoun = events === 1 ? "event" : "events";
   const countText =
     events === undefined
       ? "The event count is absent from this response."
-      : `<strong>${events}</strong> authorized outbound event${events === 1 ? "" : "s"} recorded before dispatch.`;
+      : `<strong>${events}</strong> authorized outbound ${eventNoun} recorded before dispatch.`;
   return `<p>Completeness: ${countText} This covers ${scope} only — a class marked <em>not observed</em> below was never watched, and this document makes no claim about it.</p>${table}`;
 }
 
