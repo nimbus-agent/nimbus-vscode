@@ -140,6 +140,40 @@ export function gateRawAskStream<H, O>(
   return gateAskStream((i, o) => client.askStream(i, o), gate, kind, action);
 }
 
+/**
+ * {@link gateRawAskStream}, but resolving the client at CALL time.
+ *
+ * A consumer built once that outlives a reconnect must not hold a client
+ * instance: `connection-manager` closes the old `NimbusClient` and binds a NEW
+ * one, after which every call through the captured handle throws "IPC client is
+ * not connected". The chat controller is exactly that shape — cached for the
+ * life of its panel and reset only on panel dispose.
+ *
+ * The lazy hop lives HERE rather than at the wiring site deliberately:
+ * `.askStream(` has to stay inside this file, which is what lets
+ * `egress-choke-point.test.ts` prove no other module reaches a raw client.
+ * Writing `getClient()?.askStream(…)` in extension.ts is the obvious shortcut
+ * and punches a hole straight through that guard.
+ */
+export function gateLazyAskStream<H, O>(
+  getClient: () => RawAskStreamer<H, O> | undefined,
+  gate: EgressGate,
+  kind: EgressKind,
+  action: string,
+  notConnectedMessage: string,
+): (input: string, opts?: O) => H {
+  return gateAskStream(
+    (i, o) => {
+      const client = getClient();
+      if (client === undefined) throw new Error(notConnectedMessage);
+      return client.askStream(i, o);
+    },
+    gate,
+    kind,
+    action,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Briefs.
 //
