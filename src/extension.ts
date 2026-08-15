@@ -1,7 +1,13 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 
-import { discoverSocketPath, type HitlRequest, NimbusClient } from "@nimbus-dev/client";
+import {
+  type AskStreamHandle,
+  type AskStreamOptions,
+  discoverSocketPath,
+  type HitlRequest,
+  NimbusClient,
+} from "@nimbus-dev/client";
 import * as vscode from "vscode";
 import { createBriefCommands } from "./briefs/commands.js";
 import { createNamespaceStore } from "./briefs/namespace-store.js";
@@ -32,6 +38,7 @@ import { normalizeDiagnosticMessage } from "./diagnostics/normalize.js";
 import { registerDiagnosticCodeActions } from "./diagnostics/real-provider.js";
 import { createEgressGate } from "./egress/gate.js";
 import {
+  gateLazyAskStream,
   gateRawAgentInvoke,
   gateRawAskStream,
   gateRawBriefs,
@@ -370,19 +377,45 @@ export function activateWithDeps(
     // survives the spread). Each member ChatClientLike needs is named and
     // forwarded explicitly instead, with `this` preserved by wrapping in an
     // arrow rather than passing the method off `full` directly.
-    const full = nimbus();
-    const gatedChatClient: ChatClientLike =
-      full === undefined
-        ? // Defensive only: full is derived from the same connection.client()
-          // as c, so this is unreachable given the `c === undefined` guard
-          // above. c's type is the minimal NimbusClientLike (just `close`), so
-          // the cast stands in for a branch that never actually runs.
-          (c as unknown as ChatClientLike)
-        : {
-            askStream: gateRawAskStream(full, egressGate, "ask", "Ask panel"),
-            cancelStream: (streamId) => full.cancelStream(streamId),
-            getSessionTranscript: (params) => full.getSessionTranscript(params),
-          };
+    // Resolve the client PER CALL rather than closing over the instance that is
+    // live at creation time. `chatController` is cached for the life of the
+    // panel and reset only by `panel.onDispose`, so a closed-over client
+    // outlived every reconnect: `closeClient()` closes the old instance and
+    // `tryConnect()` binds a NEW one, after which every call through the stale
+    // handle throws "IPC client is not connected" — while the status bar reads
+    // connected and the HITL subscription beside it HAS been re-bound.
+    //
+    // Rebuilding the controller on reconnect is the other candidate fix and is
+    // the wrong one here: `ensureChatController` also registers
+    // `panel.onMessage` and `panel.onDispose`, both of which append to listener
+    // arrays on a panel that `createOrReveal` REUSES — so a rebuild would
+    // double-handle every webview message. Lazy resolution matches what
+    // `auditView`, `egressView`, `scm` and `briefCommands` already do
+    // (`getClient: () => nimbus()`).
+    const NOT_CONNECTED_MESSAGE =
+      'Nimbus is not connected to the Gateway. Run "Nimbus: Reconnect to Gateway".';
+    const requireLive = (): NonNullable<ReturnType<typeof nimbus>> => {
+      const live = nimbus();
+      if (live === undefined) throw new Error(NOT_CONNECTED_MESSAGE);
+      return live;
+    };
+    const gatedChatClient: ChatClientLike = {
+      // `gateLazyAskStream` rather than resolving the client and invoking the
+      // raw stream method here: that call shape must stay inside the choke
+      // point, which `egress-choke-point.test.ts` proves by scanning this file
+      // for it. Doing the lazy hop inline is the obvious shortcut and the test
+      // rejects it — including when it appears only inside a comment, as an
+      // earlier draft of this one did.
+      askStream: gateLazyAskStream<AskStreamHandle, AskStreamOptions>(
+        () => nimbus(),
+        egressGate,
+        "ask",
+        "Ask panel",
+        NOT_CONNECTED_MESSAGE,
+      ),
+      cancelStream: async (streamId) => requireLive().cancelStream(streamId),
+      getSessionTranscript: async (params) => requireLive().getSessionTranscript(params),
+    };
     chatController = createChatController({
       client: gatedChatClient,
       panel,

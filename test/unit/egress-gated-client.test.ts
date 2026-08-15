@@ -6,6 +6,7 @@ import {
   EgressCancelled,
   gateAgentInvoke,
   gateAskStream,
+  gateLazyAskStream,
   gateRawBriefs,
   gateRawParticipantBriefs,
   isEgressCancelled,
@@ -352,5 +353,71 @@ describe("gateRawParticipantBriefs", () => {
       { action: "a", files: [], omissions: [] },
     );
     expect(checked).toBe(false);
+  });
+});
+
+/**
+ * `gateLazyAskStream` exists because a consumer built once can outlive a
+ * reconnect. `connection-manager` closes the old `NimbusClient` and binds a NEW
+ * one; the chat controller is cached for the life of its panel, so a client
+ * captured at construction is stale from the first reconnect onward and every
+ * call through it throws "IPC client is not connected" — while the status bar
+ * still reads connected.
+ */
+describe("gateLazyAskStream", () => {
+  const streamer = (id: string): { askStream: (i: string) => string } => ({
+    askStream: (i: string) => `${id}:${i}`,
+  });
+
+  test("resolves the client at CALL time, not at construction", () => {
+    let current = streamer("first");
+    const gated = gateLazyAskStream(() => current, fakeGate("send"), "ask", "Ask panel", "nope");
+
+    expect(gated("a")).toBe("first:a");
+
+    // The reconnect: the old client is closed and a new instance is bound.
+    current = streamer("second");
+    expect(gated("b")).toBe("second:b");
+  });
+
+  test("keeps working across repeated reconnects", () => {
+    let current = streamer("c1");
+    const gated = gateLazyAskStream(() => current, fakeGate("send"), "ask", "Ask panel", "nope");
+    for (const id of ["c2", "c3", "c4"]) {
+      current = streamer(id);
+      expect(gated("x")).toBe(`${id}:x`);
+    }
+  });
+
+  test("throws the caller's not-connected message when there is no client", () => {
+    const gated = gateLazyAskStream(
+      () => undefined,
+      fakeGate("send"),
+      "ask",
+      "Ask panel",
+      "Nimbus is not connected to the Gateway.",
+    );
+    expect(() => gated("a")).toThrow(/not connected to the Gateway/);
+  });
+
+  /**
+   * `gateAskStream` RECORDS rather than checks — its own comment says so: the
+   * handle is returned synchronously and both askStream surfaces are
+   * pass-through by design, because the text is what the user just typed. So
+   * the contract to pin is that the prompt still reaches the gate's ledger, not
+   * that a decision can block it. (An earlier draft of this test asserted a
+   * cancelled gate would stop the call; it does not, and asserting otherwise
+   * would have encoded a gate that does not exist.)
+   */
+  test("records the prompt on the gate before reaching the client", () => {
+    const gate = fakeGate("send");
+    const gated = gateLazyAskStream(() => streamer("live"), gate, "ask", "Ask panel", "nope");
+
+    expect(gated("hello")).toBe("live:hello");
+    expect(gate.recorded.at(-1)).toMatchObject({
+      kind: "ask",
+      prompt: "hello",
+      action: "Ask panel",
+    });
   });
 });
