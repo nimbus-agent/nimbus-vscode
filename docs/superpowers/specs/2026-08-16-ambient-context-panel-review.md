@@ -1,6 +1,6 @@
 # Design Review: Ambient Context Panel
 
-This document contains a structured review, suggestions, improvements, and open questions for the [2026-08-16-ambient-context-panel-design.md](file:///C:/gitrep/nimbus-vscode/.claude/worktrees/ambient-context-panel/docs/superpowers/specs/2026-08-16-ambient-context-panel-design.md) design spec.
+This document contains a structured review, suggestions, improvements, and open questions for the [2026-08-16-ambient-context-panel-design.md](2026-08-16-ambient-context-panel-design.md) design spec.
 
 ---
 

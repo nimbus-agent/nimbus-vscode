@@ -1,6 +1,6 @@
 # Design & Plan Review: Ambient Context Panel — PR 1
 
-This document contains a structured review, suggestions, improvements, and open questions for the [2026-08-16-ambient-context-panel-pr1.md](file:///C:/gitrep/nimbus-vscode/.claude/worktrees/ambient-context-panel/docs/superpowers/plans/2026-08-16-ambient-context-panel-pr1.md) implementation plan.
+This document contains a structured review, suggestions, improvements, and open questions for the [2026-08-16-ambient-context-panel-pr1.md](2026-08-16-ambient-context-panel-pr1.md) implementation plan.
 
 ---
 
