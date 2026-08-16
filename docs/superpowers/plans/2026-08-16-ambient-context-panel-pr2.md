@@ -1006,6 +1006,54 @@ describe("createController", () => {
     await Promise.resolve();
     expect(calls).toBeGreaterThan(1);
   });
+
+  test("refreshes when the connection drops, so stale answers do not linger", async () => {
+    const h = harness({ collect: async () => section(1) });
+    await h.controller.collect(snap(1));
+    const before = h.posted.length;
+    h.fire({ kind: "disconnected" } as ConnectionState);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.posted.length).toBeGreaterThan(before);
+  });
+
+  test("posts an error section rather than leaving one loading forever", async () => {
+    const h = harness({
+      collect: async () => {
+        throw new Error("collector exploded");
+      },
+    });
+    await h.controller.collect(snap(1));
+    const last = h.posted.at(-1);
+    expect(last?.type).toBe("section");
+    expect(last?.section?.rows[0]?.label).toContain("collector exploded");
+    expect(last?.section?.loading).toBeUndefined();
+  });
+
+  test("posts an error section when a collector throws synchronously", async () => {
+    const h = harness({
+      collect: () => {
+        throw new Error("thrown before any await");
+      },
+    });
+    await h.controller.collect(snap(1));
+    expect(h.posted.at(-1)?.section?.rows[0]?.label).toContain("thrown before any await");
+  });
+
+  test("clears the in-flight entry after a failure, so the next collection retries", async () => {
+    let calls = 0;
+    const h = harness({
+      collect: async () => {
+        calls += 1;
+        throw new Error("boom");
+      },
+    });
+    await h.controller.collect(snap(1));
+    await h.controller.collect(snap(2));
+    // Two attempts, not one: a failed collection must not be cached as
+    // in-flight, or the key would be permanently poisoned.
+    expect(calls).toBe(2);
+  });
 });
 ```
 
@@ -1103,13 +1151,18 @@ export function createController(deps: ControllerDeps): ContextController {
   const runOne = async (spec: SignalSpec, snapshot: ContextSnapshot, mine: number): Promise<void> => {
     const key = spec.cacheKey(snapshot);
     const flightKey = `${spec.id}:${key ?? ""}`;
-    let pending = key === undefined ? undefined : inFlight.get(flightKey);
-    if (pending === undefined) {
-      pending = spec.collect(snapshot, deps.signalDeps);
-      if (key !== undefined) inFlight.set(flightKey, pending);
-    }
     try {
+      let pending = key === undefined ? undefined : inFlight.get(flightKey);
+      if (pending === undefined) {
+        // Called INSIDE the try on purpose. A collector that throws
+        // synchronously would otherwise escape before the cleanup below, so its
+        // in-flight entry would survive forever and every later collection for
+        // the same key would await a promise that can only reject.
+        pending = spec.collect(snapshot, deps.signalDeps);
+        if (key !== undefined) inFlight.set(flightKey, pending);
+      }
       const section = await pending;
+      // Only a successful section is worth remembering.
       if (key !== undefined) remember(spec.id, key, section);
       // The fence: a later snapshot has overtaken this one, so this answer is
       // about a line or file the user has already left.
@@ -1117,6 +1170,21 @@ export function createController(deps: ControllerDeps): ContextController {
       deps.post({ type: "section", generation: mine, section });
     } catch (e: unknown) {
       deps.log.warn(`context signal ${spec.id} failed: ${errMsg(e)}`);
+      // Never leave a section on "Loading…". The two collectors catch their own
+      // RPC failures, but anything thrown outside that — or by a future signal
+      // whose author forgets — would hang that section for the rest of the
+      // session, with only a log line to explain it.
+      if (mine === generation) {
+        deps.post({
+          type: "section",
+          generation: mine,
+          section: {
+            id: spec.id,
+            title: titleOf(spec.id),
+            rows: [{ label: `Unavailable: ${errMsg(e)}`, iconId: "error" }],
+          },
+        });
+      }
     } finally {
       if (key !== undefined) inFlight.delete(flightKey);
     }
@@ -1157,19 +1225,24 @@ export function createController(deps: ControllerDeps): ContextController {
     await Promise.all(toRun.map((spec) => runOne(spec, snapshot, mine)));
   };
 
-  const sub = deps.connection.onState((state) => {
-    if (state.kind !== "connected") {
-      // The index may change while we are away, so nothing cached survives.
-      caches.clear();
-      return;
-    }
-    // The symmetric half. Without it the panel would sit on "Needs the Nimbus
-    // Gateway" until the user happened to move the cursor.
-    caches.clear();
+  const refresh = (reason: string): void => {
     const snapshot = lastSnapshot;
     if (snapshot === undefined || !deps.isVisible()) return;
-    void collect(snapshot).catch((e: unknown) =>
-      deps.log.warn(`context re-collect after reconnect failed: ${errMsg(e)}`),
+    void collect(snapshot).catch((e: unknown) => deps.log.warn(`context ${reason}: ${errMsg(e)}`));
+  };
+
+  const sub = deps.connection.onState((state) => {
+    // Nothing cached survives a state change in either direction: the index can
+    // change while we are away.
+    caches.clear();
+    // Both halves refresh, and for symmetrical reasons. Losing the Gateway must
+    // replace stale blame and related answers with "Needs the Nimbus Gateway"
+    // rather than leaving results on screen that read as current; regaining it
+    // must fill them back in without waiting for the user to move the cursor.
+    refresh(
+      state.kind === "connected"
+        ? "re-collect after reconnect failed"
+        : "clear after disconnect failed",
     );
   });
 
@@ -1411,6 +1484,19 @@ inside `GitRepositoryLike`, after `branch()`:
   onDidChange(listener: () => void): DisposableLike;
 ```
 
+and to `GitApiLike`, beside `repositories()`:
+
+```ts
+  /**
+   * Fires when the git extension opens or discovers a repository. Repositories
+   * populate ASYNCHRONOUSLY — the extension can be active while still scanning —
+   * so a consumer that subscribes only to what `repositories()` returns at
+   * activation can attach to nothing at all and never hear about a branch
+   * switch again.
+   */
+  onDidOpenRepository(listener: () => void): DisposableLike;
+```
+
 - [ ] **Step 2: Adapt the real git extension**
 
 In `src/scm/real-git.ts`, extend `RawRepository.state` with the event the git
@@ -1426,13 +1512,40 @@ and add to the object `adaptRepository` returns:
     onDidChange: (listener: () => void) => raw.state.onDidChange(listener),
 ```
 
-- [ ] **Step 3: Update both test fakes**
+Then extend `RawGitApi` with the extension's own repository event, and forward it
+from `createRealGitApi`'s returned object:
+
+```ts
+interface RawGitApi {
+  repositories: RawRepository[];
+  onDidOpenRepository(listener: () => void): { dispose(): void };
+}
+```
+
+```ts
+      return {
+        repositories: () => api.repositories.map(adaptRepository),
+        onDidOpenRepository: (listener: () => void) => api.onDidOpenRepository(listener),
+      };
+```
+
+- [ ] **Step 3: Update the test fakes**
 
 In `test/unit/scm-repo-select.test.ts` and `test/unit/scm-commands.test.ts`, add
 to each `fakeRepo`, after `branch`:
 
 ```ts
     onDidChange: () => ({ dispose: () => undefined }),
+```
+
+And in `test/unit/scm-commands.test.ts:69`, the `GitApiLike` fake now needs the
+new member:
+
+```ts
+  const api: GitApiLike = {
+    repositories: () => repos,
+    onDidOpenRepository: () => ({ dispose: () => undefined }),
+  };
 ```
 
 - [ ] **Step 4: Populate the changed-file count**
@@ -1573,16 +1686,35 @@ Replace the plain save subscription and add a git one. Inside
   };
 
   // Git state: branch switches and staging change what the git section says.
-  const gitSubs: vscode.Disposable[] = [];
-  void deps.git().then((api) => {
+  //
+  // Re-attached rather than attached once. The git extension discovers
+  // repositories asynchronously, so the set can still be empty when this first
+  // runs — subscribing only to what is there at activation is how this trigger
+  // ends up never firing at all. Re-attaching on every open also covers a repo
+  // closing: its listener is disposed with the rest.
+  const gitSubs: Array<{ dispose(): void }> = [];
+  const attachGitListeners = async (): Promise<void> => {
+    const api = await deps.git();
+    for (const previous of gitSubs.splice(0)) previous.dispose();
     for (const repo of api?.repositories() ?? []) {
       gitSubs.push(
         repo.onDidChange(() => {
           controller.invalidateSignal("git");
           recollect();
-        }) as vscode.Disposable,
+        }),
       );
     }
+  };
+
+  let openSub: { dispose(): void } | undefined;
+  void deps.git().then((api) => {
+    openSub = api?.onDidOpenRepository(() => {
+      void attachGitListeners().then(() => {
+        controller.invalidateSignal("git");
+        recollect();
+      });
+    });
+    void attachGitListeners();
   });
 ```
 
@@ -1592,8 +1724,10 @@ the new disposables:
 ```ts
     vscode.workspace.onDidSaveTextDocument((document) => onSave(document)),
     { dispose: () => controller.dispose() },
-    { dispose: () => {
-        for (const s of gitSubs) s.dispose();
+    {
+      dispose: () => {
+        openSub?.dispose();
+        for (const s of gitSubs.splice(0)) s.dispose();
       },
     },
 ```
@@ -1668,7 +1802,14 @@ all sixteen points. Then, for this PR's additions:
 8. Save a file: Related refreshes.
 9. Switch branches in a terminal while the editor sits idle: the Git section
    updates without your touching the editor, and the changed-file count is now
-   present and correct against `git status`.
+   present and correct against `git status`. Then **close the window, open a
+   fresh one on the same repo, and switch branches again before touching
+   anything** — that is the case where repositories are still being discovered
+   when the panel first subscribes, and where a once-only subscription would
+   silently never fire.
+10. Stop the Gateway while the panel is visible and **do not touch the editor**:
+    the History and Related sections must change to "Needs the Nimbus Gateway"
+    on their own, not keep showing answers that are no longer current.
 
 - [ ] **Step 7: Commit**
 
@@ -1696,6 +1837,16 @@ in PR 1 and are untouched here.
 **Deferred to PR 3, as the spec assigns them:** `nimbus.context.enabled` and
 `docs/settings.md`; the diagnostic and SCM action routes; branch pre-fill for the
 prompted briefs; the ExTester spec.
+
+**Three corrections from the 2026-08-16 plan review, recorded so they are not
+undone.** A collector that throws now posts an error section instead of leaving
+one on "Loading…" forever, and `spec.collect` is called *inside* the try so a
+synchronous throw cannot strand its in-flight entry and poison that cache key
+permanently. The connection listener refreshes in *both* directions, so losing
+the Gateway replaces stale answers rather than leaving them on screen looking
+current. And the git listeners re-attach on `onDidOpenRepository`, because
+repositories populate asynchronously and a once-only subscription can attach to
+an empty set and never fire.
 
 **Two things a reviewer should expect and will not find.** Blame's PR and ticket
 render as labels without links — this panel's renderer emits text nodes only, and
