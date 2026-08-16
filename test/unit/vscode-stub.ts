@@ -41,6 +41,27 @@ export const window = {
     };
   },
   registerTreeDataProvider: (_viewId: string, _provider: unknown) => ({ dispose: () => undefined }),
+  registerWebviewViewProvider: (_viewId: string, _provider: unknown) => ({
+    dispose: () => undefined,
+  }),
+  // Assignable, so a test can seed it before driving a path that reads it —
+  // mirrors workspace.workspaceFolders below. No test in this suite exercises
+  // the context panel's live-editor path, so this stays undefined.
+  activeTextEditor: undefined as
+    | {
+        document: {
+          fileName: string;
+          uri: { scheme: string; fsPath: string };
+          languageId: string;
+          isDirty: boolean;
+          getText: (range?: unknown) => string;
+          lineAt: (line: number) => { range: { end: unknown } };
+        };
+        selection: { isEmpty: boolean; active: unknown; start: unknown; end: unknown };
+      }
+    | undefined,
+  onDidChangeActiveTextEditor: (_h: (e: unknown) => void) => ({ dispose: () => undefined }),
+  onDidChangeTextEditorSelection: (_h: (e: unknown) => void) => ({ dispose: () => undefined }),
   showTextDocument: async (doc: unknown, _opts?: unknown) => ({
     document: doc,
     edit: async (
@@ -93,6 +114,7 @@ export const workspace = {
     dispose: () => undefined,
   }),
   openTextDocument: async (uri: unknown) => ({ uri }),
+  onDidSaveTextDocument: (_h: (doc: unknown) => void) => ({ dispose: () => undefined }),
   isTrusted: true,
   workspaceFolders: undefined as Array<{ uri: { fsPath: string } }> | undefined,
   // Every open document, focused or not. Assignable, so a test can seed it and
@@ -191,6 +213,8 @@ export const languages = {
     languages.lastCodeActionsProvider = provider as CodeActionsProviderLike;
     return { dispose: () => undefined };
   },
+  getDiagnostics: (_uri: unknown) => [] as unknown[],
+  onDidChangeDiagnostics: (_h: (e: unknown) => void) => ({ dispose: () => undefined }),
 };
 export const Uri = {
   // Splits the query and fragment, as the real vscode.Uri.parse does. This
@@ -216,6 +240,32 @@ export const Uri = {
     scheme: "file",
   }),
 };
+// Combines several disposables into one, as the real vscode.Disposable.from
+// does — used by real-context-view.ts to return a single Disposable for all
+// of its event-listener registrations.
+export class Disposable {
+  constructor(private readonly onDispose: () => void) {}
+  dispose(): void {
+    this.onDispose();
+  }
+  static from(...disposables: ReadonlyArray<{ dispose(): void }>): Disposable {
+    return new Disposable(() => {
+      for (const d of disposables) d.dispose();
+    });
+  }
+}
+export class Position {
+  constructor(
+    public line: number,
+    public character: number,
+  ) {}
+}
+export class Range {
+  constructor(
+    public start: Position,
+    public end: Position,
+  ) {}
+}
 export enum ViewColumn {
   Beside = -2,
   Active = -1,
