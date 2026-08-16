@@ -58,6 +58,10 @@ function adaptRepository(raw: RawRepository): GitRepositoryLike {
   return {
     rootPath: root,
     changedFiles: listing,
+    // The same state `untrackedPaths` below reads, and the same relativiser —
+    // but no diff subprocess, because the context panel asks on every tick.
+    changedPathsNow: () =>
+      (raw.state.workingTreeChanges ?? []).map((c) => relativeOrBasename(root, c.uri.fsPath)),
     fileDiff: async (scope, path) =>
       scope === "staged" ? raw.diffIndexWithHEAD(path) : raw.diffWithHEAD(path),
     untrackedPaths: async () => {

@@ -38,6 +38,9 @@ function fakeRepo(opts: FakeRepoOpts = {}): GitRepositoryLike {
   return {
     rootPath: opts.rootPath ?? "/home/dev/proj",
     changedFiles: async (_scope: DiffScope) => files,
+    // The state-backed read the context panel uses; the SCM trio still goes
+    // through changedFiles, so this only has to be shaped right.
+    changedPathsNow: () => files.map((f) => f.path),
     fileDiff: async (_scope: DiffScope, path: string) => diffs[path] ?? "",
     untrackedPaths: async () => opts.untracked ?? [],
     log: async () => opts.log ?? ["feat: earlier change"],

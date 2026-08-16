@@ -19,6 +19,14 @@ export interface GitRepositoryLike {
   // Absolute. Never sent to the agent; only its basename is ever displayed.
   readonly rootPath: string;
   changedFiles(scope: DiffScope): Promise<readonly ChangedFile[]>;
+  /**
+   * The working-tree changes the git extension has ALREADY materialised, read
+   * straight off its state — no subprocess, no await. `changedFiles("all")`
+   * shells out to `git diff`, which is right for the SCM trio (a command the
+   * user invoked, once) and wrong for the context panel, which asks on every
+   * debounce tick while the user types. Repo-relative, like ChangedFile.path.
+   */
+  changedPathsNow(): readonly string[];
   fileDiff(scope: DiffScope, path: string): Promise<string>;
   // Counted and named in the review header; contents are never sent.
   untrackedPaths(): Promise<readonly string[]>;
