@@ -64,10 +64,13 @@ export function registerContextView(deps: {
     const repo = repoContaining(repos, fileName);
     if (repo === undefined) return undefined;
     try {
-      const changed = await repo.changedFiles("all");
-      return { branch: repo.branch(), changedPaths: changed.map((c) => c.path) };
+      // changedPathsNow, NOT changedFiles("all"): this runs on every debounce
+      // tick while the user works, and changedFiles shells out to `git diff`.
+      // The git extension has already materialised its working-tree state, so
+      // this is a read of data in hand — the same state untrackedPaths reads.
+      return { branch: repo.branch(), changedPaths: repo.changedPathsNow() };
     } catch (e: unknown) {
-      // A failed diff must not cost the branch row, which is already in hand.
+      // A failed read must not cost the branch row, which is already in hand.
       deps.log.warn(`context panel could not read changed files: ${errMsg(e)}`);
       return { branch: repo.branch(), changedPaths: undefined };
     }
@@ -149,6 +152,21 @@ export function registerContextView(deps: {
   const onSelection = createDebouncer(DEBOUNCE_MS.selection, recollect);
   const onEditor = createDebouncer(DEBOUNCE_MS.editor, recollect);
   const onDiagnostics = createDebouncer(DEBOUNCE_MS.diagnostics, recollect);
+  // Git is the fourth source, at the editor tier. It is NOT a rare, deliberate
+  // event: the git extension fires onDidChange after every updateModelState(),
+  // which its working-tree watcher triggers while the user types.
+  //
+  // invalidateAll, not invalidateSignal("git"): `git`'s cacheKey is undefined,
+  // so its cache is permanently empty and clearing it clears nothing. What a
+  // commit or a branch switch actually invalidates is BLAME — whose key is
+  // path:line, with no mention of HEAD — so without this the panel would keep
+  // reporting the pre-commit author and sha for every line already visited.
+  // (Carrying HEAD on GitSummary and folding it into blame's key is the
+  // narrower fix; it is a seam change, deferred to PR 3.)
+  const onGit = createDebouncer(DEBOUNCE_MS.editor, () => {
+    controller.invalidateAll();
+    recollect();
+  });
 
   const provider: vscode.WebviewViewProvider = {
     resolveWebviewView(webviewView) {
@@ -208,12 +226,7 @@ export function registerContextView(deps: {
     for (const previous of gitSubs.splice(0)) previous.dispose();
     if (gitWiringDisposed) return;
     for (const repo of api?.repositories() ?? []) {
-      gitSubs.push(
-        repo.onDidChange(() => {
-          controller.invalidateSignal("git");
-          recollect();
-        }),
-      );
+      gitSubs.push(repo.onDidChange(() => onGit.trigger()));
     }
   };
 
@@ -223,10 +236,9 @@ export function registerContextView(deps: {
     .then((api) => {
       const sub = api?.onDidOpenRepository(() => {
         void attachGitListeners()
-          .then(() => {
-            controller.invalidateSignal("git");
-            recollect();
-          })
+          // Same reasoning as onGit: a repository appearing can change the
+          // branch, the changed-file count and every cached blame answer.
+          .then(() => onGit.trigger())
           .catch((e: unknown) => deps.log.warn(`context panel git re-attach failed: ${errMsg(e)}`));
       });
       if (gitWiringDisposed) {
@@ -249,6 +261,7 @@ export function registerContextView(deps: {
     { dispose: () => onSelection.dispose() },
     { dispose: () => onEditor.dispose() },
     { dispose: () => onDiagnostics.dispose() },
+    { dispose: () => onGit.dispose() },
     { dispose: () => controller.dispose() },
     {
       dispose: () => {
