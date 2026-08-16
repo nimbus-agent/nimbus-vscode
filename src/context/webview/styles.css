@@ -1,0 +1,53 @@
+body {
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+  color: var(--vscode-foreground);
+  padding: 0.5rem;
+}
+h2 {
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.75;
+  margin: 0.9rem 0 0.35rem;
+}
+.rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: baseline;
+  padding: 0.15rem 0;
+}
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.detail,
+.empty {
+  opacity: 0.7;
+}
+.dirty {
+  color: var(--vscode-editorWarning-foreground);
+  margin: 0 0 0.5rem;
+}
+.offer {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  width: 100%;
+  margin: 0.15rem 0;
+  padding: 0.3rem 0.4rem;
+  text-align: left;
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+  border: none;
+  cursor: pointer;
+}
+.offer:hover {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
