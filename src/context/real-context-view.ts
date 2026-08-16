@@ -99,10 +99,16 @@ export function registerContextView(deps: {
       ...(git === undefined ? {} : { git }),
       ...(editor === undefined ? {} : { diagnostics: diagnosticsFor(editor.document.uri) }),
     });
+    const sections = await Promise.all(
+      SIGNAL_CATALOG.map((spec) =>
+        spec.collect(snapshot, { client: () => undefined, now: Date.now, searchLimit: () => 20 }),
+      ),
+    );
+    if (mine !== generation || view === undefined) return;
     void view.webview.postMessage({
       type: "render",
       generation: mine,
-      sections: SIGNAL_CATALOG.map((spec) => spec.collect(snapshot)),
+      sections,
       offers: offersFor(snapshot),
       isDirty: snapshot.isDirty,
     });

@@ -1,3 +1,5 @@
+import type { RankedSearchItem, WhyPeek } from "@nimbus-dev/client";
+
 import type { ContextSnapshot } from "./snapshot.js";
 
 // The signals the panel reads, as DATA — the same shape BRIEF_CATALOG uses, so
@@ -5,6 +7,24 @@ import type { ContextSnapshot } from "./snapshot.js";
 // entries here are local reads; the two Gateway-backed signals arrive in PR 2.
 
 export type SignalId = "problems" | "git";
+
+/**
+ * The two Gateway calls this panel makes, and nothing else. A narrow structural
+ * seam rather than the whole client: these modules stay pure and unit-testable,
+ * and the surface a collector can reach is visible in one place. Both calls
+ * reach no model — see the plan's Global Constraints.
+ */
+export interface ContextClientLike {
+  agentsWhyPeek(p: { ref: string; line?: number }): Promise<WhyPeek>;
+  searchRanked(params?: { name?: string; limit?: number }): Promise<readonly RankedSearchItem[]>;
+}
+
+export interface SignalDeps {
+  /** Undefined while disconnected; Gateway-backed collectors then sit out. */
+  readonly client: () => ContextClientLike | undefined;
+  readonly now: () => number;
+  readonly searchLimit: () => number;
+}
 
 export interface SignalRow {
   readonly label: string;
@@ -18,6 +38,8 @@ export interface SignalSection {
   readonly rows: readonly SignalRow[];
   /** Shown instead of rows when there are none. Absent when rows is non-empty. */
   readonly empty?: string;
+  /** True while a Gateway-backed collector is still in flight. */
+  readonly loading?: boolean;
 }
 
 // Errors and warnings only. Information and Hint are excluded for the same
@@ -25,7 +47,10 @@ export interface SignalSection {
 // for help with.
 const WARNING = 1;
 
-export function problemsSection(snapshot: ContextSnapshot): SignalSection {
+export async function problemsSection(
+  snapshot: ContextSnapshot,
+  _deps: SignalDeps,
+): Promise<SignalSection> {
   const base = { id: "problems" as const, title: "Problems" };
   if (snapshot.path === undefined) return { ...base, rows: [], empty: "No file open." };
   const rows = snapshot.diagnostics
@@ -42,7 +67,10 @@ export function problemsSection(snapshot: ContextSnapshot): SignalSection {
   return { ...base, rows };
 }
 
-export function gitSection(snapshot: ContextSnapshot): SignalSection {
+export async function gitSection(
+  snapshot: ContextSnapshot,
+  _deps: SignalDeps,
+): Promise<SignalSection> {
   const base = { id: "git" as const, title: "Git" };
   const git = snapshot.git;
   if (git === undefined) return { ...base, rows: [], empty: "No git repository here." };
@@ -66,10 +94,16 @@ export interface SignalSpec {
   readonly id: SignalId;
   /** Whether collecting this signal needs the Gateway socket. */
   readonly needsGateway: boolean;
-  readonly collect: (snapshot: ContextSnapshot) => SignalSection;
+  readonly collect: (snapshot: ContextSnapshot, deps: SignalDeps) => Promise<SignalSection>;
+  /**
+   * What a cached result for this snapshot would be keyed on, or undefined when
+   * the signal is not worth caching. Local reads return undefined: they cost
+   * nothing, and a cache would only add a way to be stale.
+   */
+  readonly cacheKey: (snapshot: ContextSnapshot) => string | undefined;
 }
 
 export const SIGNAL_CATALOG: readonly SignalSpec[] = [
-  { id: "problems", needsGateway: false, collect: problemsSection },
-  { id: "git", needsGateway: false, collect: gitSection },
+  { id: "problems", needsGateway: false, collect: problemsSection, cacheKey: () => undefined },
+  { id: "git", needsGateway: false, collect: gitSection, cacheKey: () => undefined },
 ];
