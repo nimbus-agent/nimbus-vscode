@@ -51,10 +51,16 @@ command allowlist and argument validation (Task 4) must land here — shipping a
 webview that can post an unvalidated command id, even briefly, is not
 acceptable. PR 3 extends the allowlist to the diagnostic and SCM routes.
 
-**Not in this PR, on purpose:** `controller.ts`. Debounce, cache, coalescing and
-the generation fence exist to bound *RPC* cost, and PR 1 makes no RPCs — both
-signals are local reads. PR 1 therefore re-collects synchronously on each event,
-and PR 2 introduces the controller together with the two Gateway signals.
+**Partly in this PR:** the cadence section's **debounce** (Task 6), but not the
+rest of `controller.ts`. The first draft of this plan deferred debouncing whole,
+on the reasoning that it exists to bound *RPC* cost and PR 1 makes no RPCs. That
+reasoning was too narrow: `onDidChangeTextEditorSelection` fires on every
+keystroke, and each collection re-resolves the git extension and re-maps every
+repository through `adaptRepository` (`src/scm/real-git.ts:85`), so undebounced
+collection allocates per keystroke even with no RPC in sight. Debounce lands
+here, at the spec's tiers. Cache, coalescing, the general generation fence and
+the invalidation triggers stay in PR 2, where the Gateway signals make them earn
+their keep.
 
 ---
 
@@ -405,19 +411,26 @@ git commit -m "feat(context): derive the briefs that fit the current context"
 
 **Files:**
 - Create: `src/context/signals.ts`
-- Modify: `src/scm/git-types.ts` (add `branch()` and `onDidChange()`)
+- Modify: `src/scm/git-types.ts` (add `branch()`)
 - Modify: `src/scm/real-git.ts:20-31` (`RawRepository`) and its `adaptRepository`
 - Modify: `test/unit/scm-repo-select.test.ts:6-15` (fake factory)
 - Modify: `test/unit/scm-commands.test.ts:35-46` (fake factory)
 - Test: `test/unit/context-signals.test.ts`
 
 **Interfaces:**
-- Consumes: `ContextSnapshot`, `DiagnosticSummary` (Task 1); `DisposableLike`
-  from `src/vscode-shim.js`.
+- Consumes: `ContextSnapshot`, `DiagnosticSummary` (Task 1).
 - Produces: `SignalId` (`"problems" | "git"`), `SignalRow`, `SignalSection`,
-  `SignalSpec`, `SIGNAL_CATALOG`, `problemsSection`, `gitSection`. Tasks 4-6
+  `SignalSpec`, `SIGNAL_CATALOG`, `problemsSection`, `gitSection`. Tasks 4-7
   consume `SignalSection`. `GitRepositoryLike` gains
-  `branch(): string | undefined` and `onDidChange(listener: () => void): DisposableLike`.
+  `branch(): string | undefined`.
+
+**Deferred to PR 2 on review:** the seam's `onDidChange(listener)` verb. PR 1
+never subscribes to it — the panel re-collects on editor, selection, diagnostic
+and save events, which covers every case except a branch switch made while the
+user sits perfectly still. Adding an API member no caller uses is exactly the
+kind of groundwork that rots, so it lands in PR 2 beside the invalidation
+trigger that consumes it. The consequence to accept meanwhile: after a branch
+switch with no editor activity, the Git section is stale until the next event.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -602,46 +615,28 @@ export const SIGNAL_CATALOG: readonly SignalSpec[] = [
 Run: `bunx vitest run test/unit/context-signals.test.ts`
 Expected: PASS, 9 tests.
 
-- [ ] **Step 5: Add the two verbs to the git seam**
+- [ ] **Step 5: Add the branch verb to the git seam**
 
-In `src/scm/git-types.ts`, add the import and the two members:
-
-```ts
-import type { DisposableLike } from "../vscode-shim.js";
-```
-
-and inside `GitRepositoryLike`, after `log(...)`:
+In `src/scm/git-types.ts`, inside `GitRepositoryLike`, after `log(...)`:
 
 ```ts
   /** Current branch name; undefined on a detached HEAD. */
   branch(): string | undefined;
-  /**
-   * Fires when the repository's state changes — branch switch, stage, checkout.
-   * Without it, a branch switch made while the user sits still would leave the
-   * context panel offering a brief pre-filled with the PREVIOUS branch.
-   */
-  onDidChange(listener: () => void): DisposableLike;
 ```
 
 - [ ] **Step 6: Adapt the real git extension**
 
-In `src/scm/real-git.ts`, extend `RawRepository.state` to declare what the git
-extension already exposes:
+In `src/scm/real-git.ts`, extend `RawRepository.state` to declare the field the
+git extension already exposes:
 
 ```ts
-  state: {
-    HEAD?: { name?: string };
-    untrackedChanges?: RawChange[];
-    workingTreeChanges?: RawChange[];
-    onDidChange(listener: () => void): { dispose(): void };
-  };
+  state: { HEAD?: { name?: string }; untrackedChanges?: RawChange[]; workingTreeChanges?: RawChange[] };
 ```
 
 and add to the object `adaptRepository` returns:
 
 ```ts
     branch: () => raw.state.HEAD?.name,
-    onDidChange: (listener: () => void) => raw.state.onDidChange(listener),
 ```
 
 - [ ] **Step 7: Update the two test fakes**
@@ -650,14 +645,12 @@ In `test/unit/scm-repo-select.test.ts`, inside `fakeRepo`, after `inputBox`:
 
 ```ts
     branch: () => "main",
-    onDidChange: () => ({ dispose: () => undefined }),
 ```
 
 In `test/unit/scm-commands.test.ts`, inside `fakeRepo`, after `inputBox`:
 
 ```ts
     branch: () => "main",
-    onDidChange: () => ({ dispose: () => undefined }),
 ```
 
 - [ ] **Step 8: Run the full suite and typecheck**
@@ -679,6 +672,7 @@ git commit -m "feat(context): collect problems and git state, and let the git se
 ---
 
 ### Task 4: Protocol, command allowlist and argument validation
+
 
 **Files:**
 - Create: `src/context/protocol.ts`
@@ -1218,7 +1212,146 @@ git commit -m "feat(context): render the panel in its own webview bundle"
 
 ---
 
-### Task 6: Register the view and wire it up
+### Task 6: Debounce
+
+**Files:**
+- Create: `src/context/debounce.ts`
+- Test: `test/unit/context-debounce.test.ts`
+
+**Interfaces:**
+- Consumes: nothing.
+- Produces: `DEBOUNCE_MS` (the spec's tiers) and
+  `createDebouncer(delayMs: number, fn: () => void): { trigger(): void; dispose(): void }`.
+  Task 7 wraps each event source in one.
+
+Added on review. Every keystroke fires `onDidChangeTextEditorSelection`, and an
+undebounced collection re-resolves the git extension and re-maps every
+repository per keystroke. The tiers are the spec's, not new numbers, so PR 2's
+`controller.ts` absorbs this module rather than replacing it.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `test/unit/context-debounce.test.ts`:
+
+```ts
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+
+import { createDebouncer, DEBOUNCE_MS } from "../../src/context/debounce.js";
+
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
+
+describe("createDebouncer", () => {
+  test("runs once for a burst of triggers", () => {
+    let calls = 0;
+    const d = createDebouncer(300, () => {
+      calls += 1;
+    });
+    for (let i = 0; i < 20; i += 1) d.trigger();
+    expect(calls).toBe(0);
+    vi.advanceTimersByTime(300);
+    expect(calls).toBe(1);
+  });
+
+  test("runs again for a later, separate burst", () => {
+    let calls = 0;
+    const d = createDebouncer(300, () => {
+      calls += 1;
+    });
+    d.trigger();
+    vi.advanceTimersByTime(300);
+    d.trigger();
+    vi.advanceTimersByTime(300);
+    expect(calls).toBe(2);
+  });
+
+  test("each trigger restarts the wait — a fast typist never collects mid-burst", () => {
+    let calls = 0;
+    const d = createDebouncer(300, () => {
+      calls += 1;
+    });
+    for (let i = 0; i < 10; i += 1) {
+      d.trigger();
+      vi.advanceTimersByTime(299);
+    }
+    expect(calls).toBe(0);
+    vi.advanceTimersByTime(1);
+    expect(calls).toBe(1);
+  });
+
+  test("dispose cancels a pending run", () => {
+    let calls = 0;
+    const d = createDebouncer(300, () => {
+      calls += 1;
+    });
+    d.trigger();
+    d.dispose();
+    vi.advanceTimersByTime(1000);
+    expect(calls).toBe(0);
+  });
+
+  test("carries the spec's three tiers", () => {
+    expect(DEBOUNCE_MS).toEqual({ selection: 300, editor: 150, diagnostics: 500 });
+  });
+});
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `bunx vitest run test/unit/context-debounce.test.ts`
+Expected: FAIL — cannot resolve `../../src/context/debounce.js`.
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/context/debounce.ts`:
+
+```ts
+// Trailing-edge debounce, one per event source.
+//
+// The tiers are the design spec's: a cursor moves constantly, an editor switch
+// is rapid only while cycling tabs, and a language server re-lints in bursts
+// that fire several events for one file.
+export const DEBOUNCE_MS = { selection: 300, editor: 150, diagnostics: 500 } as const;
+
+export interface Debouncer {
+  trigger(): void;
+  dispose(): void;
+}
+
+export function createDebouncer(delayMs: number, fn: () => void): Debouncer {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clear = (): void => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+  };
+  return {
+    trigger: () => {
+      clear();
+      timer = setTimeout(() => {
+        timer = undefined;
+        fn();
+      }, delayMs);
+    },
+    dispose: clear,
+  };
+}
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `bunx vitest run test/unit/context-debounce.test.ts`
+Expected: PASS, 5 tests.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/context/debounce.ts test/unit/context-debounce.test.ts
+git commit -m "feat(context): debounce collection at the spec's tiers"
+```
+
+---
+
+### Task 7: Register the view and wire it up
 
 **Files:**
 - Create: `src/context/real-context-view.ts`
@@ -1228,7 +1361,7 @@ git commit -m "feat(context): render the panel in its own webview bundle"
 - Test: `test/unit/manifest-context.test.ts`
 
 **Interfaces:**
-- Consumes: everything from Tasks 1-5.
+- Consumes: everything from Tasks 1-6.
 - Produces: `registerContextView(deps)`, called once from `activate`.
 
 - [ ] **Step 1: Write the failing manifest test**
@@ -1313,10 +1446,16 @@ import * as vscode from "vscode";
 import { errMsg, type Logger } from "../logging.js";
 import { toRelativeRef } from "../briefs/params.js";
 import type { GitApiLike } from "../scm/git-types.js";
+import { createDebouncer, DEBOUNCE_MS } from "./debounce.js";
 import { offersFor } from "./offers.js";
 import { validateInbound } from "./protocol.js";
 import { SIGNAL_CATALOG } from "./signals.js";
-import { buildSnapshot, type DiagnosticSummary, type GitSummary } from "./snapshot.js";
+import {
+  buildSnapshot,
+  SELECTION_MAX_CHARS,
+  type DiagnosticSummary,
+  type GitSummary,
+} from "./snapshot.js";
 
 // Thin vscode-API glue — mirrors real-provider.ts and real-chat-panel.ts. Every
 // decision (what the context is, which briefs fit, what may be executed) lives
@@ -1343,6 +1482,20 @@ export function registerContextView(deps: {
     // changedPaths stays empty in PR 1: filling it means an async changedFiles
     // call per collection, which belongs with PR 2's controller.
     return { branch: repo.branch(), changedPaths: [] };
+  };
+
+  // Bound the READ, not just the stored value. Ctrl+A on a large file makes
+  // getText(selection) copy the whole document before buildSnapshot clamps it to
+  // 300 chars. Five lines is far more than the clamp can consume, and the slice
+  // covers the one-enormous-line case (a minified bundle).
+  const SELECTION_READ_LINES = 5;
+  const selectionText = (editor: vscode.TextEditor): string => {
+    const sel = editor.selection;
+    if (sel.isEmpty) return "";
+    const lastLine = Math.min(sel.end.line, sel.start.line + SELECTION_READ_LINES);
+    const end =
+      lastLine === sel.end.line ? sel.end : editor.document.lineAt(lastLine).range.end;
+    return editor.document.getText(new vscode.Range(sel.start, end)).slice(0, SELECTION_MAX_CHARS * 2);
   };
 
   const diagnosticsFor = (uri: vscode.Uri): DiagnosticSummary[] =>
@@ -1374,7 +1527,7 @@ export function registerContextView(deps: {
               scheme: editor.document.uri.scheme,
               languageId: editor.document.languageId,
               line: editor.selection.active.line,
-              selection: editor.document.getText(editor.selection),
+              selection: selectionText(editor),
               isDirty: editor.document.isDirty,
             },
           }),
@@ -1393,6 +1546,13 @@ export function registerContextView(deps: {
   const recollect = (): void => {
     void collect().catch((e: unknown) => deps.log.warn(`context panel collect failed: ${errMsg(e)}`));
   };
+
+  // One debouncer per event source, at the spec's tiers. Becoming visible and
+  // the webview's ready handshake collect immediately: both are single events
+  // the user is waiting on, not bursts.
+  const onSelection = createDebouncer(DEBOUNCE_MS.selection, recollect);
+  const onEditor = createDebouncer(DEBOUNCE_MS.editor, recollect);
+  const onDiagnostics = createDebouncer(DEBOUNCE_MS.diagnostics, recollect);
 
   const provider: vscode.WebviewViewProvider = {
     resolveWebviewView(webviewView) {
@@ -1422,10 +1582,14 @@ export function registerContextView(deps: {
 
   return vscode.Disposable.from(
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
-    vscode.window.onDidChangeActiveTextEditor(() => recollect()),
-    vscode.window.onDidChangeTextEditorSelection(() => recollect()),
-    vscode.languages.onDidChangeDiagnostics(() => recollect()),
+    vscode.window.onDidChangeActiveTextEditor(() => onEditor.trigger()),
+    vscode.window.onDidChangeTextEditorSelection(() => onSelection.trigger()),
+    vscode.languages.onDidChangeDiagnostics(() => onDiagnostics.trigger()),
+    // Save is a deliberate single act, not a burst — collect straight away.
     vscode.workspace.onDidSaveTextDocument(() => recollect()),
+    { dispose: () => onSelection.dispose() },
+    { dispose: () => onEditor.dispose() },
+    { dispose: () => onDiagnostics.dispose() },
   );
 }
 
@@ -1526,6 +1690,9 @@ eye — this step is the point of the task, not a formality:
 6. Typing without saving shows the "Unsaved edits" note; saving clears it.
 7. Collapsing the Context view and editing elsewhere produces no output-channel
    noise; re-expanding it renders the current file.
+8. Typing a long line quickly stays smooth, and the panel updates once you pause
+   — not once per character.
+9. Selecting the whole of a large file (Ctrl+A) does not stall the editor.
 
 Record anything that fails here as a defect to fix before the commit — a green
 unit suite is not evidence this surface works.
@@ -1542,30 +1709,33 @@ git commit -m "feat(context): register the ambient context panel in the sidebar"
 
 ## Self-Review
 
-**Spec coverage for PR 1.** Module layout — Tasks 1-6 create `snapshot.ts`,
-`signals.ts`, `offers.ts`, `protocol.ts`, `real-context-view.ts` and the webview
-bundle; `controller.ts` is explicitly deferred to PR 2 with a stated reason.
-The `problems` and `git` signals — Task 3. Catalog-derived offers — Task 2. The
-git seam's `branch()` and `onDidChange()` — Task 3. The esbuild entry **and the
-`copyFileSync` for CSS** — Task 5. The `.vsix` "must exist" additions — Task 5.
-The command allowlist and argument validation — Task 4, pulled forward from PR 3
-with the deviation stated in Global Constraints. The selection clamp at the
-index-query limit — Task 1. `isDirty` and its marker — Tasks 1 and 5. Degraded
-states for "no file" and "no repository" — Task 3. The Extension Development Host
-pass — Task 6, Step 9.
+**Spec coverage for PR 1.** Module layout — Tasks 1-7 create `snapshot.ts`,
+`signals.ts`, `offers.ts`, `protocol.ts`, `debounce.ts`, `real-context-view.ts`
+and the webview bundle; the rest of `controller.ts` is deferred to PR 2 with a
+stated reason. The `problems` and `git` signals — Task 3. Catalog-derived offers
+— Task 2. The git seam's `branch()` — Task 3. Debounce at the spec's tiers —
+Task 6. The esbuild entry **and the `copyFileSync` for CSS** — Task 5. The
+`.vsix` "must exist" additions — Task 5. The command allowlist and argument
+validation — Task 4, pulled forward from PR 3 with the deviation stated in
+Global Constraints. The selection clamp at the index-query limit — Task 1, with
+the read itself bounded in Task 7. `isDirty` and its marker — Tasks 1 and 5.
+Degraded states for "no file" and "no repository" — Task 3. The Extension
+Development Host pass — Task 7, Step 9.
 
 **Deferred to later PRs, as the spec assigns them:** `blame` and `related`
-(PR 2); the cadence machinery — debounce, cache, coalescing, generation fence,
-invalidation triggers (PR 2); the `peek.ts` split (PR 2); `nimbus.context.enabled`
-and `docs/settings.md` (PR 3); diagnostic and SCM action routes (PR 3); branch
+(PR 2); the rest of the cadence machinery — cache, coalescing, the general
+generation fence, the invalidation triggers, and the seam's `onDidChange` verb
+(PR 2); the `peek.ts` split (PR 2); `nimbus.context.enabled` and
+`docs/settings.md` (PR 3); diagnostic and SCM action routes (PR 3); branch
 pre-fill for the prompted briefs (PR 3); the ExTester spec (PR 3).
 
-**Two things a PR-1 reviewer should expect to see and will not:** the `git`
-signal reports the branch but a `changedPaths` array that is always empty, and
-`onDidChange` is added to the seam but not yet subscribed to. Both are honest
-PR-1 limits — populating and subscribing them needs the async collection path
-that `controller.ts` introduces in PR 2 — but they should be called out in the
-PR description rather than left for a reviewer to find.
+**Two limits a PR-1 reviewer will notice, to be named in the PR description
+rather than left to be found:** the `git` signal reports the branch but a
+`changedPaths` array that is always empty, and a branch switch made with no
+editor activity leaves that section stale until the next event. Both resolve in
+PR 2 — the first needs the async collection path `controller.ts` introduces, the
+second needs the seam's `onDidChange` verb and the invalidation trigger that
+consumes it.
 
 ---
 
