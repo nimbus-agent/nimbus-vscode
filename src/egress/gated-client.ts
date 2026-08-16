@@ -1,3 +1,24 @@
+import type {
+  CatchupBrief,
+  CatchupParams,
+  ConflictBrief,
+  ConflictsParams,
+  ExpertBrief,
+  ExpertParams,
+  GhostBrief,
+  GhostParams,
+  HuddleBrief,
+  HuddleParams,
+  ImpactBrief,
+  ImpactParams,
+  JanitorBrief,
+  JanitorParams,
+  PreflightBrief,
+  PreflightParams,
+  WhyBrief,
+  WhyParams,
+} from "@nimbus-dev/client";
+
 import type { EgressGate } from "./gate.js";
 import type { EgressKind, EgressMeta } from "./preflight.js";
 
@@ -41,9 +62,18 @@ export type GatedAgentInvoke<R> = (
  */
 export type ProgressRunner = <R>(title: string, body: () => Promise<R>) => Promise<R>;
 
-// The required third argument is the type-level half of the guardrail: the raw
-// NimbusClient no longer satisfies ScmClientLike or LmToolsClientLike
-// structurally, so the ungated client cannot be wired in by accident.
+// The required third argument documents intent: a consumer's *ClientLike shape
+// takes an EgressMeta, and only a wrapper built here has one to pass, so wiring
+// a raw client is visible on sight in review.
+//
+// It is NOT a type-level guarantee, and was long commented here as if it were.
+// TypeScript assigns a function with FEWER parameters to one with more, so the
+// raw NimbusClient's `agentInvoke(input, opts?)` still satisfies ScmClientLike
+// and LmToolsClientLike structurally — verified with a standalone probe under
+// --strict --exactOptionalPropertyTypes. The enforcement that does hold is
+// test/unit/egress-choke-point.test.ts: extension.ts, the one place holding a
+// real client, is checked for the raw member access, and every other file
+// naming it must be on that test's (honour-system) ALLOWED list.
 export function gateAgentInvoke<R>(
   raw: (input: string, opts: { stream: boolean; agent?: string }) => Promise<R>,
   gate: EgressGate,
@@ -108,4 +138,182 @@ export function gateRawAskStream<H, O>(
   action: string,
 ): (input: string, opts?: O) => H {
   return gateAskStream((i, o) => client.askStream(i, o), gate, kind, action);
+}
+
+/**
+ * {@link gateRawAskStream}, but resolving the client at CALL time.
+ *
+ * A consumer built once that outlives a reconnect must not hold a client
+ * instance: `connection-manager` closes the old `NimbusClient` and binds a NEW
+ * one, after which every call through the captured handle throws "IPC client is
+ * not connected". The chat controller is exactly that shape — cached for the
+ * life of its panel and reset only on panel dispose.
+ *
+ * The lazy hop lives HERE rather than at the wiring site deliberately:
+ * `.askStream(` has to stay inside this file, which is what lets
+ * `egress-choke-point.test.ts` prove no other module reaches a raw client.
+ * Writing `getClient()?.askStream(…)` in extension.ts is the obvious shortcut
+ * and punches a hole straight through that guard.
+ */
+export function gateLazyAskStream<H, O>(
+  getClient: () => RawAskStreamer<H, O> | undefined,
+  gate: EgressGate,
+  kind: EgressKind,
+  action: string,
+  notConnectedMessage: string,
+): (input: string, opts?: O) => H {
+  return gateAskStream(
+    (i, o) => {
+      const client = getClient();
+      if (client === undefined) throw new Error(notConnectedMessage);
+      return client.askStream(i, o);
+    },
+    gate,
+    kind,
+    action,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Briefs.
+//
+// The `agents*` family is agent-bound too: the Gateway composes a `brief`
+// string from a model. The params are structured rather than assembled prose,
+// but a `file`/`ref` is exactly what the leak-check scans for, so these route
+// through the same seam and the same gate.
+//
+// Keeping the agents* call shapes in THIS file is what lets
+// egress-choke-point.test.ts allowlist consumers that only ever hold the
+// injected GatedBriefs seam.
+
+export interface RawBriefClient {
+  agentsWhy(p: WhyParams, o?: { timeoutMs?: number }): Promise<WhyBrief>;
+  agentsGhost(p: GhostParams, o?: { timeoutMs?: number }): Promise<GhostBrief>;
+  agentsConflicts(p: ConflictsParams, o?: { timeoutMs?: number }): Promise<ConflictBrief>;
+  agentsHuddle(p?: HuddleParams, o?: { timeoutMs?: number }): Promise<HuddleBrief>;
+  agentsJanitor(p: JanitorParams, o?: { timeoutMs?: number }): Promise<JanitorBrief>;
+  agentsPreflight(p: PreflightParams, o?: { timeoutMs?: number }): Promise<PreflightBrief>;
+}
+
+/** A brief call that has already passed the gate. Throws EgressCancelled if not. */
+export type GatedBrief<P, B> = (p: P, meta: EgressMeta, progressTitle: string) => Promise<B>;
+
+export interface GatedBriefs {
+  why: GatedBrief<WhyParams, WhyBrief>;
+  ghost: GatedBrief<GhostParams, GhostBrief>;
+  conflicts: GatedBrief<ConflictsParams, ConflictBrief>;
+  huddle: GatedBrief<HuddleParams, HuddleBrief>;
+  janitor: GatedBrief<JanitorParams, JanitorBrief>;
+  preflight: GatedBrief<PreflightParams, PreflightBrief>;
+}
+
+export function gateRawBriefs(
+  client: RawBriefClient,
+  gate: EgressGate,
+  withProgress: ProgressRunner = (_title, body) => body(),
+): GatedBriefs {
+  // The seam stringifies, so no call site can send a shape the manifest did not
+  // show. Pretty-printed because the modal's "Show full text" renders it raw.
+  const run = async <P, B>(
+    call: (p: P) => Promise<B>,
+    p: P,
+    meta: EgressMeta,
+    progressTitle: string,
+  ): Promise<B> => {
+    if ((await gate.check("brief", JSON.stringify(p, null, 2), meta)) === "cancel") {
+      throw new EgressCancelled();
+    }
+    return withProgress(progressTitle, () => call(p));
+  };
+
+  return {
+    why: (p, meta, title) => run((q: WhyParams) => client.agentsWhy(q), p, meta, title),
+    ghost: (p, meta, title) => run((q: GhostParams) => client.agentsGhost(q), p, meta, title),
+    conflicts: (p, meta, title) =>
+      run((q: ConflictsParams) => client.agentsConflicts(q), p, meta, title),
+    huddle: (p, meta, title) => run((q: HuddleParams) => client.agentsHuddle(q), p, meta, title),
+    janitor: (p, meta, title) => run((q: JanitorParams) => client.agentsJanitor(q), p, meta, title),
+    preflight: (p, meta, title) =>
+      run((q: PreflightParams) => client.agentsPreflight(q), p, meta, title),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Workflow runs.
+//
+// Agent-bound, and the heaviest of the lot: one click can send MANY model
+// prompts, expanded Gateway-side from steps saved long before. The extension
+// sends only a workflow name, so unlike every other surface here the previewed
+// text is a manifest rather than the literal bytes — buildRunManifest says so
+// in its omissions instead of implying byte-exactness.
+//
+// The gate is awaited BEFORE the stream starts. That ordering is the point: a
+// run started and then cancelled has already reached the model, and (because
+// cancellation lands at the next step boundary) cannot be stopped mid-step.
+
+export interface RawWorkflowRunner<P, H> {
+  workflowRunStream(params: P): H;
+}
+
+/** A workflow run that has passed the gate. Throws EgressCancelled if not. */
+export type GatedWorkflowRun<P, H> = (
+  params: P,
+  /** The rendered manifest — what the pre-flight modal shows. */
+  manifest: string,
+  meta: EgressMeta,
+) => Promise<H>;
+
+export function gateRawWorkflowRun<P, H>(
+  client: RawWorkflowRunner<P, H>,
+  gate: EgressGate,
+): GatedWorkflowRun<P, H> {
+  return async (params, manifest, meta) => {
+    if ((await gate.check("workflow", manifest, meta)) === "cancel") throw new EgressCancelled();
+    return client.workflowRunStream(params);
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Participant briefs.
+//
+// The chat participant's three ops briefs take an argument the user typed after
+// a slash command, so they follow the same rule as askStream: record, do not
+// prompt. gate.ts splits kinds on exactly this principle — only the surfaces
+// where the EXTENSION decides what is sent prompt.
+//
+// A separate constructor rather than a flag on gateRawBriefs: one function per
+// gate behaviour, each named for what it does, and neither reachable by passing
+// the wrong argument to the other.
+
+export interface RawParticipantBriefClient {
+  agentsCatchup(p?: CatchupParams, o?: { timeoutMs?: number }): Promise<CatchupBrief>;
+  agentsExpert(p: ExpertParams, o?: { timeoutMs?: number }): Promise<ExpertBrief>;
+  agentsImpact(p: ImpactParams, o?: { timeoutMs?: number }): Promise<ImpactBrief>;
+}
+
+/** No progressTitle: the chat turn already renders its own progress. */
+export type ParticipantBrief<P, B> = (p: P, meta: EgressMeta) => Promise<B>;
+
+export interface ParticipantBriefs {
+  catchup: ParticipantBrief<CatchupParams, CatchupBrief>;
+  expert: ParticipantBrief<ExpertParams, ExpertBrief>;
+  impact: ParticipantBrief<ImpactParams, ImpactBrief>;
+}
+
+export function gateRawParticipantBriefs(
+  client: RawParticipantBriefClient,
+  gate: EgressGate,
+): ParticipantBriefs {
+  // Stringified by the seam, so no call site can send a shape the ledger did
+  // not record. Pretty-printed to match gateRawBriefs.
+  const run = async <P, B>(call: (p: P) => Promise<B>, p: P, meta: EgressMeta): Promise<B> => {
+    gate.record("participant", JSON.stringify(p, null, 2), meta);
+    return call(p);
+  };
+
+  return {
+    catchup: (p, meta) => run((q: CatchupParams) => client.agentsCatchup(q), p, meta),
+    expert: (p, meta) => run((q: ExpertParams) => client.agentsExpert(q), p, meta),
+    impact: (p, meta) => run((q: ImpactParams) => client.agentsImpact(q), p, meta),
+  };
 }

@@ -136,13 +136,29 @@ describe("createPlaceholderView", () => {
 describe("createAgentsView", () => {
   const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
 
-  test("shows the empty label when no agents are configured", async () => {
+  // The view is never empty now: the built-in briefs group always has rows.
+  // That is the whole point of the change — the view named after the product's
+  // core used to render "No agents configured" on a fresh install.
+  test("with no configured agents it still shows the built-in briefs", async () => {
     const view = createAgentsView({
       connection: makeConnection(connected).connection,
       loadAgents: () => [],
       activeAgentId: () => undefined,
     });
-    expect((await view.getChildren())[0]?.label).toMatch(/no agents configured/i);
+    const groups = await view.getChildren();
+    expect(groups[0]?.label).toBe("Built-in briefs");
+    expect((groups[0]?.children ?? []).length).toBeGreaterThan(0);
+  });
+
+  test("with no configured agents the second group keeps settings discoverable", async () => {
+    const view = createAgentsView({
+      connection: makeConnection(connected).connection,
+      loadAgents: () => [],
+      activeAgentId: () => undefined,
+    });
+    const configured = (await view.getChildren())[1];
+    expect(configured?.label).toBe("Configured agents");
+    expect(configured?.children?.[0]?.label).toMatch(/configure agents in settings/i);
   });
 
   test("renders configured agents as clickable rows", async () => {
@@ -151,7 +167,7 @@ describe("createAgentsView", () => {
       loadAgents: () => [{ id: "researcher", label: "Researcher" }],
       activeAgentId: () => undefined,
     });
-    const [row] = await view.getChildren();
+    const row = (await view.getChildren())[1]?.children?.[0];
     expect(row?.label).toBe("Researcher");
     expect(row?.command?.command).toBe("nimbus.openAgentChat");
     expect(row?.description).toBeUndefined();
@@ -163,7 +179,7 @@ describe("createAgentsView", () => {
       loadAgents: () => [{ id: "researcher", label: "Researcher" }],
       activeAgentId: () => "researcher",
     });
-    const [row] = await view.getChildren();
+    const row = (await view.getChildren())[1]?.children?.[0];
     expect(row?.description).toBe("(active)");
   });
 });
@@ -265,5 +281,60 @@ describe("one-level nesting", () => {
     expect(await view.getChildren(parent)).toEqual([{ label: "kid" }]);
     const [kid] = (await view.getChildren(parent)) as Array<{ label: string }>;
     expect(await view.getChildren(kid as never)).toEqual([]);
+  });
+});
+
+describe("lazily loaded children", () => {
+  const connected: ConnectionState = { kind: "connected", socketPath: "/s" };
+
+  test("without loadChildren, createDataView behaves exactly as before", async () => {
+    // The other five views pass no loadChildren and must be untouched by it.
+    const c = makeConnection(connected);
+    const view = createDataView({
+      connection: c.connection,
+      loadData: async () => [{ label: "svc", children: [{ label: "eager" }] }],
+    });
+    const [parent] = await view.getChildren();
+    if (parent === undefined) throw new Error("expected a parent row");
+    expect(await view.getChildren(parent)).toEqual([{ label: "eager" }]);
+  });
+
+  test("loadChildren resolves a non-root element's children on demand", async () => {
+    const c = makeConnection(connected);
+    const view = createDataView({
+      connection: c.connection,
+      loadData: async () => [{ label: "svc", children: [], collapsible: true }],
+      loadChildren: async (item) => [{ label: `lazy child of ${item.label}` }],
+    });
+    const [parent] = await view.getChildren();
+    if (parent === undefined) throw new Error("expected a parent row");
+    expect(await view.getChildren(parent)).toEqual([{ label: "lazy child of svc" }]);
+  });
+
+  test("loadChildren is not consulted for the root", async () => {
+    const c = makeConnection(connected);
+    let calls = 0;
+    const view = createDataView({
+      connection: c.connection,
+      loadData: async () => [{ label: "svc", children: [], collapsible: true }],
+      loadChildren: async () => {
+        calls += 1;
+        return [];
+      },
+    });
+    await view.getChildren();
+    expect(calls).toBe(0);
+  });
+
+  test("toTreeItem honours an explicit collapsible on a row with no children yet", () => {
+    // Without this, a lazy parent (children: []) would render as a leaf and
+    // could never be expanded to trigger the load.
+    expect(toTreeItem({ label: "lazy", children: [], collapsible: true }).collapsibleState).toBe(1);
+  });
+
+  test("collapsible: false keeps a row with children a leaf", () => {
+    expect(
+      toTreeItem({ label: "x", children: [{ label: "kid" }], collapsible: false }).collapsibleState,
+    ).toBe(0);
   });
 });

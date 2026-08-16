@@ -2,23 +2,26 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
-import { commands, env, workspace as vscodeWorkspace } from "vscode";
+import { commands, env, Uri, workspace as vscodeWorkspace } from "vscode";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
 import {
   activateWithDeps,
+  createDiffOpener,
   createReadonlyJsonOpener,
   createSourceOpener,
 } from "../../src/extension.js";
 import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
 import type {
+  CancellationTokenLike,
   CommandsApi,
   ConfigurationChangeEventLike,
   ExtensionContextLike,
   MementoLike,
+  ProgressLike,
   QuickPickLike,
   StatusBarItemHandle,
   WindowApi,
@@ -54,6 +57,86 @@ function makeFakeClient(overrides: Partial<ClientLike> = {}): () => Promise<Clie
   } as unknown as ClientLike;
   const merged = { ...base, ...overrides } as ClientLike;
   return async () => merged;
+}
+
+// Regression guard for the own-vs-prototype spread bug: the real NimbusClient
+// is a CLASS, so every method (searchRanked, metricsDora, egressHead,
+// getSessionTranscript, askStream, agents*, …) lives on its PROTOTYPE, not as
+// an own enumerable property — only `ipc` is. `{ ...client }` copies own
+// properties only, so it silently drops every method. `makeFakeClient` above
+// builds a PLAIN OBJECT, whose methods ARE own properties, so it cannot
+// reproduce that failure — every test using it passes whether or not a spread
+// site actually forwards anything. This class reproduces the real shape so a
+// wrapper that merely spreads (rather than naming and forwarding each member)
+// fails loudly here.
+class FakeClassClient {
+  readonly calls: Record<string, unknown[]> = {};
+  private record(name: string, args: unknown[]): void {
+    this.calls[name] = args;
+  }
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
+  subscribeHitl(): { dispose(): void } {
+    return { dispose: () => undefined };
+  }
+  connectorListStatus(): Promise<unknown[]> {
+    return Promise.resolve([]);
+  }
+  askStream(input: string, opts?: unknown): unknown {
+    this.record("askStream", [input, opts]);
+    return {
+      streamId: "s1",
+      cancel: async () => undefined,
+      [Symbol.asyncIterator]: () => ({
+        next: async () => ({ value: { type: "done", reply: "", sessionId: "" }, done: false }),
+      }),
+    };
+  }
+  cancelStream(streamId: string): Promise<{ ok: boolean }> {
+    this.record("cancelStream", [streamId]);
+    return Promise.resolve({ ok: true });
+  }
+  getSessionTranscript(
+    params: { sessionId: string; limit?: number } = { sessionId: "" },
+  ): Promise<{ sessionId: string; turns: never[]; hasMore: boolean }> {
+    this.record("getSessionTranscript", [params]);
+    return Promise.resolve({ sessionId: params.sessionId, turns: [], hasMore: false });
+  }
+  gatewayPing(): Promise<{
+    version: string;
+    uptime: number;
+    agentLimits: { maxAgentDepth: number; maxToolCallsPerSession: number };
+  }> {
+    return Promise.resolve({
+      version: "0.0.0-test",
+      uptime: 1,
+      agentLimits: { maxAgentDepth: 1, maxToolCallsPerSession: 1 },
+    });
+  }
+  searchRanked(params?: unknown): Promise<unknown[]> {
+    this.record("searchRanked", [params]);
+    return Promise.resolve([{ name: "found.ts" }]);
+  }
+  metricsDora(params: unknown): Promise<unknown> {
+    this.record("metricsDora", [params]);
+    return Promise.resolve({ service: "checkout" });
+  }
+  egressHead(): Promise<{ head: string; count: number }> {
+    return Promise.resolve({ head: "h", count: 3 });
+  }
+  agentsImpact(params: unknown): Promise<unknown> {
+    this.record("agentsImpact", [params]);
+    return Promise.resolve({ kind: "impact" });
+  }
+  agentsExpert(params: unknown): Promise<unknown> {
+    this.record("agentsExpert", [params]);
+    return Promise.resolve({ kind: "expert" });
+  }
+  agentsCatchup(params?: unknown): Promise<unknown> {
+    this.record("agentsCatchup", [params]);
+    return Promise.resolve({ kind: "catchup" });
+  }
 }
 
 interface Captured {
@@ -186,6 +269,11 @@ function makeFixture(opts: {
     selectionText?: string;
     fileName?: string;
     languageId?: string;
+    /** Zero-based cursor line, as VS Code reports it. Defaults to 0. */
+    line?: number;
+    /** document.uri.scheme. Defaults to "file"; set to e.g. "untitled" or a
+     *  virtual scheme to exercise the brief commands' real-file filter. */
+    scheme?: string;
   };
   panelVisible?: boolean;
   panelActive?: boolean;
@@ -202,6 +290,13 @@ function makeFixture(opts: {
   searchDebounceMs?: number;
   /** False simulates Restricted Mode, where no pre-flight skip is honoured. */
   isTrusted?: boolean;
+  /**
+   * Filled with every callback a cancellable withProgress body registers on the
+   * cancellation token. A test fires them to stand in for the user clicking
+   * Cancel on the progress notification — and their mere presence proves the
+   * body was handed the token rather than the progress reporter.
+   */
+  cancelSubscribers?: Array<() => void>;
   workspaceFolders?: readonly { uri: { fsPath: string } }[];
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
@@ -228,6 +323,7 @@ function makeFixture(opts: {
     warnClicks.length > 0 ? warnClicks.shift() : "Send";
   const saveJsonCalls: Array<{ defaultName: string; content: string }> = [];
   const quickPicks: FakeQuickPick[] = [];
+  const cancelSubscribers = opts.cancelSubscribers ?? [];
 
   const webviewMessageHandlers: Array<(msg: unknown) => void> = [];
   const openedDocs: Array<{ title: string; content: string }> = [];
@@ -304,7 +400,10 @@ function makeFixture(opts: {
       opts.activeEditor === undefined
         ? undefined
         : {
-            selection: { isEmpty: opts.activeEditor.empty ?? false },
+            selection: {
+              isEmpty: opts.activeEditor.empty ?? false,
+              active: { line: opts.activeEditor.line ?? 0 },
+            },
             document: {
               getText: (range?: unknown) =>
                 range === undefined
@@ -312,10 +411,28 @@ function makeFixture(opts: {
                   : (opts.activeEditor?.selectionText ?? opts.activeEditor?.text ?? ""),
               fileName: opts.activeEditor?.fileName ?? "untitled",
               languageId: opts.activeEditor?.languageId ?? "plaintext",
+              uri: { scheme: opts.activeEditor?.scheme ?? "file" },
             },
           },
-    withProgress: (async (_opts: unknown, task: () => Promise<unknown>) =>
-      task()) as WindowApi["withProgress"],
+    // Invoked exactly as real VS Code invokes it: `task(progress, token)`,
+    // progress FIRST. The progress double deliberately has no
+    // onCancellationRequested — so a call site that forwards the wrong argument
+    // fails here rather than in a real window.
+    withProgress: (async (
+      _opts: unknown,
+      task: (progress: ProgressLike, token: CancellationTokenLike) => Promise<unknown>,
+    ) =>
+      task(
+        { report: () => undefined },
+        {
+          // Subscribers are captured, so a test can fire the token the way the
+          // Cancel button on the notification does. Nothing fires by default.
+          onCancellationRequested: (cb: () => void) => {
+            cancelSubscribers.push(cb);
+            return { dispose: () => undefined };
+          },
+        },
+      )) as WindowApi["withProgress"],
   };
 
   const workspace: WorkspaceApi = {
@@ -331,6 +448,7 @@ function makeFixture(opts: {
     },
     isTrusted: opts.isTrusted ?? true,
     workspaceFolders: opts.workspaceFolders,
+    textDocuments: [],
   };
 
   const commands: CommandsApi = {
@@ -537,6 +655,40 @@ describe("activateWithDeps", () => {
     }
   });
 
+  test("registers the six brief commands", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    for (const id of [
+      "nimbus.brief.why",
+      "nimbus.brief.ghost",
+      "nimbus.brief.conflicts",
+      "nimbus.brief.huddle",
+      "nimbus.brief.janitor",
+      "nimbus.brief.preflight",
+    ]) {
+      expect(f.commandHandlers.has(id), `command ${id} missing`).toBe(true);
+    }
+  });
+
+  test("a non-file editor is not offered to the brief commands", async () => {
+    // Same rule real-hover.ts already applies to the hover: an untitled
+    // buffer has no path to blame, and a virtual document — our own
+    // read-only brief tabs included — is not in any repo.
+    const f = makeFixture({
+      activeEditor: {
+        text: "",
+        fileName: "Nimbus — Why is this here?.md",
+        languageId: "markdown",
+        scheme: "nimbus-readonly",
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.brief.why")();
+    expect(f.infoMessages).toContain('Nimbus: Open a file to run "Why is this here?".');
+  });
+
   test("nimbus.generateTests opens a fresh untitled document on each invocation", async () => {
     // Regression guard: deriveTestFileName is deterministic, so running
     // Generate Tests twice on the same source used to reuse the exact same
@@ -573,7 +725,7 @@ describe("activateWithDeps", () => {
     openTextDocument.mockRestore();
   });
 
-  test("registers the five sidebar tree views in the nimbus container", async () => {
+  test("registers the six sidebar tree views in the nimbus container", async () => {
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
@@ -585,6 +737,7 @@ describe("activateWithDeps", () => {
       "nimbus.agentsView",
       "nimbus.indexView",
       "nimbus.sessionsView",
+      "nimbus.workflowsView",
     ]);
   });
 
@@ -1749,10 +1902,13 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     const provider = f.treeProviders.get("nimbus.agentsView");
     if (provider === undefined) throw new Error("agents provider not registered");
-    const rows = await provider.getChildren(undefined);
-    // getChildren returns the raw SidebarItem rows (carrying iconId);
+    // The view is two groups now: built-in briefs first, configured agents
+    // second. getChildren returns the raw SidebarItem rows (carrying iconId);
     // applyThemeIcons maps iconId -> iconPath only inside getTreeItem (mirrors
     // the audit provider test).
+    const groups = (await provider.getChildren(undefined)) as Array<{ label: string }>;
+    expect(groups.map((g) => g.label)).toEqual(["Built-in briefs", "Configured agents"]);
+    const rows = await provider.getChildren(groups[1]);
     expect(rows[0]).toMatchObject({ label: "Researcher", iconId: "hubot" });
     const item = provider.getTreeItem(rows[0]);
     expect(item.iconPath).toBeDefined();
@@ -2600,6 +2756,118 @@ describe("createReadonlyJsonOpener", () => {
     expect(provider.provideTextDocumentContent({ path: "/3/c.md" })).toBe("CCC");
     spy.mockRestore();
   });
+
+  // Found in a real Extension Development Host, not here: the brief titles end
+  // in "?" ("Nimbus — Why is this here?.md"), and a real `vscode.Uri.parse`
+  // treats everything from "?" onward as the QUERY — so the provider is handed
+  // a truncated path, the lookup misses, and the tab opens silently EMPTY.
+  // This stub's Uri.parse does not split the query, which is exactly why unit
+  // tests could not catch it. So the assertion feeds the provider the truncated
+  // path a real Uri would produce.
+  test("a title containing '?' still resolves, though Uri.parse truncates the path", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    const open = createReadonlyJsonOpener(ctx);
+    await open("Nimbus — Why is this here?.md", "WHY BODY");
+    const provider = spy.mock.calls[0]?.[1] as {
+      provideTextDocumentContent(uri: { path: string }): string;
+    };
+    // What a real Uri.parse hands back: "?.md" became the query.
+    expect(provider.provideTextDocumentContent({ path: "/1/Nimbus — Why is this here" })).toBe(
+      "WHY BODY",
+    );
+    // "#" is the fragment delimiter and truncates the same way.
+    await open("Nimbus — issue #42.md", "HASH BODY");
+    expect(provider.provideTextDocumentContent({ path: "/2/Nimbus — issue " })).toBe("HASH BODY");
+    spy.mockRestore();
+  });
+
+  // activate() builds TWO of these — the shared one (50) and the pre-flight
+  // preview's own (5) — each with its own document map and its own sequence
+  // counter. A scheme, though, resolves through ONE provider: register a second
+  // for the same scheme and it shadows the first, so documents opened by the
+  // other opener resolve to "" and the tab opens SILENTLY EMPTY.
+  //
+  // Found in a real window, behind the withProgress defect: once any "Show full
+  // text" had registered the preview's opener, every later shared-opener tab —
+  // the workflow run report among them — came up blank. Both maps also key on a
+  // bare sequence number, so a collision could serve one surface's text under
+  // another's tab: in an extension whose whole point is showing what leaves,
+  // that is worse than blank.
+  test("two openers get their own scheme, so neither shadows the other", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const opened = vi.spyOn(vscodeWorkspace, "openTextDocument");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    const preview = createReadonlyJsonOpener(ctx, 5);
+    const shared = createReadonlyJsonOpener(ctx);
+    await preview("Nimbus outbound.md", "PREVIEW BODY");
+    await shared("workflow-run-run-1.md", "REPORT BODY");
+
+    const [previewScheme, previewProvider] = spy.mock.calls[0] as unknown as [
+      string,
+      { provideTextDocumentContent(uri: { path: string }): string },
+    ];
+    const [sharedScheme, sharedProvider] = spy.mock.calls[1] as unknown as [
+      string,
+      { provideTextDocumentContent(uri: { path: string }): string },
+    ];
+    expect(sharedScheme).not.toBe(previewScheme);
+    // Each provider still serves its own document — the sequence numbers are
+    // per-opener, so both documents are "/1/…" and only the scheme tells them
+    // apart.
+    expect(previewProvider.provideTextDocumentContent({ path: "/1/Nimbus outbound.md" })).toBe(
+      "PREVIEW BODY",
+    );
+    expect(sharedProvider.provideTextDocumentContent({ path: "/1/workflow-run-run-1.md" })).toBe(
+      "REPORT BODY",
+    );
+    // And the document each opener OPENS carries its own scheme: renaming the
+    // registration alone would fix nothing.
+    const uris = opened.mock.calls.map((c) => String(c[0]));
+    expect(uris[0]?.startsWith(`${previewScheme}:`)).toBe(true);
+    expect(uris[1]?.startsWith(`${sharedScheme}:`)).toBe(true);
+    spy.mockRestore();
+    opened.mockRestore();
+  });
+});
+
+// Same defect class as the read-only opener above, fixed before it could bite:
+// this one's path segment is a redacted basename, and "?" is illegal in a
+// Windows filename, so it was latent rather than live. Issue #83.
+describe("createDiffOpener", () => {
+  test("resolves both sides even when the file name truncates the path", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    const openDiff = createDiffOpener(ctx);
+    await openDiff({ title: "T", left: "LEFT", right: "RIGHT", fileName: "we?ird.ts" });
+    const provider = spy.mock.calls[0]?.[1] as {
+      provideTextDocumentContent(uri: { path: string }): string;
+    };
+    // Derived through the stub's Uri.parse rather than hand-written, so this
+    // asserts against the same truncation a real Uri performs.
+    const left = Uri.parse("nimbus-diff:/1/original/we?ird.ts");
+    const right = Uri.parse("nimbus-diff:/1/nimbus/we?ird.ts");
+    expect(left.path).toBe("/1/original/we"); // proves the stub truncates
+    expect(provider.provideTextDocumentContent(left)).toBe("LEFT");
+    expect(provider.provideTextDocumentContent(right)).toBe("RIGHT");
+    spy.mockRestore();
+  });
+
+  test("keeps the two sides distinct within one sequence", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+    const openDiff = createDiffOpener(ctx);
+    await openDiff({ title: "T", left: "L1", right: "R1", fileName: "a.ts" });
+    await openDiff({ title: "T", left: "L2", right: "R2", fileName: "a.ts" });
+    const provider = spy.mock.calls[0]?.[1] as {
+      provideTextDocumentContent(uri: { path: string }): string;
+    };
+    expect(provider.provideTextDocumentContent({ path: "/1/original/a.ts" })).toBe("L1");
+    expect(provider.provideTextDocumentContent({ path: "/1/nimbus/a.ts" })).toBe("R1");
+    expect(provider.provideTextDocumentContent({ path: "/2/original/a.ts" })).toBe("L2");
+    expect(provider.provideTextDocumentContent({ path: "/2/nimbus/a.ts" })).toBe("R2");
+    spy.mockRestore();
+  });
 });
 
 describe("pre-flight commands", () => {
@@ -2714,5 +2982,258 @@ describe("pass-through surfaces route through the seam", () => {
     expect(doc?.title).toBe("Nimbus outbound.md");
     expect(doc?.content).toContain("Ask panel");
     expect(doc?.content).toContain("why is p99 up?");
+  });
+});
+
+describe("client wrappers forward to the real NimbusClient prototype (own-vs-prototype regression)", () => {
+  test("the participant client wrapper forwards searchRanked/metricsDora/egressHead/briefs, not just askStream", async () => {
+    const fake = new FakeClassClient();
+    let captured: ParticipantDeps | undefined;
+    const f = makeFixture({ openClient: async () => fake as unknown as ClientLike });
+    f.deps.registerChatParticipant = (opts) => {
+      captured = opts.deps;
+      return { dispose: () => undefined };
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+
+    const client = captured?.client();
+    if (client === undefined) throw new Error("participant client did not connect");
+
+    // Each of these would throw "... is not a function" under a bare
+    // `{ ...client }` spread, because none of them are own properties of a
+    // real NimbusClient instance.
+    await expect(client.searchRanked({ name: "q" })).resolves.toEqual([{ name: "found.ts" }]);
+    await expect(client.metricsDora({ service: "s", since: "7d" })).resolves.toEqual({
+      service: "checkout",
+    });
+    await expect(client.egressHead()).resolves.toEqual({ head: "h", count: 3 });
+    await expect(
+      client.briefs.impact({ fileOrPrUrl: "a.ts" }, { action: "a", files: [], omissions: [] }),
+    ).resolves.toEqual({ kind: "impact" });
+
+    // And each call actually reached the real instance with its real params —
+    // not a stand-in that merely resolved without throwing.
+    expect(fake.calls["searchRanked"]?.[0]).toEqual({ name: "q" });
+    expect(fake.calls["metricsDora"]?.[0]).toEqual({ service: "s", since: "7d" });
+    expect(fake.calls["agentsImpact"]?.[0]).toEqual({ fileOrPrUrl: "a.ts" });
+  });
+
+  test("the Ask-panel client wrapper forwards askStream and getSessionTranscript to the real instance", async () => {
+    const fake = new FakeClassClient();
+    const f = makeFixture({
+      inputBoxAnswers: ["hi there"],
+      openClient: async () => fake as unknown as ClientLike,
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+
+    // Creates the chat controller with the gated wrapper and drives askStream.
+    await cmd(f, "nimbus.ask")();
+    expect(fake.calls["askStream"]?.[0]).toBe("hi there");
+
+    // Reuses the same controller/wrapper — proves getSessionTranscript, a
+    // member the old spread silently dropped, is forwarded too.
+    await cmd(f, "nimbus.openSession")("s9");
+    const call = fake.calls["getSessionTranscript"]?.[0] as { sessionId: string } | undefined;
+    expect(call?.sessionId).toBe("s9");
+  });
+});
+
+describe("workflow run wiring", () => {
+  const WF_ROW = {
+    id: "wf-1",
+    name: "nightly-sync",
+    description: "Sync everything overnight",
+    steps_json: JSON.stringify([{ label: "collect", run: "gather" }]),
+    created_at: 1,
+    updated_at: 2,
+  };
+
+  const RUN_RESULT = {
+    runId: "run-1",
+    status: "done",
+    dryRun: false,
+    stepResults: [{ label: "collect", status: "done", output: "ok" }],
+  };
+
+  // The fixture's showQuickPick returns a canned answer rather than echoing an
+  // item, so the answer must carry the `row` the command reads back off it.
+  function pickWorkflow(): Array<{ label: string }> {
+    return [{ label: "nightly-sync", row: WF_ROW }] as unknown as Array<{ label: string }>;
+  }
+
+  function runHandle(): Record<string, unknown> {
+    return {
+      streamId: "sid-1",
+      result: Promise.resolve(RUN_RESULT),
+      cancel: async () => ({ cancelled: true }),
+      [Symbol.asyncIterator]: () => {
+        let sent = false;
+        return {
+          next: async () => {
+            if (sent) return { value: undefined, done: true };
+            sent = true;
+            return { value: { type: "done", result: RUN_RESULT }, done: false };
+          },
+        };
+      },
+    };
+  }
+
+  test("nimbus.runWorkflow lists workflows and streams the chosen one", async () => {
+    const workflowList = vi.fn(async () => ({ workflows: [WF_ROW] }));
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      // Approve the pre-flight — the run is a gated, prompting surface.
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList,
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")();
+    expect(workflowList).toHaveBeenCalled();
+    expect(workflowRunStream).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "nightly-sync", dryRun: false }),
+    );
+    expect(f.openedDocs[0]?.title).toContain("run-1");
+  });
+
+  // Regression: activate() bridges vscode.window to WindowApi with an `unknown`
+  // cast, so nothing but the seam's own types stands between the run surface and
+  // the wrong argument. Real withProgress calls `task(progress, token)`;
+  // runWithCancellableProgress must forward the SECOND. It forwarded the first
+  // for four releases — every run died on
+  // "o.onCancellationRequested is not a function", so no report, no outcome, and
+  // a Cancel button that sent nothing. This pins the WIRING, not the seam: the
+  // suite was green (1119 tests) throughout.
+  test("a cancellable run hands its body the token, not the progress reporter", async () => {
+    const cancelSubscribers: Array<() => void> = [];
+    const handleCancel = vi.fn(async () => ({ cancelled: true }));
+    const workflowRunStream = vi.fn(() => ({
+      streamId: "sid-1",
+      result: Promise.resolve({ ...RUN_RESULT, status: "cancelled" }),
+      cancel: handleCancel,
+      [Symbol.asyncIterator]: () => {
+        let sent = false;
+        return {
+          next: async () => {
+            if (sent) return { value: undefined, done: true };
+            sent = true;
+            // Mid-run, the user hits Cancel on the progress notification.
+            for (const cb of cancelSubscribers) cb();
+            return { value: { type: "chunk", text: "collect: ok" }, done: false };
+          },
+        };
+      },
+    }));
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      warnMessageClicks: ["Send"],
+      cancelSubscribers,
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")();
+
+    // The body subscribed on the object that HAS onCancellationRequested — the
+    // token. Handed the progress reporter instead, the run throws before this.
+    expect(cancelSubscribers).toHaveLength(1);
+    // And the subscription is live: firing it reaches workflow.cancel.
+    expect(handleCancel).toHaveBeenCalled();
+    expect(f.errorMessages).toEqual([]);
+    // The run still settles: report tab and outcome, not a dead notification.
+    expect(f.openedDocs[0]?.title).toContain("run-1");
+  });
+
+  test("nimbus.dryRunWorkflow asks the Gateway for a dry run", async () => {
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.dryRunWorkflow")();
+    expect(workflowRunStream).toHaveBeenCalledWith(expect.objectContaining({ dryRun: true }));
+  });
+
+  test("a run invoked from a tree row uses that row's workflow, skipping the picker", async () => {
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      // Deliberately empty: if the picker were consulted this would run nothing.
+      quickPickAnswers: [],
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")({ payload: { workflowName: "nightly-sync" } });
+    expect(workflowRunStream).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "nightly-sync" }),
+    );
+  });
+
+  test("a tree argument with no usable payload falls back to the picker", async () => {
+    // VS Code hands the node itself; a malformed or foreign one must not be
+    // trusted into a run.
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")({ payload: { workflowName: 42 } });
+    expect(workflowRunStream).toHaveBeenCalled();
+    expect(
+      (f.deps.window.showQuickPick as unknown as ReturnType<typeof vi.fn>).mock.calls.length,
+    ).toBeGreaterThan(0);
+  });
+
+  test("declining the pre-flight starts no run", async () => {
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      // Dismissed — the gate fails closed.
+      warnMessageClicks: [undefined],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")();
+    expect(workflowRunStream).not.toHaveBeenCalled();
+    expect(f.openedDocs).toEqual([]);
+    expect(f.errorMessages).toEqual([]);
+  });
+
+  test("running while disconnected reports it instead of throwing", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")();
+    expect(f.errorMessages.join(" ")).toMatch(/not connected/i);
   });
 });

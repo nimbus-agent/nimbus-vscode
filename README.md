@@ -55,14 +55,18 @@ verbatim, and `Nimbus: Reset Egress Preview Prompts` clears the stored choices.
 ## Everything else it does
 
 - **Ask** — chat with the Nimbus agent in a side panel; responses stream token-by-token, and a **Stop** button cancels a long generation cleanly while keeping the partial reply.
-- **`@nimbus` Chat participant** — also works as a general assistant: free-form questions can pull in `#file` context (or your selection), answers stream token-by-token, and replies include clickable citations back to local-index sources. Explain / Fix / Review / Docstring live as **Quick Ask presets** rather than slash commands.
+- **`@nimbus` Chat participant** — also works as a general assistant: free-form questions can pull in `#file` context (or your selection), answers stream token-by-token, and replies include clickable citations back to local-index sources. Explain / Fix / Review / Docstring / Write tests live as **Quick Ask presets** rather than slash commands.
 - **Language Model tools** — other chat extensions and agents can call Nimbus as a tool: `nimbus_search` (ranked search over your private local index) and `nimbus_ask` (a one-shot answer from your local agent), referenceable in a prompt as `#nimbusSearch` / `#nimbusAsk`.
 - **Quick Ask** — ask about a selection (or the whole file) and get a one-shot answer in a read-only tab, without opening the chat panel.
 - **Search** — live ranked (semantic + keyword) search over your local Nimbus index; results update as you type, and selecting one opens its source (or notifies you when it has none). **Search Selection** seeds it from the editor.
 - **Find related** — from a selection or an Index sidebar item, pivot to the local knowledge around it (ranked search that excludes the item itself).
 - **Selection-aware** — right-click a selection to *Ask About Selection*, *Search Selection*, or *Find Related*.
 - **Dev-workflow trio** — *Generate Commit Message* drafts a message from your staged diff, in your repository's own commit style, into the Source Control input box; *Review Changes* reviews all local changes (staged and unstaged) in a findings tab that also names what wasn't reviewed (too large, possibly secret, binary or non-textual changes, untracked); *Generate Tests* and *Generate Docstrings* work over an editor selection, opening an untitled test buffer or a docstring diff. Output is always a suggestion — nothing is written to disk or applied automatically.
-- **Nimbus sidebar** — activity-bar views for Sessions (with chat resume), the local Index, and Agents.
+- **Diagnostic actions** — the lightbulb on an error or warning offers up to three Nimbus actions: *Explain this problem*, *Suggest a fix* (shown as a diff you apply yourself — nothing is ever written for you), and *Find prior occurrences*, which searches your local index for the same error and reaches no model at all. Where a line carries several diagnostics — a compiler error and a lint warning, say — one is chosen, so the lightbulb gains at most three entries rather than three per diagnostic. Toggle with `nimbus.diagnostics.showCodeActions`.
+- **Blame on hover** — hover any line to see who last changed it, when, the commit subject, and the linked PR or ticket, with a *Why? →* link into the full "Why is this here?" brief. Reads local git and the local index only — no model is involved. Toggle with `nimbus.briefs.showHoverBlame`.
+- **Built-in briefs** — *Why is this here?*, *Who knew this code?* and *Who else is touching this?* from the editor context menu, plus *Team huddle*, *Is this idle?* and *Safe to deploy?* from the palette and the Agents view.
+- **Workflows** — run or dry-run a saved workflow from the editor: per-step output streams as it goes, and a cancel lands at the next step boundary.
+- **Nimbus sidebar** — activity-bar views for Sessions (with chat resume), the local Index, Agents, and Workflows.
 - **Audit & Egress ledgers** — inspect what the agent did and everything it sent off-device; verify the egress hash-chain and export a signed proof for any time window, all locally. A **status-bar badge** (shown while connected, on by default) displays the egress row count with a ledger-live ✓ — click to open the ledger, or toggle it with `nimbus.egress.showStatusBarBadge`.
 - **Connection troubleshooter** — *Nimbus: Troubleshoot Connection* explains why you're disconnected and offers one-click fixes (start the Gateway, reconnect, open logs, or edit the socket path).
 - **Get Started walkthrough** — a first-run walkthrough (*Nimbus: Open Walkthrough*, also on the Welcome page) that guides you from connecting the Gateway through Ask, Search, and Quick Ask.
@@ -111,10 +115,13 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/user-guide/install/> for
 | `nimbus.search.limit` | `50` | Max results per search (1–500). |
 | `nimbus.askAgent` | _(Gateway default)_ | Default agent name passed to Ask. |
 | `nimbus.agents` | `[]` | Agents shown in the Agents sidebar view. |
-| `nimbus.quickAsk.presets` | `[]` | Quick Ask preset actions (empty = Explain/Fix/Review/Docstring). |
+| `nimbus.quickAsk.presets` | `[]` | Quick Ask preset actions (empty = Explain/Fix/Review/Docstring/Write tests). |
 | `nimbus.scm.skipSecretFiles` | `true` | Exclude likely-secret files (`.env*`, `*.pem`, `*.key`, `id_rsa*`, `*.p12`, `*.pfx`) from diffs sent by Generate Commit Message / Review Changes. |
 | `nimbus.scm.egressProofTrailer` | `false` | Append a signed `Nimbus-Egress-Proof` trailer (last-24h window digest + Ed25519 signature) to drafted commit messages. |
 | `nimbus.egress.showStatusBarBadge` | `true` | Show the egress row-count badge (ledger-live ✓) in the status bar. |
+| `nimbus.briefs.showHoverBlame` | `true` | Blame + PR/ticket on hover, with a link to the full Why brief. |
+| `nimbus.briefs.defaultNamespace` | `""` | Prefills the namespace prompt for the Safe to deploy? brief. |
+| `nimbus.diagnostics.showCodeActions` | `true` | Offer Nimbus actions on the lightbulb for errors and warnings. |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |
 | `nimbus.logLevel` | `info` | Output-channel verbosity. |
 
@@ -134,9 +141,10 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md). This repository was extracted from the
 
 ## On the roadmap (not yet shipped)
 
-- **The `why` lens** — hover any line to see who wrote it, the PR, the ticket, the
-  incident it responded to, and what breaks if you change it. Built on the gateway
-  and reachable through the client today ([`agents.why`/`agents.whyPeek`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md)); the in-editor hover is the next slice.
+- **The rest of the `why` lens** — the hover itself ships today (see *Blame on hover*
+  above). Still to come: the incident a line responded to, and what breaks if you
+  change it. Both are built on the gateway and reachable through the client
+  ([`agents.why`/`agents.whyPeek`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md)).
 
 See the [Nimbus roadmap](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md) for the full plan.
 

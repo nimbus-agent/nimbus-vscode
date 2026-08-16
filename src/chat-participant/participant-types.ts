@@ -1,17 +1,12 @@
 import type {
   AskStreamHandle,
   AskStreamOptions,
-  CatchupBrief,
-  CatchupParams,
   DoraMetricsResult,
-  ExpertBrief,
-  ExpertParams,
-  ImpactBrief,
-  ImpactParams,
   MetricsDoraParams,
   RankedSearchItem,
   RankedSearchParams,
 } from "@nimbus-dev/client";
+import type { ParticipantBriefs } from "../egress/gated-client.js";
 import type { Logger } from "../logging.js";
 
 // A code file attached to a turn — an explicit #file reference (free-form) or the
@@ -63,9 +58,8 @@ export interface CancellationLike {
 export interface ParticipantClientLike {
   askStream(input: string, opts?: AskStreamOptions): AskStreamHandle;
   searchRanked(params?: RankedSearchParams): Promise<RankedSearchItem[]>;
-  agentsExpert(p: ExpertParams, o?: { timeoutMs?: number }): Promise<ExpertBrief>;
-  agentsImpact(p: ImpactParams, o?: { timeoutMs?: number }): Promise<ImpactBrief>;
-  agentsCatchup(p?: CatchupParams, o?: { timeoutMs?: number }): Promise<CatchupBrief>;
+  /** The ops briefs, pre-routed through the egress seam. */
+  briefs: ParticipantBriefs;
   metricsDora(params: MetricsDoraParams): Promise<DoraMetricsResult>;
   egressHead(): Promise<{ head: string; count: number }>;
 }

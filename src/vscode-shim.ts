@@ -8,6 +8,22 @@ export interface DisposableLike {
   dispose(): void;
 }
 
+/** The slice of vscode.CancellationToken the extension uses. */
+export interface CancellationTokenLike {
+  onCancellationRequested(cb: () => void): DisposableLike;
+}
+
+/**
+ * The slice of vscode.Progress<{ message?: string; increment?: number }> handed
+ * to a withProgress task. Nothing here reports progress yet — the type exists
+ * so the seam DESCRIBES the real API, whose task is called `(progress, token)`.
+ * Typing the task as taking the token alone let a cast hide that the run
+ * surface's "token" was really the Progress object.
+ */
+export interface ProgressLike {
+  report(value: { message?: string; increment?: number }): void;
+}
+
 export interface OutputChannelHandle {
   appendLine(msg: string): void;
   show(preserveFocus?: boolean): void;
@@ -80,8 +96,16 @@ export interface TreeDataProviderLike<T> {
 }
 
 export interface TextEditorLike {
-  document: { getText(range?: unknown): string; fileName: string; languageId: string };
-  selection: { isEmpty: boolean };
+  document: {
+    getText(range?: unknown): string;
+    fileName: string;
+    languageId: string;
+    /** Scheme only. Briefs run against files in a repo; see real-hover.ts. */
+    uri: { scheme: string };
+  };
+  // `active` is the cursor end of the selection — zero-based, straight from
+  // vscode.Selection. agentsWhy({ref, line}) needs it; nothing else does yet.
+  selection: { isEmpty: boolean; active: { line: number } };
 }
 
 export interface MessageOptionsLike {
@@ -121,9 +145,17 @@ export interface WindowApi {
   createQuickPick<T extends QuickPickItemLike>(): QuickPickLike<T>;
   registerTreeDataProvider<T>(viewId: string, provider: TreeDataProviderLike<T>): DisposableLike;
   activeTextEditor: TextEditorLike | undefined;
+  // Mirrors the real API exactly: the task is invoked as `task(progress, token)`
+  // — the reporter FIRST, vscode's CancellationToken second. Most callers ignore
+  // both (their sends are not cancellable); a cancellable: true caller reads the
+  // token to learn the user hit Cancel. Do not "simplify" this to the token
+  // alone: activate() reaches the real window through an `unknown` cast, so this
+  // declaration is the only thing that can catch a call site forwarding the
+  // wrong argument, and once it did not, every workflow run died on
+  // `token.onCancellationRequested is not a function`.
   withProgress<R>(
     options: { location: number; title?: string; cancellable?: boolean },
-    task: () => Thenable<R>,
+    task: (progress: ProgressLike, token: CancellationTokenLike) => Thenable<R>,
   ): Thenable<R>;
 }
 
@@ -139,6 +171,16 @@ export interface WorkspaceFolderLike {
   uri: { fsPath: string };
 }
 
+/**
+ * The slice of vscode.TextDocument needed to re-read an OPEN document by path,
+ * whether or not it has focus. `fsPath` is a local filesystem path and stays
+ * inside the extension host — nothing built from it may reach a payload.
+ */
+export interface OpenTextDocumentLike {
+  getText(range?: unknown): string;
+  uri: { fsPath: string };
+}
+
 export interface WorkspaceApi {
   getConfiguration(section: string): WorkspaceConfigSection;
   onDidChangeConfiguration(handler: (e: ConfigurationChangeEventLike) => void): DisposableLike;
@@ -146,6 +188,12 @@ export interface WorkspaceApi {
   isTrusted: boolean;
   /** Leak-check needles. Undefined when no folder is open (a loose file). */
   workspaceFolders: readonly WorkspaceFolderLike[] | undefined;
+  /**
+   * Every document VS Code currently holds open, focused or not. Focus is the
+   * wrong identity for "is this still the file the request was about" — the user
+   * moves around while a request is in flight — so lookups here match on path.
+   */
+  textDocuments: readonly OpenTextDocumentLike[];
 }
 
 export interface MementoLike {

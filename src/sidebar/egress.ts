@@ -132,6 +132,87 @@ function proofRowsTable(rows: EgressRow[]): string {
   return `<table><thead><tr><th>Time (UTC)</th><th>Action</th><th>Result</th><th>Consent</th></tr></thead><tbody>${body}</tbody></table>`;
 }
 
+/**
+ * The egress-bearing source classes, in the gateway's own key-sorted order
+ * (`egress/egress-coverage.ts`). Listed in full, including classes at `none`,
+ * because a reader has to be able to see what was NOT observed.
+ */
+const EGRESS_COVERAGE_CLASSES = [
+  "http",
+  "mcp",
+  "model",
+  "peer",
+  "session",
+  "sync",
+  "task",
+] as const;
+
+const EGRESS_GRANULARITIES = new Set(["none", "per-run", "per-call"]);
+
+/**
+ * The completeness section of the proof artifact.
+ *
+ * Replaces a single line that read "Completeness tier: authorized-actions —
+ * every gateway-authorized outbound action in the window, recorded before
+ * dispatch." That sentence was wrong in two ways at once, which is why it is
+ * gone rather than reworded:
+ *
+ *  - It asserted totality ("every ... outbound action") across ALL egress,
+ *    while the gateway only ever observed the classes marked non-`none`. A
+ *    class at `none` was never watched, and this document must not imply
+ *    otherwise — this is a report someone hands to an auditor.
+ *  - `tier` was a single scalar. The gateway now observes four classes at two
+ *    different granularities, which no one string can describe; it was removed
+ *    from the wire in @nimbus-dev/client 0.16.0.
+ *
+ * An `indeterminate` window prints NO count at all. A bare "0 events" when no
+ * boot marker covers the window is the precise false-negative the whole
+ * coverage mechanism exists to prevent.
+ */
+function renderCompleteness(completeness: Record<string, unknown>): string {
+  const coverage = asRecord(completeness["coverage"]) ?? {};
+  // Fail closed, matching @nimbus-dev/client's own reader: an absent or
+  // non-boolean `indeterminate` reads as TRUE. A gateway too old to send the
+  // field is exactly a gateway whose coverage this document cannot vouch for.
+  const indeterminate =
+    typeof completeness["indeterminate"] === "boolean" ? completeness["indeterminate"] : true;
+  const events =
+    typeof completeness["outboundEgressEvents"] === "number"
+      ? completeness["outboundEgressEvents"]
+      : undefined;
+
+  const granularityOf = (cls: string): string => {
+    const g = coverage[cls];
+    // An unrecognised granularity understates rather than overstates.
+    return typeof g === "string" && EGRESS_GRANULARITIES.has(g) ? g : "none";
+  };
+
+  const tableRows = EGRESS_COVERAGE_CLASSES.map((cls) => {
+    const g = granularityOf(cls);
+    const cell = g === "none" ? `<em>not observed</em>` : escapeHtml(g);
+    return `<tr><td><code>${escapeHtml(cls)}</code></td><td>${cell}</td></tr>`;
+  }).join("");
+  const table = `<table><thead><tr><th>Egress class</th><th>Coverage</th></tr></thead><tbody>${tableRows}</tbody></table>`;
+
+  if (indeterminate) {
+    return (
+      `<p class="bad">Completeness: INDETERMINATE — no boot marker covers this window, so there is no evidence that any egress class was being observed.</p>` +
+      `<p>Any count of rows below is therefore <strong>not</strong> evidence that nothing left the machine.</p>${table}`
+    );
+  }
+
+  const observed = EGRESS_COVERAGE_CLASSES.filter((c) => granularityOf(c) !== "none");
+  const observedList = observed.map((c) => `<code>${escapeHtml(c)}</code>`).join(", ");
+  const scope =
+    observed.length === 0 ? "no egress class was observed" : `observed classes: ${observedList}`;
+  const eventNoun = events === 1 ? "event" : "events";
+  const countText =
+    events === undefined
+      ? "The event count is absent from this response."
+      : `<strong>${events}</strong> authorized outbound ${eventNoun} recorded before dispatch.`;
+  return `<p>Completeness: ${countText} This covers ${scope} only — a class marked <em>not observed</em> below was never watched, and this document makes no claim about it.</p>${table}`;
+}
+
 // The proof artifact: a SELF-CONTAINED HTML report (inline CSS, no external
 // requests) presenting the egressProveWindow result, with the raw RPC JSON
 // embedded verbatim for machine verification. In-file BLAKE3/Ed25519
@@ -148,7 +229,7 @@ export function buildProofDocument(
   const completeness = asRecord(rec["completeness"]) ?? {};
   const verify = asRecord(rec["verify"]) ?? {};
   const receipt = asRecord(rec["receipt"]);
-  const tier = typeof completeness["tier"] === "string" ? completeness["tier"] : "unknown";
+  const completenessBlock = renderCompleteness(completeness);
   const verifyOk = verify["ok"] === true;
   const verifiedRows = typeof verify["verifiedRows"] === "number" ? verify["verifiedRows"] : 0;
   // `</script>`-safe: escape `<` inside the JSON payload; JSON.parse restores it.
@@ -176,7 +257,8 @@ code { background: #f2f2f2; padding: 1px 4px; word-break: break-all; }
 </head>
 <body>
 <h1>Nimbus egress proof</h1>
-<p>Completeness tier: <strong>${escapeHtml(tier)}</strong> — every gateway-authorized outbound action in the window, recorded before dispatch. Generated ${escapeHtml(new Date(now).toISOString())}.</p>
+${completenessBlock}
+<p>Generated ${escapeHtml(new Date(now).toISOString())}.</p>
 ${verifyBadge}
 <h2>Rows in window (${rows.length})</h2>
 ${proofRowsTable(rows)}

@@ -1,5 +1,54 @@
 # Changelog
 
+## [0.17.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.17.0...v0.17.1) (2026-08-13)
+
+
+### Bug Fixes
+
+* **workflows:** forward the cancellation token, not the progress reporter ([#100](https://github.com/nimbus-agent/nimbus-vscode/issues/100)) ([be5156c](https://github.com/nimbus-agent/nimbus-vscode/commit/be5156c12ea24ee4d2c273fde067843350f7d8cf))
+
+## [0.17.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.16.0...v0.17.0) (2026-08-13)
+
+
+### Features
+
+* **diagnostics:** offer explain, fix and prior-occurrences on the lightbulb ([#98](https://github.com/nimbus-agent/nimbus-vscode/issues/98)) ([aebe5c9](https://github.com/nimbus-agent/nimbus-vscode/commit/aebe5c9894d611c67e3ff2c3d955236995568147))
+
+## [0.16.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.15.0...v0.16.0) (2026-08-13)
+
+
+### Features
+
+* **sidebar:** add a read-only Workflows view ([#95](https://github.com/nimbus-agent/nimbus-vscode/issues/95)) ([c47aa7f](https://github.com/nimbus-agent/nimbus-vscode/commit/c47aa7fe9799a07b5ca0b7978dc99451e75c58ae))
+* **workflows:** run and cancel a workflow from the editor ([#96](https://github.com/nimbus-agent/nimbus-vscode/issues/96)) ([ad94c1a](https://github.com/nimbus-agent/nimbus-vscode/commit/ad94c1a12837c688908eaca0dea2e1cf71d0f2d8))
+
+## [0.15.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.14.0...v0.15.0) (2026-08-12)
+
+
+### Features
+
+* **briefs:** reach the last two briefs, and route every agent call through one seam ([#91](https://github.com/nimbus-agent/nimbus-vscode/issues/91)) ([63956e5](https://github.com/nimbus-agent/nimbus-vscode/commit/63956e5197267c676264c40d1f63d62bdb3df2f8))
+
+## [0.14.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.13.0...v0.14.0) (2026-08-11)
+
+
+### Features
+
+* render per-class egress coverage instead of the removed tier scalar ([#89](https://github.com/nimbus-agent/nimbus-vscode/issues/89)) ([36f76d5](https://github.com/nimbus-agent/nimbus-vscode/commit/36f76d520b8226bbc79c9609113a383db43a1011))
+
+## [0.13.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.12.1...v0.13.0) (2026-08-10)
+
+
+### Features
+
+* **briefs:** blame, PR and ticket on hover, with a link into the full Why brief ([#87](https://github.com/nimbus-agent/nimbus-vscode/issues/87)) ([b6ffec1](https://github.com/nimbus-agent/nimbus-vscode/commit/b6ffec1b9bfc7cdef83a7ad4272bcd3b68afac84))
+* **briefs:** surface the built-in briefs where the editor already has context ([#84](https://github.com/nimbus-agent/nimbus-vscode/issues/84)) ([620c119](https://github.com/nimbus-agent/nimbus-vscode/commit/620c11913be62bd6fbb5a658433057b43bb7a70c))
+
+
+### Bug Fixes
+
+* recover from a Gateway restart, and close the URI-truncation bug class ([#86](https://github.com/nimbus-agent/nimbus-vscode/issues/86)) ([80b2934](https://github.com/nimbus-agent/nimbus-vscode/commit/80b293420e4df8f93e3fbedc90ad297336478005))
+
 ## [0.12.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.12.0...v0.12.1) (2026-08-01)
 
 

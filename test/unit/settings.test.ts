@@ -16,6 +16,7 @@ function makeWorkspace(values: Record<string, unknown>): WorkspaceApi {
     onDidChangeConfiguration: () => ({ dispose: () => undefined }),
     isTrusted: true,
     workspaceFolders: undefined,
+    textDocuments: [],
   };
 }
 
@@ -30,6 +31,7 @@ describe("Settings", () => {
     expect(s.agents()).toEqual([]);
     expect(s.quickAskPresets()).toEqual([]);
     expect(s.showEgressStatusBarBadge()).toBe(true);
+    expect(s.showHoverBlame()).toBe(true);
     expect(s.hitlAlwaysModal()).toBe(false);
     expect(s.logLevel()).toBe("info");
   });
@@ -45,6 +47,7 @@ describe("Settings", () => {
         agents: [{ id: "a", label: "A" }],
         "quickAsk.presets": [{ label: "Test", prompt: "Write tests." }],
         "egress.showStatusBarBadge": false,
+        "briefs.showHoverBlame": false,
         hitlAlwaysModal: true,
         logLevel: "debug",
       }),
@@ -57,6 +60,7 @@ describe("Settings", () => {
     expect(s.agents()).toEqual([{ id: "a", label: "A" }]);
     expect(s.quickAskPresets()).toEqual([{ label: "Test", prompt: "Write tests." }]);
     expect(s.showEgressStatusBarBadge()).toBe(false);
+    expect(s.showHoverBlame()).toBe(false);
     expect(s.hitlAlwaysModal()).toBe(true);
     expect(s.logLevel()).toBe("debug");
   });
@@ -64,5 +68,15 @@ describe("Settings", () => {
   test("falls back to info for an unrecognized logLevel value", () => {
     const s = createSettings(makeWorkspace({ logLevel: "trace" }));
     expect(s.logLevel()).toBe("info");
+  });
+
+  test("defaultNamespace is empty by default", () => {
+    const s = createSettings(makeWorkspace({}));
+    expect(s.defaultNamespace()).toBe("");
+  });
+
+  test("defaultNamespace reads briefs.defaultNamespace", () => {
+    const s = createSettings(makeWorkspace({ "briefs.defaultNamespace": "billing" }));
+    expect(s.defaultNamespace()).toBe("billing");
   });
 });

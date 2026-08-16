@@ -37,6 +37,19 @@ Gateway round-trip actually works. For any change to a command handler, the
 sidebar, the chat webview, or client IPC usage, launch the extension and exercise
 the real flow:
 
+**The built-in briefs' modal-gate and no-send flows are now automated** —
+`bun run test:ui` drives a real VS Code (ExTester/Selenium) against a fake
+Gateway and covers exactly this for `Why is this here?` / `Who knew this
+code?` / `Team huddle` / `Is this idle?` / `Safe to deploy?` (see
+[`docs/development.md`](../../../docs/development.md#ui-tests)). This suite
+is **local-only** — it does not run in CI (an unfixed upstream ExTester
+limitation breaks its folder-open handshake under headless Linux) — so run it
+yourself with `bun run test:ui` before relying on it. A green local run means
+those flows got a real-VS-Code pass on your machine; it does not replace the
+manual pass below for anything it doesn't cover, and it does **not** cover the
+`@nimbus` chat participant at all (no Chat-view page object exists to drive
+it); that surface is still manual-only.
+
 1. Open the repo in VS Code and press **F5** (the "Run Extension" launch config)
    to open an Extension Development Host window with the extension loaded.
 2. Ensure a Nimbus Gateway is running (or set `nimbus.autoStartGateway`), so IPC

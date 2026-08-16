@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
 import { createModalSurface } from "../../src/hitl/hitl-modal.js";
 import { createToastSurface } from "../../src/hitl/hitl-toast.js";
-import type { WindowApi } from "../../src/vscode-shim.js";
+import type { CancellationTokenLike, ProgressLike, WindowApi } from "../../src/vscode-shim.js";
 
 function fakeWindow(answer: string | undefined): WindowApi {
   const showInformationMessage = vi.fn(async () => answer);
@@ -28,8 +28,16 @@ function fakeWindow(answer: string | undefined): WindowApi {
     createQuickPick: vi.fn(),
     registerTreeDataProvider: vi.fn(() => ({ dispose: () => undefined })),
     activeTextEditor: undefined,
-    withProgress: (async (_opts: unknown, task: () => Promise<unknown>) =>
-      task()) as WindowApi["withProgress"],
+    // As real VS Code calls it: `task(progress, token)`, progress first.
+    withProgress: (async (
+      _opts: unknown,
+      task: (progress: ProgressLike, token: CancellationTokenLike) => Promise<unknown>,
+    ) =>
+      task(
+        { report: () => undefined },
+        // A token that never fires: nothing in these tests cancels a send.
+        { onCancellationRequested: () => ({ dispose: () => undefined }) },
+      )) as WindowApi["withProgress"],
   };
 }
 

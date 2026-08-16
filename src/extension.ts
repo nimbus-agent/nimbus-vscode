@@ -1,9 +1,24 @@
 import { spawn as nodeSpawn } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
 
-import { discoverSocketPath, type HitlRequest, NimbusClient } from "@nimbus-dev/client";
+import {
+  type AskStreamHandle,
+  type AskStreamOptions,
+  discoverSocketPath,
+  type HitlRequest,
+  NimbusClient,
+} from "@nimbus-dev/client";
 import * as vscode from "vscode";
-import { type ChatController, createChatController } from "./chat/chat-controller.js";
+import { createBriefCommands } from "./briefs/commands.js";
+import { createNamespaceStore } from "./briefs/namespace-store.js";
+import { toRelativeRef, whyParams } from "./briefs/params.js";
+import { createPeekHover } from "./briefs/peek-hover.js";
+import { registerWhyPeekHover } from "./briefs/real-hover.js";
+import {
+  type ChatClientLike,
+  type ChatController,
+  createChatController,
+} from "./chat/chat-controller.js";
 import type { ChatPanel, ChatPanelFactory } from "./chat/chat-panel.js";
 import { createRealChatPanelFactory } from "./chat/real-chat-panel.js";
 import { createSessionStore } from "./chat/session-store.js";
@@ -16,10 +31,19 @@ import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js"
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
+import { DIAGNOSTIC_COMMANDS, diagnosticActionsFor } from "./diagnostics/actions.js";
+import { createDiagnosticCommands } from "./diagnostics/commands.js";
+import { buildDiagnosticContext } from "./diagnostics/context.js";
+import { normalizeDiagnosticMessage } from "./diagnostics/normalize.js";
+import { registerDiagnosticCodeActions } from "./diagnostics/real-provider.js";
 import { createEgressGate } from "./egress/gate.js";
 import {
+  gateLazyAskStream,
   gateRawAgentInvoke,
   gateRawAskStream,
+  gateRawBriefs,
+  gateRawParticipantBriefs,
+  gateRawWorkflowRun,
   isEgressCancelled,
   type ProgressRunner,
 } from "./egress/gated-client.js";
@@ -65,6 +89,7 @@ import { createQuickActions } from "./sidebar/quick-actions.js";
 import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
+import { createWorkflowsView } from "./sidebar/workflows-view.js";
 import { summarizeConnectorHealth } from "./status-bar/connector-health.js";
 import {
   createEgressStatusBarController,
@@ -72,14 +97,17 @@ import {
 } from "./status-bar/egress-status-bar-item.js";
 import { createStatusBarController, type StatusBarInputs } from "./status-bar/status-bar-item.js";
 import type {
+  CancellationTokenLike,
   CommandsApi,
   DisposableLike,
   ExtensionContextLike,
   QuickPickItemLike,
+  TextEditorLike,
   WindowApi,
   WorkspaceApi,
 } from "./vscode-shim.js";
 import { PROGRESS_LOCATION_NOTIFICATION } from "./vscode-shim.js";
+import { createWorkflowCommands, type WorkflowRunTarget } from "./workflows/commands.js";
 
 // Newest-N indexed items pulled for the Index view. The Gateway returns them
 // already ordered; we cap to keep the tree responsive (cf. the search handler).
@@ -172,9 +200,29 @@ export function activateWithDeps(
   // Handed to every gated invoke so the "sending…" notification is raised by the
   // seam, after the gate clears, rather than by the call site around it — which
   // would put it on screen while the preview is still asking whether to send.
+  // A ProgressRunner body takes no arguments; the wrapper drops withProgress's
+  // (progress, token) explicitly rather than leaning on JS arity, so the two
+  // signatures are visibly reconciled at the seam.
   const runWithProgress: ProgressRunner = (title, body) =>
     Promise.resolve(
-      deps.window.withProgress({ location: PROGRESS_LOCATION_NOTIFICATION, title }, body),
+      deps.window.withProgress({ location: PROGRESS_LOCATION_NOTIFICATION, title }, () => body()),
+    );
+
+  // A workflow run is the one send long enough to be worth interrupting, so it
+  // gets the cancellable variant and hands the token down to the run surface.
+  // withProgress calls its task as (progress, token): the SECOND argument is the
+  // one the run surface subscribes to. Passing `body` straight through handed it
+  // the Progress object and every run died on the first
+  // token.onCancellationRequested.
+  const runWithCancellableProgress = <R>(
+    title: string,
+    body: (token: CancellationTokenLike) => Promise<R>,
+  ): Promise<R> =>
+    Promise.resolve(
+      deps.window.withProgress(
+        { location: PROGRESS_LOCATION_NOTIFICATION, title, cancellable: true },
+        (_progress, token) => body(token),
+      ),
     );
 
   const openClient =
@@ -245,6 +293,10 @@ export function activateWithDeps(
     } catch (e) {
       if (mine !== egressPollSeq) return;
       log.warn(`egressHead poll failed: ${errMsg(e)}`);
+      // A restarted Gateway leaves this client bound to a dead pipe. Report it
+      // so the connection manager tears down and reconnects; otherwise every
+      // surface fails forever and only a window reload recovers (issue #82).
+      connection.noteTransportFailure(e);
       egressBadge.update({ ...base, error: errMsg(e) });
     }
   };
@@ -278,6 +330,9 @@ export function activateWithDeps(
     } catch (e) {
       if (mine !== connectorPollSeq) return;
       log.warn(`connectorListStatus poll failed: ${errMsg(e)}`);
+      // See the egress poll above — this one still runs when the egress badge
+      // is switched off, so it is the detection path that always exists.
+      connection.noteTransportFailure(e);
       connectorHealth = { count: 0, names: [] };
     }
     statusBar.update(statusInputs(lastRenderedConnection));
@@ -316,16 +371,53 @@ export function activateWithDeps(
     // Pass-through: the user typed this, so the gate records rather than
     // prompts. Routing it anyway is what makes "no call site bypasses the
     // seam" true rather than aspirational.
-    const full = nimbus();
-    const gatedChatClient =
-      full === undefined
-        ? c
-        : {
-            ...full,
-            askStream: gateRawAskStream(full, egressGate, "ask", "Ask panel"),
-          };
+    //
+    // NimbusClient is a class — every method lives on its prototype, not as an
+    // own property — so `{ ...full }` would copy none of them (only `ipc`
+    // survives the spread). Each member ChatClientLike needs is named and
+    // forwarded explicitly instead, with `this` preserved by wrapping in an
+    // arrow rather than passing the method off `full` directly.
+    // Resolve the client PER CALL rather than closing over the instance that is
+    // live at creation time. `chatController` is cached for the life of the
+    // panel and reset only by `panel.onDispose`, so a closed-over client
+    // outlived every reconnect: `closeClient()` closes the old instance and
+    // `tryConnect()` binds a NEW one, after which every call through the stale
+    // handle throws "IPC client is not connected" — while the status bar reads
+    // connected and the HITL subscription beside it HAS been re-bound.
+    //
+    // Rebuilding the controller on reconnect is the other candidate fix and is
+    // the wrong one here: `ensureChatController` also registers
+    // `panel.onMessage` and `panel.onDispose`, both of which append to listener
+    // arrays on a panel that `createOrReveal` REUSES — so a rebuild would
+    // double-handle every webview message. Lazy resolution matches what
+    // `auditView`, `egressView`, `scm` and `briefCommands` already do
+    // (`getClient: () => nimbus()`).
+    const NOT_CONNECTED_MESSAGE =
+      'Nimbus is not connected to the Gateway. Run "Nimbus: Reconnect to Gateway".';
+    const requireLive = (): NonNullable<ReturnType<typeof nimbus>> => {
+      const live = nimbus();
+      if (live === undefined) throw new Error(NOT_CONNECTED_MESSAGE);
+      return live;
+    };
+    const gatedChatClient: ChatClientLike = {
+      // `gateLazyAskStream` rather than resolving the client and invoking the
+      // raw stream method here: that call shape must stay inside the choke
+      // point, which `egress-choke-point.test.ts` proves by scanning this file
+      // for it. Doing the lazy hop inline is the obvious shortcut and the test
+      // rejects it — including when it appears only inside a comment, as an
+      // earlier draft of this one did.
+      askStream: gateLazyAskStream<AskStreamHandle, AskStreamOptions>(
+        () => nimbus(),
+        egressGate,
+        "ask",
+        "Ask panel",
+        NOT_CONNECTED_MESSAGE,
+      ),
+      cancelStream: async (streamId) => requireLive().cancelStream(streamId),
+      getSessionTranscript: async (params) => requireLive().getSessionTranscript(params),
+    };
     chatController = createChatController({
-      client: gatedChatClient as unknown as Parameters<typeof createChatController>[0]["client"],
+      client: gatedChatClient,
       panel,
       sessionStore,
       registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
@@ -565,12 +657,19 @@ export function activateWithDeps(
     loadAgents,
     activeAgentId: () => activeAgent,
   });
+  // Read-only: workflowList / workflowListRuns reach no model, so this view
+  // stays clear of the egress pre-flight gate by construction.
+  const workflowsView = createWorkflowsView({
+    connection,
+    getClient: () => nimbus(),
+  });
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
     ["nimbus.auditView", auditView],
     ["nimbus.egressView", egressView],
     ["nimbus.agentsView", agentsView],
     ["nimbus.indexView", indexView],
     ["nimbus.sessionsView", sessionsView],
+    ["nimbus.workflowsView", workflowsView],
   ];
   for (const [viewId, view] of sidebarViews) {
     ctx.subscriptions.push(
@@ -621,6 +720,82 @@ export function activateWithDeps(
     openDiff,
     log,
   });
+
+  const briefNamespaces = createNamespaceStore(ctx.workspaceState);
+
+  // Briefs answer questions about a file in a repo. An untitled buffer, a
+  // virtual document, or one of our own read-only brief tabs is not one, and a
+  // ref like "Untitled-1" is not something the Gateway can look up. The hover
+  // already draws this line (real-hover.ts SELECTOR); this is the same rule for
+  // the commands.
+  const activeFileEditor = (): TextEditorLike | undefined => {
+    const editor = deps.window.activeTextEditor;
+    return editor?.document.uri.scheme === "file" ? editor : undefined;
+  };
+
+  const briefCommands = createBriefCommands({
+    briefs: () => {
+      const client = nimbus();
+      return client === undefined ? undefined : gateRawBriefs(client, egressGate, runWithProgress);
+    },
+    activeEditor: activeFileEditor,
+    roots: egressRoots,
+    now: () => Date.now(),
+    openReadonly: openReadonlyJson,
+    namespaces: briefNamespaces,
+    defaultNamespace: () => settings.defaultNamespace(),
+    window: deps.window,
+    log,
+  });
+
+  // A workflow run is agent-bound — the Gateway expands saved steps into model
+  // prompts — so it goes through the same choke point as every other send. The
+  // gate is awaited BEFORE the stream starts: a run that has begun has already
+  // reached the model, and cancelling it only takes effect at the next step
+  // boundary. workflowList / workflowCancel are not gated (read-only, and
+  // stopping egress respectively).
+  const workflowOutput = deps.window.createOutputChannel("Nimbus Workflow Runs");
+  ctx.subscriptions.push(workflowOutput);
+  const workflowCommands = createWorkflowCommands({
+    listWorkflows: async () => {
+      const client = nimbus();
+      if (client === undefined) throw new Error("Nimbus: not connected to the Gateway.");
+      const { workflows } = await client.workflowList();
+      return workflows;
+    },
+    runWorkflow: async (params, manifest, meta) => {
+      const client = nimbus();
+      if (client === undefined) throw new Error("Nimbus: not connected to the Gateway.");
+      return gateRawWorkflowRun(client, egressGate)(params, manifest, meta);
+    },
+    output: workflowOutput,
+    openReadonly: openReadonlyJson,
+    withCancellableProgress: runWithCancellableProgress,
+    window: deps.window,
+    log,
+  });
+
+  // whyPeek is NOT routed through the egress gate, and that exemption is on
+  // evidence: it takes no timeoutMs, returns synchronously, and carries no
+  // `brief` string or AgentBriefBase — it never reaches a model. See
+  // test/unit/egress-choke-point.test.ts, which asserts it is the ONLY one.
+  const peekHover = createPeekHover({
+    // Applied by the controller before anything is sent OR rendered, so the
+    // hover's "Why? →" link carries the same safe ref the RPC does.
+    relativise: (ref) => toRelativeRef(ref, egressRoots()),
+    peek: async (p) => {
+      const client = nimbus();
+      if (client === undefined) throw new Error("Nimbus: not connected to the Gateway.");
+      // `p.ref` is already relative; whyParams applies the remaining conversion,
+      // since the Gateway counts lines from 1 while VS Code counts from 0.
+      return await client.agentsWhyPeek(whyParams(p));
+    },
+    enabled: () => settings.showHoverBlame(),
+    settle: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    now: () => Date.now(),
+    log,
+  });
+  ctx.subscriptions.push(registerWhyPeekHover({ hover: peekHover, log }));
 
   const quickActions = createQuickActions({ window: deps.window, commands: deps.commands });
 
@@ -675,7 +850,7 @@ export function activateWithDeps(
 
   const runSearch = (
     initialValue?: string,
-    opts?: { placeholder?: string; exclude?: (r: RankedResult) => boolean },
+    opts?: { placeholder?: string; emptyText?: string; exclude?: (r: RankedResult) => boolean },
   ): void => {
     const client = nimbus();
     if (client === undefined) {
@@ -706,7 +881,8 @@ export function activateWithDeps(
         const rows = await client.searchRanked({ name: q, limit: settings.searchLimit() });
         if (disposed || mine !== seq) return; // pick closed, or a newer keystroke won
         const picks = buildPicks(rows, opts?.exclude);
-        qp.items = picks.length > 0 ? picks : [statusPick("No matching index records")];
+        qp.items =
+          picks.length > 0 ? picks : [statusPick(opts?.emptyText ?? "No matching index records")];
       } catch (e) {
         if (disposed || mine !== seq) return;
         log.error(`nimbus.search failed: ${errMsg(e)}`);
@@ -796,6 +972,63 @@ export function activateWithDeps(
       (item.url !== undefined && r.url === item.url) || byName(r);
     runSearch(item.name, { placeholder: `Related to "${item.name}"…`, exclude });
   });
+
+  // Wired here rather than beside the other seams above because it is the one
+  // surface that reuses runSearch, which is defined just above this point.
+  const diagnosticCommands = createDiagnosticCommands({
+    client: () => {
+      const client = nimbus();
+      return client === undefined
+        ? undefined
+        : { agentInvoke: gateRawAgentInvoke(client, egressGate, "diagnostic", runWithProgress) };
+    },
+    window: deps.window,
+    agent: () => settings.askAgent(),
+    openReadonly: openReadonlyJson,
+    openDiff,
+    // Every OPEN document, not the focused one: the user is free to move around
+    // while a fix is being generated, and focus must not decide whether the
+    // staleness check can run. The path stays here — it is never put in a
+    // payload.
+    textOfDocument: (path) =>
+      deps.workspace.textDocuments.find((doc) => doc.uri.fsPath === path)?.getText(),
+    search: (query) =>
+      runSearch(query, {
+        placeholder: "Prior occurrences of this error",
+        emptyText: "Nimbus: nothing in the local index matches this error.",
+      }),
+    log,
+  });
+
+  register(DIAGNOSTIC_COMMANDS.explain, (arg) => diagnosticCommands.explain(arg));
+  register(DIAGNOSTIC_COMMANDS.fix, (arg) => diagnosticCommands.fix(arg));
+  register(DIAGNOSTIC_COMMANDS.priorOccurrences, (arg) => diagnosticCommands.priorOccurrences(arg));
+
+  ctx.subscriptions.push(
+    registerDiagnosticCodeActions({
+      offer: (diagnostics) =>
+        diagnosticActionsFor({
+          diagnostics,
+          connected: nimbus() !== undefined,
+          enabled: settings.showDiagnosticCodeActions(),
+        }),
+      buildArg: (document, diagnostic) => {
+        const fullText = document.getText();
+        return {
+          context: buildDiagnosticContext({
+            fullText,
+            fileName: document.fileName,
+            languageId: document.languageId,
+            diagnostic,
+          }),
+          // `documentPath` is stamped by real-provider.ts, the one place
+          // holding the real TextDocument — see the note there.
+          fullText,
+          query: normalizeDiagnosticMessage(diagnostic),
+        };
+      },
+    }),
+  );
 
   register("nimbus.quickAsk", async () => {
     const editor = deps.window.activeTextEditor;
@@ -1030,6 +1263,23 @@ export function activateWithDeps(
     indexView.refresh();
   });
 
+  register("nimbus.refreshWorkflows", () => {
+    workflowsView.refresh();
+  });
+
+  // args[0] is the SidebarItem VS Code passes for a view/item/context command;
+  // its payload carries the workflow name. Absent (palette invocation), the
+  // command falls back to its own picker.
+  register("nimbus.runWorkflow", async (...args) => {
+    await workflowCommands.run(workflowTargetFrom(args[0]));
+    workflowsView.refresh();
+  });
+
+  register("nimbus.dryRunWorkflow", async (...args) => {
+    await workflowCommands.dryRun(workflowTargetFrom(args[0]));
+    workflowsView.refresh();
+  });
+
   register("nimbus.openIndexItem", async (...args) => {
     // Primary-click command: args[0] is the IndexItem we put in the row's
     // command.arguments. Re-validate it defensively through parseIndexRow.
@@ -1143,16 +1393,29 @@ export function activateWithDeps(
 
   const participantDeps: ParticipantDeps = {
     // Pass-through, like the Ask panel: the user typed the prompt (plus any
-    // #file refs), so the gate records rather than prompts. Every other member
-    // — searchRanked, egressHead, the ops RPCs — still comes straight through.
+    // #file refs), so the gate records rather than prompts. searchRanked and
+    // egressHead are forwarded untouched below; the ops RPCs are routed
+    // through gateRawParticipantBriefs.
+    //
+    // NimbusClient is a class — every method lives on its prototype, not as an
+    // own property — so `{ ...client }` copies none of them (only `ipc`
+    // survives the spread). Each member ParticipantClientLike needs is named
+    // and forwarded explicitly instead, with `this` preserved by wrapping in
+    // an arrow rather than passing the method off `client` directly. That also
+    // lets this object satisfy ParticipantClientLike for real, with no cast.
     client: () => {
       const client = nimbus();
       if (client === undefined) return undefined;
-      const gated = {
-        ...client,
+      const participantClient: ParticipantClientLike = {
         askStream: gateRawAskStream(client, egressGate, "participant", "@nimbus chat"),
+        searchRanked: (params) => client.searchRanked(params),
+        // Recorded, not prompted: a slash-command argument is text the user
+        // just typed, and a modal must not interrupt a chat turn.
+        briefs: gateRawParticipantBriefs(client, egressGate),
+        metricsDora: (params) => client.metricsDora(params),
+        egressHead: () => client.egressHead(),
       };
-      return gated as unknown as ParticipantClientLike;
+      return participantClient;
     },
     registerStreamWithHitl: (id) => registeredHitlStreams.add(id),
     unregisterStreamWithHitl: (id) => {
@@ -1199,6 +1462,24 @@ export function activateWithDeps(
   register("nimbus.generateTests", () => scm.generateTests());
   register("nimbus.generateDocstrings", () => scm.generateDocstrings());
 
+  // `args` is optional and 0-based, matching EditorTarget and VS Code's own
+  // convention; toOneBased converts at the params boundary. Supplied by the
+  // sidebar (never) and, from PR 2, by the hover's [Why?] link (the raw hover
+  // position). Absent, each command falls back to the active editor.
+  const briefArgs = (args: unknown): { ref: string; line: number } | undefined => {
+    if (typeof args !== "object" || args === null) return undefined;
+    const rec = args as { ref?: unknown; line?: unknown };
+    if (typeof rec.ref !== "string" || typeof rec.line !== "number") return undefined;
+    return { ref: rec.ref, line: rec.line };
+  };
+
+  register("nimbus.brief.why", (args) => briefCommands.why(briefArgs(args)));
+  register("nimbus.brief.ghost", (args) => briefCommands.ghost(briefArgs(args)));
+  register("nimbus.brief.conflicts", (args) => briefCommands.conflicts(briefArgs(args)));
+  register("nimbus.brief.huddle", () => briefCommands.huddle());
+  register("nimbus.brief.janitor", () => briefCommands.janitor());
+  register("nimbus.brief.preflight", () => briefCommands.preflight());
+
   void connection.start();
 
   log.info(`Nimbus extension activated; ${ctx.subscriptions.length} disposable(s) registered`);
@@ -1236,6 +1517,18 @@ async function sendConsentResponse(
   await ipc.call("consent.respond", { requestId, decision });
 }
 
+// A view/item/context command receives the tree NODE, not command.arguments,
+// and its payload is untyped by design (SidebarItem is generic across views).
+// Coerced defensively here: anything else means the command was invoked from
+// the palette, so the run surface falls back to its own picker.
+function workflowTargetFrom(arg: unknown): WorkflowRunTarget | undefined {
+  if (typeof arg !== "object" || arg === null) return undefined;
+  const payload = (arg as { payload?: unknown }).payload;
+  if (typeof payload !== "object" || payload === null) return undefined;
+  const name = (payload as { workflowName?: unknown }).workflowName;
+  return typeof name === "string" && name.length > 0 ? { workflowName: name } : undefined;
+}
+
 function m_str(msg: Record<string, unknown>, key: string): string {
   const v = msg[key];
   return typeof v === "string" ? v : "";
@@ -1268,6 +1561,27 @@ export function createInlineHitlSurface(args: {
   };
 }
 
+// A virtual scheme resolves through ONE content provider, but each opener
+// instance holds its OWN document map — so two instances registering the same
+// scheme do not co-operate: one shadows the other, and every document the
+// shadowed opener stored resolves to "" and its tab opens SILENTLY EMPTY.
+// activate() builds two read-only openers (the shared one, and the pre-flight
+// preview's smaller-bounded one), which is exactly that collision — found in a
+// real window, where the workflow run report came up blank once any "Show full
+// text" had registered the preview's opener. Worse than blank was possible:
+// both maps key on a bare per-instance sequence number, so a collision could
+// serve one surface's text under another surface's tab.
+//
+// So an instance never assumes it is the only one: the first keeps the base
+// scheme (the common case, and the one users see), and each later instance
+// takes a suffixed one.
+const schemeInstances = new Map<string, number>();
+function uniqueScheme(base: string): string {
+  const n = (schemeInstances.get(base) ?? 0) + 1;
+  schemeInstances.set(base, n);
+  return n === 1 ? base : `${base}-${n}`;
+}
+
 // Opens read-only JSON in an editor tab via a custom-scheme content provider.
 // The provider is registered lazily on first use; each call gets a unique URI
 // so VS Code re-resolves the content. The `.json` path extension drives syntax
@@ -1281,12 +1595,20 @@ export function createReadonlyJsonOpener(
   // and 50 of them would sit in memory for the whole session.
   maxDocs = 50,
 ): (title: string, content: string) => Promise<void> {
-  const scheme = "nimbus-audit";
+  const scheme = uniqueScheme("nimbus-audit");
   const docs = new Map<string, string>();
   let seq = 0;
   let registered = false;
+  // Keyed on the sequence number, NOT the title. The title is decorative — it
+  // names the tab — and is not URI-safe: `Uri.parse` reads `?` as the start of
+  // the query and `#` as the fragment, so a title containing either comes back
+  // TRUNCATED in `uri.path`, the lookup misses, and the tab renders silently
+  // EMPTY. Three brief titles end in "?" ("Why is this here?"), which is how
+  // this surfaced — in a real window, because the test stub's Uri.parse does not
+  // split the query and so cannot reproduce it. The sequence number is always
+  // the first path segment and survives both delimiters.
   const provider: vscode.TextDocumentContentProvider = {
-    provideTextDocumentContent: (uri) => docs.get(uri.path) ?? "",
+    provideTextDocumentContent: (uri) => docs.get(uri.path.split("/")[1] ?? "") ?? "",
   };
   return async (title, content) => {
     if (!registered) {
@@ -1296,8 +1618,10 @@ export function createReadonlyJsonOpener(
       registered = true;
     }
     seq += 1;
+    // The title still rides in the URI so VS Code names the tab and infers the
+    // language from the `.md` suffix; only the lookup key is the sequence.
     const path = `/${seq}/${title}`;
-    docs.set(path, content);
+    docs.set(String(seq), content);
     while (docs.size > maxDocs) {
       const oldest = docs.keys().next().value;
       if (oldest === undefined) break;
@@ -1342,16 +1666,26 @@ function createUntitledOpener(): (opts: { fileName: string; content: string }) =
 // Both virtual URIs end in the source's basename, so VS Code infers the
 // language from the extension natively — no setTextDocumentLanguage call, and
 // no language-change events fired at other extensions.
-function createDiffOpener(
+export function createDiffOpener(
   ctx: ExtensionContextLike,
 ): (opts: { title: string; left: string; right: string; fileName: string }) => Promise<void> {
-  const scheme = "nimbus-diff";
+  // Only one of these exists today, but the collision above is a property of
+  // the pattern, not of that one call site.
+  const scheme = uniqueScheme("nimbus-diff");
   const MAX_DOCS = 20;
   const docs = new Map<string, string>();
   let seq = 0;
   let registered = false;
+  // Keyed on "<seq>/<side>", NOT the full path. The trailing basename is
+  // decorative — it drives syntax highlighting — and is not URI-safe: Uri.parse
+  // reads `?` as the query delimiter and `#` as the fragment, so a name
+  // carrying either comes back TRUNCATED in uri.path, the lookup misses, and
+  // the pane renders silently EMPTY. Two segments rather than one because this
+  // opener stores two documents per sequence. Same defect that emptied the
+  // read-only tab for the brief titles ending in "?" — see issue #83.
+  const key = (path: string): string => path.split("/").slice(1, 3).join("/");
   const provider: vscode.TextDocumentContentProvider = {
-    provideTextDocumentContent: (uri) => docs.get(uri.path) ?? "",
+    provideTextDocumentContent: (uri) => docs.get(key(uri.path)) ?? "",
   };
   return async ({ title, left, right, fileName }) => {
     if (!registered) {
@@ -1364,8 +1698,8 @@ function createDiffOpener(
     // The trailing basename is what drives syntax highlighting.
     const leftPath = `/${seq}/original/${fileName}`;
     const rightPath = `/${seq}/nimbus/${fileName}`;
-    docs.set(leftPath, left);
-    docs.set(rightPath, right);
+    docs.set(key(leftPath), left);
+    docs.set(key(rightPath), right);
     while (docs.size > MAX_DOCS) {
       const oldest = docs.keys().next().value;
       if (oldest === undefined) break;

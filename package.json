@@ -2,7 +2,7 @@
   "name": "nimbus-vscode",
   "displayName": "Nimbus — On-Call & Incident Agent",
   "description": "Private, local-first agent for on-call & platform engineers — /incident, /deploys, /owns, /blast grounded in your own index, with a signed, verifiable record of every action it takes off-device.",
-  "version": "0.12.1",
+  "version": "0.17.1",
   "publisher": "nimbus-agent",
   "license": "MIT",
   "private": false,
@@ -177,6 +177,24 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "nimbus.refreshWorkflows",
+        "title": "Refresh Workflows",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nimbus.runWorkflow",
+        "title": "Run Workflow",
+        "category": "Nimbus",
+        "icon": "$(play)"
+      },
+      {
+        "command": "nimbus.dryRunWorkflow",
+        "title": "Dry-Run Workflow",
+        "category": "Nimbus",
+        "icon": "$(eye)"
+      },
+      {
         "command": "nimbus.openEgressEntry",
         "title": "Open Egress Entry",
         "category": "Nimbus"
@@ -230,6 +248,51 @@
       {
         "command": "nimbus.generateDocstrings",
         "title": "Generate Docstrings",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.why",
+        "title": "Why is this here?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.ghost",
+        "title": "Who knew this code?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.conflicts",
+        "title": "Who else is touching this?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.huddle",
+        "title": "Team huddle",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.janitor",
+        "title": "Is this idle?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.brief.preflight",
+        "title": "Safe to deploy?",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.diagnosticExplain",
+        "title": "Explain this problem",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.diagnosticFix",
+        "title": "Suggest a fix",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.diagnosticPriorOccurrences",
+        "title": "Find prior occurrences",
         "category": "Nimbus"
       }
     ],
@@ -316,6 +379,30 @@
         }
       }
     ],
+    "codeActions": [
+      {
+        "languages": [
+          "*"
+        ],
+        "actions": [
+          {
+            "kind": "quickfix.nimbus.explain",
+            "title": "Explain this problem",
+            "description": "Ask Nimbus what this diagnostic means."
+          },
+          {
+            "kind": "quickfix.nimbus.fix",
+            "title": "Suggest a fix",
+            "description": "Ask Nimbus for a fix, shown as a diff you apply yourself."
+          },
+          {
+            "kind": "quickfix.nimbus.priorOccurrences",
+            "title": "Find prior occurrences",
+            "description": "Search the local Nimbus index for this error."
+          }
+        ]
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {
@@ -346,6 +433,10 @@
         {
           "id": "nimbus.sessionsView",
           "name": "Sessions"
+        },
+        {
+          "id": "nimbus.workflowsView",
+          "name": "Workflows"
         }
       ]
     },
@@ -374,10 +465,27 @@
         "view": "nimbus.sessionsView",
         "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)",
         "when": "!nimbus.connected"
+      },
+      {
+        "view": "nimbus.workflowsView",
+        "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)\nOnce connected, your saved workflows and their recent runs appear here.",
+        "when": "!nimbus.connected"
       }
     ],
     "menus": {
       "commandPalette": [
+        {
+          "command": "nimbus.brief.why",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "nimbus.brief.ghost",
+          "when": "editorIsOpen"
+        },
+        {
+          "command": "nimbus.brief.conflicts",
+          "when": "editorIsOpen"
+        },
         {
           "command": "nimbus.openAuditEntry",
           "when": "false"
@@ -409,6 +517,18 @@
         {
           "command": "nimbus.findRelatedFromIndex",
           "when": "false"
+        },
+        {
+          "command": "nimbus.diagnosticExplain",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.diagnosticFix",
+          "when": "false"
+        },
+        {
+          "command": "nimbus.diagnosticPriorOccurrences",
+          "when": "false"
         }
       ],
       "view/title": [
@@ -433,6 +553,11 @@
           "group": "navigation"
         },
         {
+          "command": "nimbus.refreshWorkflows",
+          "when": "view == nimbus.workflowsView",
+          "group": "navigation"
+        },
+        {
           "command": "nimbus.verifyEgress",
           "when": "view == nimbus.egressView",
           "group": "1_egress"
@@ -453,6 +578,16 @@
           "command": "nimbus.findRelatedFromIndex",
           "when": "view == nimbus.indexView && viewItem == nimbusIndexItem",
           "group": "navigation"
+        },
+        {
+          "command": "nimbus.runWorkflow",
+          "when": "view == nimbus.workflowsView && viewItem == nimbus.workflow",
+          "group": "inline"
+        },
+        {
+          "command": "nimbus.dryRunWorkflow",
+          "when": "view == nimbus.workflowsView && viewItem == nimbus.workflow",
+          "group": "nimbus@1"
         }
       ],
       "editor/context": [
@@ -485,6 +620,21 @@
           "command": "nimbus.generateDocstrings",
           "when": "editorTextFocus",
           "group": "nimbus@6"
+        },
+        {
+          "command": "nimbus.brief.why",
+          "when": "editorTextFocus",
+          "group": "nimbus@7"
+        },
+        {
+          "command": "nimbus.brief.ghost",
+          "when": "editorTextFocus",
+          "group": "nimbus@8"
+        },
+        {
+          "command": "nimbus.brief.conflicts",
+          "when": "editorTextFocus",
+          "group": "nimbus@9"
         }
       ],
       "scm/title": [
@@ -631,7 +781,7 @@
         "nimbus.quickAsk.presets": {
           "type": "array",
           "default": [],
-          "description": "Preset actions offered in a picker before the Quick Ask input box. Each item: { \"label\": string, \"prompt\": string, \"description\"?: string }. Empty uses the built-in defaults (Explain, Fix, Review, Docstring); a non-empty list replaces them.",
+          "description": "Preset actions offered in a picker before the Quick Ask input box. Each item: { \"label\": string, \"prompt\": string, \"description\"?: string }. Empty uses the built-in defaults (Explain, Fix, Review, Docstring, Write tests); a non-empty list replaces them.",
           "items": {
             "type": "object",
             "required": [
@@ -666,6 +816,21 @@
           "default": true,
           "description": "Show the egress ledger badge (row count + a ledger-live check) in the status bar while connected."
         },
+        "nimbus.briefs.showHoverBlame": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show blame, PR and ticket for the line under the cursor on hover, with a link into the full 'Why is this here?' brief. Reads local git and the local index only — no model is involved."
+        },
+        "nimbus.briefs.defaultNamespace": {
+          "type": "string",
+          "default": "",
+          "description": "Prefills the namespace prompt for the 'Safe to deploy?' brief. agents.preflight requires a namespace and Nimbus never guesses one — a wrong namespace returns a confident answer about the wrong thing, so this only prefills a prompt you still confirm."
+        },
+        "nimbus.diagnostics.showCodeActions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Offer Nimbus actions (explain, suggest a fix, find prior occurrences) on the lightbulb for errors and warnings."
+        },
         "nimbus.hitlAlwaysModal": {
           "type": "boolean",
           "default": false,
@@ -692,6 +857,7 @@
     "lint": "biome check .",
     "test": "bunx vitest run",
     "test:coverage": "bunx vitest run --coverage",
+    "test:ui": "node scripts/run-ui-tests.mjs",
     "check-bundle": "node scripts/check-bundle.mjs",
     "check-vsix-contents": "node scripts/check-vsix-contents.mjs",
     "check-settings-docs": "node scripts/check-settings-docs.mjs",
@@ -699,20 +865,25 @@
     "clean": "node scripts/clean.mjs"
   },
   "dependencies": {
-    "dompurify": "^3.4.8",
-    "marked": "^18.0.5"
+    "dompurify": "^3.4.13",
+    "marked": "^18.0.9"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.0",
-    "@nimbus-dev/client": "^0.14.0",
-    "@types/node": "^26.0.0",
+    "@biomejs/biome": "^2.5.7",
+    "@nimbus-dev/client": "^0.17.0",
+    "@types/chai": "5",
+    "@types/mocha": "10",
+    "@types/node": "^26.1.2",
     "@types/vscode": "^1.95.0",
-    "@vitest/coverage-v8": "^4.1.9",
+    "@vitest/coverage-v8": "^4.1.10",
     "@vscode/vsce": "^3.9.2",
+    "chai": "5",
     "esbuild": "^0.28.1",
-    "jsdom": "^29.1.1",
-    "ovsx": "^1.0.1",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.9"
+    "jsdom": "^30.0.1",
+    "mocha": "11",
+    "ovsx": "^1.1.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10",
+    "vscode-extension-tester": "8.23.0"
   }
 }

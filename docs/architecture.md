@@ -64,24 +64,25 @@ CI runs it on every push/PR. If a dependency ever leaked out as a runtime
 ### 3. The `vscode` seam
 
 The `vscode` API is touched **only** through [`src/vscode-shim.ts`](../src/vscode-shim.ts).
-Everything else depends on narrow interfaces (e.g. `WorkspaceApi` in
-[`src/settings.ts`](../src/settings.ts)) rather than the global `vscode` module.
-That keeps the logic unit-testable: tests alias `vscode` to a stub
-(`test/unit/vscode-stub.ts`, wired in `vitest.config.ts`) and exercise the real
-code paths without a running editor. Keep `src/` and `test/` self-contained.
+Everything else depends on the narrow interfaces it declares (e.g. `WorkspaceApi`,
+consumed by [`src/settings.ts`](../src/settings.ts)) rather than the global
+`vscode` module. That keeps the logic unit-testable: tests alias `vscode` to a
+stub (`test/unit/vscode-stub.ts`, wired in `vitest.config.ts`) and exercise the
+real code paths without a running editor. Keep `src/` and `test/` self-contained.
 
 ## Module map
 
 | Area | Responsibility |
 | --- | --- |
 | `src/extension.ts` | Activation entry: registers commands, wires the connection manager, status bar, and HITL router. |
-| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, …) stay `vscode`-free. |
+| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free. Workflows is the one view with lazily-loaded children (`createDataView`'s optional `loadChildren`), because eager children would cost one `workflow.listRuns` round trip per saved workflow on every open. |
+| `src/workflows/` | The run surface: pure `run.ts` (pre-flight manifest, outcome wording, run report) plus `commands.ts`, which holds the injected seams. The run is gated under the `"workflow"` kind; `workflowCancel` is deliberately **not** gated, since it stops egress rather than causing any. |
 | `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). |
 | `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. |
 | `src/lm-tools/` | The `nimbus_search` / `nimbus_ask` Language Model tools (`contributes.languageModelTools`): pure `lm-tools.ts` handlers + the `real-lm-tools.ts` vscode-glue adapter. |
 | `src/search.ts` | Pure parse/rank helpers behind Search and Find related (`searchRanked` results → Quick Pick items). |
 | `src/quick-ask.ts` | Pure quick-ask helpers: context clamping, path redaction, prompt building, reply extraction. Shared by quick-ask, ask-about-selection and the chat participant. |
-| `src/quick-ask-presets.ts` | Resolves the configurable quick-ask preset actions (Explain / Fix / Review / Docstring). |
+| `src/quick-ask-presets.ts` | Resolves the configurable quick-ask preset actions (Explain / Fix / Review / Docstring / Write tests), plus the infra-file ops presets (Blast radius / Ownership / Recent changes) prepended to them. |
 | `src/connection/` | Connection manager, the troubleshooter, and optional `nimbus start` auto-start. |
 | `src/hitl/` | Human-in-the-loop consent: router + modal / toast / details surfaces. |
 | `src/status-bar/` | Connector-health status bar item and the egress badge. |
@@ -89,6 +90,8 @@ code paths without a running editor. Keep `src/` and `test/` self-contained.
 | `src/settings.ts` | Typed accessors over `nimbus.*` configuration. |
 | `src/scm/` | Dev-workflow trio (Generate Commit Message, Review Changes, Generate Tests, Generate Docstrings): pure diff/commit-message/review/generate modules behind a `GitApiLike` seam, plus `commands.ts` and `real-git.ts` (see below). |
 | `src/egress/` | The pre-flight gate: every agent-bound call routes through `gated-client.ts` (see below). Pure `leak-check.ts` / `preflight.ts`, the `gate.ts` decision table, and the `skip-store.ts` memento wrapper. |
+| `src/diagnostics/` | The lightbulb actions on an error or warning diagnostic. Pure core — `normalize.ts` (diagnostic message → index query: prepend the code, strip paths and positions, apply a per-`source` keep/drop policy to quoted tokens, reject anything too short to search on), `context.ts` (diagnostic + document → the payload, ±20 lines clamped by `clampContext`), `prompts.ts`, `actions.ts` (which actions to offer, and the single diagnostic they are offered for — one per lightbulb, by a total order, so several squiggles on a line cannot multiply the entries) — plus `commands.ts` over injected deps and `real-provider.ts`, the only file here touching `vscode`. Every action carries a `command` and no `edit`, and none sets `isPreferred`: selecting one must show a suggestion, and *Auto Fix* must never fire a model call. Explain and fix route through `gated-client.ts` under the `"diagnostic"` kind; prior-occurrences is a `searchRanked` read that reaches no model and is deliberately ungated. The fix reply is spliced back over **whole lines** — `context.ts` expands the diagnostic's range to line boundaries because `prompts.ts` asks the model for whole lines, and the two granularities must agree or a sub-token range (which is what tsserver and ESLint actually report) leaves the rest of the line behind. |
+| `src/briefs/` | The built-in agent briefs (`agentsWhy` / `agentsGhost` / `agentsConflicts` / `agentsHuddle` / `agentsJanitor` / `agentsPreflight`). Pure core — `catalog.ts` (the briefs as data), `render.ts` (brief → markdown, shared with the chat participant), `params.ts` (editor context → params, and the one place guaranteeing no **editor-derived** absolute path becomes a parameter — the prompted briefs pass user-typed refs verbatim and rely on the gate's leak warning), `namespace-store.ts` (per-workspace-folder memory of the last preflight namespace) — plus `commands.ts`. Every call routes through `gated-client.ts` under the `"brief"` egress kind, which prompts and is skippable per workspace. The chat participant's three ops briefs (`agentsCatchup` / `agentsExpert` / `agentsImpact`) route through the same seam but under the `"participant"` kind, which records rather than prompts — a modal must not interrupt a chat turn. Also `peek.ts` / `peek-hover.ts` — the `whyPeek` hover: a pure renderer plus the settle/supersede controller — behind `real-hover.ts`, which alongside `commands.ts` is the only `vscode`-touching code here. `agentsWhyPeek` is deliberately **not** gated: it takes no `timeoutMs`, returns synchronously, and carries no `brief` string or `AgentBriefBase`, so it never reaches a model. `test/unit/egress-choke-point.test.ts` discovers every `agents*` call shape in `src/` and asserts this is the only such exemption. |
 
 ## The `src/egress/` choke point
 
@@ -96,28 +99,46 @@ Before anything reaches the agent, it passes through one seam that can render
 exactly what would leave — paths already redacted — and refuse to send it. The
 gate is the point; the transparency is the payoff.
 
-Five outbound paths route through it. Only the two where the **extension**
-assembles context prompt by default:
+**Eight** outbound paths route through it — one per `EgressKind` in
+`src/egress/preflight.ts`. The **five where the extension assembles the context**
+prompt by default; the three where the payload is text the user just typed, or is
+confirmed by someone else's UI, route and record without a modal. The prompting
+set is exactly `skippableKind()` in `src/egress/gate.ts`, which is the
+authoritative list — this table is a description of it, not a second source of
+truth:
 
-| Surface | Call | Gate behaviour |
-| --- | --- | --- |
-| Quick Ask | `agentInvoke` | **prompts** — extension picks the context (a whole file, when there is no selection) |
-| SCM trio (4 commands) | `agentInvoke` | **prompts** — extension picks the context (diffs of up to 100 files) |
-| Ask panel | `askStream` | routes and records; no prompt — the user typed it |
-| `@nimbus` participant | `askStream` | routes and records; no prompt — the user typed it |
-| LM tools (`nimbus_ask`) | `agentInvoke` | native `prepareInvocation` card, rendered inline by the *calling* chat |
+| Surface | Kind | Call | Gate behaviour |
+| --- | --- | --- | --- |
+| Quick Ask | `quickAsk` | `agentInvoke` | **prompts** — extension picks the context (a whole file, when there is no selection) |
+| SCM trio (4 commands) | `scm` | `agentInvoke` | **prompts** — extension picks the context (diffs of up to 100 files) |
+| Built-in briefs (6 commands) | `brief` | `agents*` | **prompts** — extension derives the parameters from the editor |
+| Workflow run / dry run | `workflow` | `workflowRunStream` | **prompts** — and its preview is a **manifest**, not the literal bytes: the extension sends a workflow name and the Gateway expands the saved steps, so `buildRunManifest` states that in its omissions rather than implying byte-exactness |
+| Diagnostic actions (explain, fix) | `diagnostic` | `agentInvoke` | **prompts** — extension assembles the snippet around the squiggle |
+| Ask panel | `ask` | `askStream` | routes and records; no prompt — the user typed it |
+| `@nimbus` participant (incl. its 3 ops briefs) | `participant` | `askStream`, `agents*` | routes and records; no prompt — a modal must not interrupt a chat turn, and a slash-command argument is text the user just typed |
+| LM tools (`nimbus_ask`) | `lmTool` | `agentInvoke` | native `prepareInvocation` card, rendered inline by the *calling* chat |
+
+Each prompting kind carries its own per-workspace *Always send here* skip
+(`SKIP_LABEL` in `gate.ts`); the recording kinds have none, because they never
+show a modal to skip. One agent-bound call is deliberately **outside** this
+table: `agentsWhyPeek`, the blame hover, which reaches no model —
+`test/unit/egress-choke-point.test.ts` asserts it is the only such exemption.
 
 Two mechanisms keep it a guardrail rather than a convention:
 
-1. **Type-level.** `ScmClientLike.agentInvoke` and `LmToolsClientLike.agentInvoke`
-   take a third required `EgressMeta` argument, so a raw `NimbusClient` does not
-   satisfy them structurally — the ungated client cannot be wired in by
-   accident. Each surface gets a wrapper with its `EgressKind` fixed at wiring
-   time, so a fifth SCM command inherits the gate by construction.
+1. **By construction.** Each surface gets a wrapper with its `EgressKind` fixed
+   at wiring time, so a fifth SCM command inherits the gate rather than
+   re-deriving it. The consumer shapes (`ScmClientLike.agentInvoke`,
+   `LmToolsClientLike.agentInvoke`, `DiagnosticClientLike.agentInvoke`) take a
+   third required `EgressMeta` argument, which documents that intent and makes
+   an ungated wiring visible on sight in review. It is not, however, a
+   *type-level* guarantee, and was once commented here as if it were: TypeScript
+   assigns a function with fewer parameters to one with more, so a raw
+   `NimbusClient` satisfies those shapes unchanged. The enforcement is (2).
 2. **CI-level.** `test/unit/egress-choke-point.test.ts` asserts that
    `extension.ts` — the one place holding a real client — never touches
    `.agentInvoke` / `.askStream`, and that those call shapes appear only in
-   `gated-client.ts` plus four allowlisted consumer modules, each of which holds
+   `gated-client.ts` plus five allowlisted consumer modules, each of which holds
    an injected seam rather than a real client.
 
 Cancelling throws `EgressCancelled`; every catch treats it as a normal outcome
@@ -183,7 +204,10 @@ let other chat extensions and agents call Nimbus as a tool; a
 Message` (staged diff → SCM input box), `Review Changes` (all local changes →
 findings tab), and `Generate Tests` / `Generate Docstrings` (selection → test
 buffer / docstring diff), output always a suggestion; a Nimbus sidebar with
-Audit, Sessions, Index, Agents, and an **Egress** ledger viewer (with
+Audit, Sessions, Index, Agents, a **Workflows** view (saved workflows, each
+one's recent runs loaded on expand) with **Run** / **Dry-Run** commands that
+stream per-step output and can be cancelled — at the next step boundary, so the
+in-flight step always finishes — and an **Egress** ledger viewer (with
 Verify-ledger and Prove-window commands) plus an **egress status-bar badge**; a
 **connection troubleshooter** (state-aware modal, no RPC); a **Get Started
 walkthrough** (first-run onboarding via the VS Code Walkthroughs API, no RPC);
@@ -195,9 +219,13 @@ the IPC socket or spawn a process).
 
 The **share** surface is **not** implemented — it is blocked upstream, not
 deferred by choice: no published `@nimbus-dev/client` exposes those RPCs (checked
-through `0.14.0`, the pinned version), and the IPC-only non-negotiable forbids
-reaching past the typed client. Workflow and connector surfaces are no longer
-blocked — `0.14.0` exposes `workflowList`/`workflowSave`/`workflowDelete`/
-`workflowListRuns`/`workflowRun`/`workflowRunStream`, the full `connector*`
-suite, and `subscribeConnectorConfigChanged` — they are simply unbuilt. See
-[ROADMAP.md](./ROADMAP.md).
+through the pinned client — see `package.json`), and the IPC-only non-negotiable
+forbids reaching past the typed client.
+
+The **connector** surface is no longer blocked either — the pinned client exposes
+the full `connector*` suite and `subscribeConnectorConfigChanged` — it is simply
+unbuilt. The **workflow** family, by contrast, is built for monitor + run +
+cancel (`src/workflows/`, above); only authoring (`workflowSave` /
+`workflowDelete`) is outstanding, deferred on purpose because `steps_json` is
+opaque at save time, so a malformed DAG saves cleanly and fails only at run time.
+See [ROADMAP.md](./ROADMAP.md).

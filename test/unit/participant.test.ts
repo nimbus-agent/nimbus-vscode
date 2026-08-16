@@ -9,6 +9,7 @@ import type {
   ParticipantDeps,
   ParticipantRequest,
 } from "../../src/chat-participant/participant-types.js";
+import type { ParticipantBriefs } from "../../src/egress/gated-client.js";
 
 // A stream handle that yields a fixed list of events, then completes.
 function streamOf(events: StreamEvent[], streamId = "s1"): AskStreamHandle {
@@ -58,18 +59,26 @@ const noCancel: CancellationLike = {
   onCancelled: () => ({ dispose: () => undefined }),
 };
 
-function fakeClient(over: Partial<ParticipantClientLike> = {}): ParticipantClientLike {
+function fakeClient(
+  over: Partial<Omit<ParticipantClientLike, "briefs">> & {
+    briefs?: Partial<ParticipantBriefs>;
+  } = {},
+): ParticipantClientLike {
+  const { briefs, ...rest } = over;
   return {
     askStream: () => streamOf([{ type: "done", reply: "hi", sessionId: "sess" }]),
     searchRanked: async () => [],
-    agentsExpert: async () => {
-      throw new Error("agentsExpert not faked");
-    },
-    agentsImpact: async () => {
-      throw new Error("agentsImpact not faked");
-    },
-    agentsCatchup: async () => {
-      throw new Error("agentsCatchup not faked");
+    briefs: {
+      expert: async () => {
+        throw new Error("expert not faked");
+      },
+      impact: async () => {
+        throw new Error("impact not faked");
+      },
+      catchup: async () => {
+        throw new Error("catchup not faked");
+      },
+      ...briefs,
     },
     metricsDora: async () => {
       throw new Error("metricsDora not faked");
@@ -77,7 +86,7 @@ function fakeClient(over: Partial<ParticipantClientLike> = {}): ParticipantClien
     egressHead: async () => {
       throw new Error("egressHead not faked");
     },
-    ...over,
+    ...rest,
   };
 }
 
@@ -302,7 +311,7 @@ describe("runParticipantTurn", () => {
   test("a slash command routes to the ops handler, never askStream — bare /incident included", async () => {
     const f = fakeSink();
     const askStream = vi.fn();
-    const agentsCatchup = vi.fn(async () => ({
+    const catchup = vi.fn(async () => ({
       agentVersion: 1 as const,
       generatedAt: 1,
       latencyMs: 1,
@@ -320,11 +329,11 @@ describe("runParticipantTurn", () => {
     }));
     await runParticipantTurn(
       req({ prompt: "", command: "incident" }),
-      deps({ client: () => fakeClient({ askStream, agentsCatchup }) }),
+      deps({ client: () => fakeClient({ askStream, briefs: { catchup } }) }),
       f.sink,
       noCancel,
     );
-    expect(agentsCatchup).toHaveBeenCalled();
+    expect(catchup).toHaveBeenCalled();
     expect(askStream).not.toHaveBeenCalled();
   });
 
@@ -457,7 +466,7 @@ describe("egress delta footer", () => {
 
   test("ops commands get the footer too", async () => {
     const f = fakeSink();
-    const agentsCatchup = vi.fn(async () => ({
+    const catchup = vi.fn(async () => ({
       agentVersion: 1 as const,
       generatedAt: 1,
       latencyMs: 1,
@@ -475,7 +484,7 @@ describe("egress delta footer", () => {
     }));
     await runParticipantTurn(
       req({ prompt: "", command: "incident" }),
-      deps({ client: () => fakeClient({ agentsCatchup, egressHead: headSeq([1, 2]) }) }),
+      deps({ client: () => fakeClient({ briefs: { catchup }, egressHead: headSeq([1, 2]) }) }),
       f.sink,
       noCancel,
     );

@@ -9,7 +9,19 @@ export const window = {
   showWarningMessage: async () => undefined,
   showInputBox: async () => undefined,
   showQuickPick: async () => undefined,
-  withProgress: async (_opts: unknown, task: () => Promise<unknown>) => task(),
+  // Real VS Code invokes the task as `task(progress, token)` — progress FIRST.
+  // A stub that called `task()` (or `task(token)`) could not expose an
+  // argument-order bug even in principle, and one shipped: the workflow run
+  // surface read `token.onCancellationRequested` off the Progress object.
+  withProgress: async (
+    _opts: unknown,
+    task: (progress: unknown, token: unknown) => Promise<unknown>,
+  ) =>
+    task(
+      { report: (_value: { message?: string; increment?: number }) => undefined },
+      // A token that never fires: nothing in these tests cancels a send.
+      { onCancellationRequested: () => ({ dispose: () => undefined }) },
+    ),
   createQuickPick: () => {
     const sub = () => ({ dispose: () => undefined });
     return {
@@ -83,6 +95,9 @@ export const workspace = {
   openTextDocument: async (uri: unknown) => ({ uri }),
   isTrusted: true,
   workspaceFolders: undefined as Array<{ uri: { fsPath: string } }> | undefined,
+  // Every open document, focused or not. Assignable, so a test can seed it and
+  // drive a path-based document lookup.
+  textDocuments: [] as Array<{ uri: { fsPath: string }; getText(): string }>,
   fs: {
     writeFile: async (_uri: unknown, _content: Uint8Array) => undefined,
   },
@@ -115,8 +130,86 @@ export class ThemeColor {
 export class ThemeIcon {
   constructor(public id: string) {}
 }
+
+// Hover support. `isTrusted` is a plain field here, but it is load-bearing in
+// the real API: without it the `command:` link in a peek hover is inert.
+export class MarkdownString {
+  isTrusted = false;
+  constructor(public value: string = "") {}
+}
+
+export class Hover {
+  constructor(public contents: unknown) {}
+}
+
+// Code-action support. `append` keeps the real API's empty-value guard, so
+// `Empty.append("quickfix.nimbus.explain")` yields that string rather than a
+// leading-dot variant.
+export class CodeActionKind {
+  static readonly Empty = new CodeActionKind("");
+  static readonly QuickFix = new CodeActionKind("quickfix");
+  constructor(public readonly value: string) {}
+  append(parts: string): CodeActionKind {
+    return new CodeActionKind(this.value ? `${this.value}.${parts}` : parts);
+  }
+}
+
+export class CodeAction {
+  command?: { command: string; title: string; arguments?: unknown[] };
+  diagnostics?: unknown[];
+  isPreferred?: boolean;
+  // Declared, though real-provider.ts must never set it: a code action carrying
+  // an `edit` is APPLIED the instant the user picks it. A test can only assert
+  // it stayed undefined if the field exists to be read.
+  edit?: unknown;
+  constructor(
+    public title: string,
+    public kind?: CodeActionKind,
+  ) {}
+}
+
+export interface CodeActionsProviderLike {
+  provideCodeActions(
+    document: unknown,
+    range: unknown,
+    context: { diagnostics: readonly unknown[] },
+  ): CodeAction[] | undefined;
+}
+
+export const languages = {
+  registerHoverProvider: (_selector: unknown, _provider: unknown) => ({
+    dispose: () => undefined,
+  }),
+  // Captured, not discarded, so a test can DRIVE the registered provider.
+  // real-provider.ts guarantees every action carries a command and no `edit`,
+  // and never sets `isPreferred` — both guarantees are the ABSENCE of an
+  // assignment in glue, which nothing could observe while the provider went
+  // straight in the bin. Read it as `languages.lastCodeActionsProvider`;
+  // disposing does not clear it, so registration order is what decides.
+  lastCodeActionsProvider: undefined as CodeActionsProviderLike | undefined,
+  registerCodeActionsProvider: (_selector: unknown, provider: unknown, _metadata?: unknown) => {
+    languages.lastCodeActionsProvider = provider as CodeActionsProviderLike;
+    return { dispose: () => undefined };
+  },
+};
 export const Uri = {
-  parse: (s: string) => ({ toString: () => s, scheme: s.split(":")[0] ?? "" }),
+  // Splits the query and fragment, as the real vscode.Uri.parse does. This
+  // matters: a virtual-document path carrying "?" or "#" comes back TRUNCATED,
+  // and a content provider that keys its map on the untruncated path silently
+  // serves "". That shipped once — the brief titles end in "?", so their
+  // read-only tabs opened empty — precisely because this stub used to hand back
+  // the whole string as `path` and no unit test could reproduce it.
+  parse: (s: string) => {
+    const scheme = s.split(":")[0] ?? "";
+    const rest = s.slice(scheme.length + 1);
+    const hash = rest.indexOf("#");
+    const withoutFragment = hash >= 0 ? rest.slice(0, hash) : rest;
+    const fragment = hash >= 0 ? rest.slice(hash + 1) : "";
+    const q = withoutFragment.indexOf("?");
+    const path = q >= 0 ? withoutFragment.slice(0, q) : withoutFragment;
+    const query = q >= 0 ? withoutFragment.slice(q + 1) : "";
+    return { toString: () => s, scheme, path, query, fragment };
+  },
   file: (p: string) => ({ toString: () => p, fsPath: p, scheme: "file" }),
   joinPath: (base: { toString(): string }, ...segments: string[]) => ({
     toString: () => [base.toString(), ...segments].join("/"),

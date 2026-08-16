@@ -71,7 +71,11 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
   `description` (shown as picker detail). Picking one pre-fills the input box
   with its `prompt`, editable before you send; a **Custom question…** row keeps
   the free-form flow. Empty shows the built-in defaults (**Explain**, **Fix**,
-  **Review**, **Docstring**); a non-empty list **replaces** them.
+  **Review**, **Docstring**, **Write tests**); a non-empty list **replaces** them.
+- Separately, on an infrastructure file the extension prepends three **ops
+  presets** — **Blast radius**, **Ownership**, **Recent changes** — regardless of
+  this setting. They are not part of the replaceable list and cannot be
+  configured away here.
 - Replace semantics — to add one preset while keeping the defaults, start from
   this block:
 
@@ -80,7 +84,8 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
     { "label": "Explain", "prompt": "Explain what this code does, step by step." },
     { "label": "Fix", "prompt": "Identify and fix any bugs or issues in this code. Show the corrected code and explain the changes." },
     { "label": "Review", "prompt": "Review this code for correctness, clarity, and potential improvements." },
-    { "label": "Docstring", "prompt": "Write a docstring / doc comment for this code." }
+    { "label": "Docstring", "prompt": "Write a docstring / doc comment for this code." },
+    { "label": "Write tests", "prompt": "Write focused unit tests for this code, following the project's existing test framework and conventions." }
   ]
   ```
 
@@ -105,6 +110,18 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
 ### `nimbus.egress.showStatusBarBadge`
 
 `boolean` (default `true`). Shows a second status-bar item while connected: the egress ledger row count plus a `$(check)` that means *the ledger head was read successfully* — not a cryptographic verification. Click it to open the Egress view; run **Verify Egress Ledger** for the offline chain check. Set to `false` to hide the badge. Poll cadence follows [`nimbus.statusBarPollMs`](#nimbusstatusbarpollms).
+
+### `nimbus.briefs.showHoverBlame`
+
+`boolean` (default `true`). Hovering a line shows who last changed it, when, the commit subject, and any linked PR or ticket — with a **Why? →** link that opens the full `Why is this here?` brief for that exact line. Backed by `agents.whyPeek`, which is a synchronous git-and-index lookup: it carries no model call, so it is not routed through the pre-flight egress gate. It does fire one IPC request per mouse-rest (after a 150 ms settle, one in flight per file); set to `false` to turn it off. Requires the repo root to be indexed — run `nimbus init` — or the hover finds nothing and stays hidden.
+
+### `nimbus.briefs.defaultNamespace`
+
+`string` (default `""`). Prefills the namespace prompt for **Safe to deploy?** (`agents.preflight`), which requires a namespace the extension has no way to derive. It is only a prefill: the prompt still appears and you still confirm it. Nimbus deliberately does not infer the namespace from the branch name or `package.json` — a wrong namespace does not error, it returns a confident `preflight` answer computed for something you never asked about. A namespace you have already typed in this workspace folder takes precedence over this setting.
+
+### `nimbus.diagnostics.showCodeActions`
+
+`boolean` (default `true`). Puts up to three Nimbus actions on the lightbulb for an error or a warning: **Explain this problem**, **Suggest a fix** (shown as a diff you apply yourself — Nimbus never edits your code), and **Find prior occurrences** (a search of the local index for the same error, which reaches no model — offered only when the message normalizes to enough of a query to be worth searching, so some diagnostics show two entries rather than three). `Information` and `Hint` diagnostics are never offered. Where a line carries several diagnostics, exactly one is chosen — highest severity first — so the lightbulb gains at most three entries, never three per diagnostic. The two model-bound actions route through the pre-flight egress gate; all three need a connected Gateway. Set to `false` to turn the lightbulb entries off.
 
 ### `nimbus.hitlAlwaysModal`
 
