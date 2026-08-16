@@ -22,7 +22,11 @@ interface RawRepository {
   inputBox: { value: string };
   // Both groups are optional: which one holds untracked entries depends on the
   // user's `git.untrackedChanges` setting — see untracked.ts.
-  state: { untrackedChanges?: RawChange[]; workingTreeChanges?: RawChange[] };
+  state: {
+    HEAD?: { name?: string };
+    untrackedChanges?: RawChange[];
+    workingTreeChanges?: RawChange[];
+  };
   diffIndexWithHEAD(): Promise<RawChange[]>;
   diffIndexWithHEAD(path: string): Promise<string>;
   diffWithHEAD(): Promise<RawChange[]>;
@@ -67,6 +71,7 @@ function adaptRepository(raw: RawRepository): GitRepositoryLike {
     },
     log: async (maxEntries) => (await raw.log({ maxEntries })).map((c) => c.message),
     inputBox: raw.inputBox,
+    branch: () => raw.state.HEAD?.name,
   };
 }
 

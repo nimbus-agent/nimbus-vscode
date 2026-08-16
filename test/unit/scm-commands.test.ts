@@ -42,6 +42,7 @@ function fakeRepo(opts: FakeRepoOpts = {}): GitRepositoryLike {
     untrackedPaths: async () => opts.untracked ?? [],
     log: async () => opts.log ?? ["feat: earlier change"],
     inputBox: { value: opts.inputBoxValue ?? "" },
+    branch: () => "main",
   };
 }
 
