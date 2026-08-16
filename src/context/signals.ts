@@ -1,5 +1,6 @@
 import type { RankedSearchItem, WhyPeek } from "@nimbus-dev/client";
 
+import { whyParams } from "../briefs/params.js";
 import { peekFields } from "../briefs/peek.js";
 import { errMsg } from "../logging.js";
 import type { ContextSnapshot } from "./snapshot.js";
@@ -128,7 +129,13 @@ export async function blameSection(
   const client = deps.client();
   if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY };
   try {
-    const peek = await client.agentsWhyPeek({ ref: snapshot.path, line: snapshot.line });
+    // Through whyParams — NOT the raw snapshot line. snapshot.line is
+    // zero-based (VS Code's convention) and this parameter is one-based,
+    // verified against a live Gateway; see toOneBased in ../briefs/params.ts.
+    // Passing the snapshot value straight through describes the line ABOVE the
+    // cursor, and would put this section at odds with both the hover and the
+    // panel's own offers.
+    const peek = await client.agentsWhyPeek(whyParams({ ref: snapshot.path, line: snapshot.line }));
     const fields = peekFields(peek, deps.now());
     if (fields === undefined) {
       return {

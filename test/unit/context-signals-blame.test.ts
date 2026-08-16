@@ -51,7 +51,7 @@ describe("blameSection", () => {
     expect(JSON.stringify(section)).not.toContain("ada@example.test");
   });
 
-  test("asks the Gateway about the cursor line, by repo-relative ref", async () => {
+  test("asks the Gateway about the cursor line one-based, by repo-relative ref", async () => {
     const seen: Array<{ ref: string; line?: number }> = [];
     const client: ContextClientLike = {
       agentsWhyPeek: async (p) => {
@@ -61,7 +61,10 @@ describe("blameSection", () => {
       searchRanked: async () => [],
     };
     await blameSection(buildSnapshot({ generation: 3, editor }), deps(client));
-    expect(seen).toEqual([{ ref: "src/a.ts", line: 41 }]);
+    // 42, not 41: the editor's cursor line is zero-based and the Gateway
+    // parameter is one-based (whyParams/toOneBased). Asserting 41 here would
+    // pin the panel to the line ABOVE the cursor.
+    expect(seen).toEqual([{ ref: "src/a.ts", line: 42 }]);
   });
 
   test("says so when the repo is not indexed yet, rather than showing an empty box", async () => {
