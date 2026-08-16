@@ -32,6 +32,14 @@ function offerFor(spec: BriefSpec, snapshot: ContextSnapshot): Offer | undefined
       // Prompted briefs ask for a resource ref or a ref plus namespace, neither
       // of which is an editor path. Pre-filling the branch is a PR 3 concern.
       return base;
+    default: {
+      // A new BriefContext member fails the build here rather than silently
+      // dropping that brief out of the panel: this repo has no
+      // noImplicitReturns, and the return type already admits undefined, so
+      // without this the omission would compile clean.
+      const exhaustive: never = spec.context;
+      return exhaustive;
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import { BRIEF_CATALOG } from "../briefs/catalog.js";
+import { BRIEF_CATALOG, needsEditor } from "../briefs/catalog.js";
 import type { Offer } from "./offers.js";
 import type { SignalSection } from "./signals.js";
 
@@ -31,11 +31,15 @@ export function allowedCommandIds(): ReadonlySet<string> {
 
 // Briefs whose command signature accepts one optional EditorTarget. Every other
 // allowlisted command takes none, so anything it is handed is refused.
-const TAKES_EDITOR_TARGET = new Set([
-  "nimbus.brief.why",
-  "nimbus.brief.ghost",
-  "nimbus.brief.conflicts",
-]);
+//
+// Derived through the catalog's own needsEditor — the canonical answer to "does
+// this brief take an EditorTarget". A hand-written list of ids would drift the
+// moment a brief with `context: "file"` joined the catalog: offers.ts would
+// render a pre-filled button whose message this validator then rejects, so the
+// button would log a warning and do nothing.
+const TAKES_EDITOR_TARGET: ReadonlySet<string> = new Set(
+  BRIEF_CATALOG.filter((spec) => needsEditor(spec)).map((spec) => spec.command),
+);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { BRIEF_CATALOG } from "../../src/briefs/catalog.js";
+import { BRIEF_CATALOG, needsEditor } from "../../src/briefs/catalog.js";
 import { offersFor } from "../../src/context/offers.js";
 import { buildSnapshot } from "../../src/context/snapshot.js";
 
@@ -36,6 +36,16 @@ describe("offersFor", () => {
   test("leaves the prompted briefs without a target — they ask for their own input", () => {
     const janitor = offersFor(withFile).find((o) => o.briefId === "janitor");
     expect(janitor?.target).toBeUndefined();
+  });
+
+  // The other half of protocol.ts's derived allowlist: a target is attached for
+  // exactly the briefs needsEditor names, so the panel never posts an argument
+  // the host validator refuses.
+  test("attaches a target for exactly the briefs needsEditor names", () => {
+    const withTarget = offersFor(withFile)
+      .filter((o) => o.target !== undefined)
+      .map((o) => o.command);
+    expect(withTarget).toEqual(BRIEF_CATALOG.filter((s) => needsEditor(s)).map((s) => s.command));
   });
 
   test("never invents a command outside the catalog", () => {
