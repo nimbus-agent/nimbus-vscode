@@ -14,6 +14,7 @@ export type ExtensionToContextView =
       offers: readonly Offer[];
       isDirty: boolean;
     }
+  | { type: "section"; generation: number; section: SignalSection }
   | { type: "paused"; reason: "hidden" | "disabled" };
 
 export type ContextViewToExtension =
