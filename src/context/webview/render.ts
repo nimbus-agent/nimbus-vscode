@@ -7,6 +7,13 @@ import type { SignalSection } from "../signals.js";
 // render module on purpose: that module pulls in marked and DOMPurify, ~20 KB
 // of markdown machinery this panel has no use for, and both bundles ship in the
 // .vsix.
+//
+// No icons are rendered. SignalRow.iconId and Offer.iconId still name a real
+// codicon — the sidebar tree views draw the same ids as ThemeIcons — but a
+// webview has no codicon font unless the extension ships one, and this one does
+// not. Emitting `<span class="codicon codicon-…">` here produced an empty inline
+// element and a stray flex gap before every label. The ids stay in the data
+// model for whichever PR ships the font.
 
 export function escapeHtml(text: string): string {
   return text
@@ -17,11 +24,9 @@ export function escapeHtml(text: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function renderRow(label: string, detail: string | undefined, iconId: string | undefined): string {
-  const icon =
-    iconId === undefined ? "" : `<span class="codicon codicon-${escapeHtml(iconId)}"></span>`;
+function renderRow(label: string, detail: string | undefined): string {
   const sub = detail === undefined ? "" : `<span class="detail">${escapeHtml(detail)}</span>`;
-  return `<li class="row">${icon}<span class="label">${escapeHtml(label)}</span>${sub}</li>`;
+  return `<li class="row"><span class="label">${escapeHtml(label)}</span>${sub}</li>`;
 }
 
 export function renderSections(sections: readonly SignalSection[]): string {
@@ -30,9 +35,7 @@ export function renderSections(sections: readonly SignalSection[]): string {
       const body =
         section.rows.length === 0
           ? `<p class="empty">${escapeHtml(section.empty ?? "Nothing to show.")}</p>`
-          : `<ul class="rows">${section.rows
-              .map((r) => renderRow(r.label, r.detail, r.iconId))
-              .join("")}</ul>`;
+          : `<ul class="rows">${section.rows.map((r) => renderRow(r.label, r.detail)).join("")}</ul>`;
       return `<section class="signal" data-signal="${escapeHtml(section.id)}"><h2>${escapeHtml(
         section.title,
       )}</h2>${body}</section>`;
@@ -52,21 +55,23 @@ export function renderOffers(offers: readonly Offer[]): string {
         offer.target === undefined
           ? ""
           : ` data-target="${escapeHtml(JSON.stringify(offer.target))}"`;
-      return `<button class="offer" data-command="${escapeHtml(offer.command)}"${target}><span class="codicon codicon-${escapeHtml(
-        offer.iconId,
-      )}"></span>${escapeHtml(offer.label)}</button>`;
+      return `<button class="offer" data-command="${escapeHtml(offer.command)}"${target}>${escapeHtml(offer.label)}</button>`;
     })
     .join("");
   return `<section class="offers"><h2>Ask about this</h2>${buttons}</section>`;
 }
 
-export function renderPanel(input: {
+/**
+ * The informational half of the panel: the unsaved-edits banner and the signal
+ * sections. Rendered separately from the offers because the two go into
+ * different mounts — see main.ts, and the shell in real-context-view.ts.
+ */
+export function renderSignals(input: {
   sections: readonly SignalSection[];
-  offers: readonly Offer[];
   isDirty: boolean;
 }): string {
   const dirty = input.isDirty
     ? `<p class="dirty">Unsaved edits — history may not line up with what is on screen.</p>`
     : "";
-  return `${dirty}${renderSections(input.sections)}${renderOffers(input.offers)}`;
+  return `${dirty}${renderSections(input.sections)}`;
 }
