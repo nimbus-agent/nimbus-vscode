@@ -30,6 +30,14 @@ function harness(opts: {
 }) {
   const posted: Array<{ type: string; section?: SignalSection }> = [];
   const listeners: Array<(s: ConnectionState) => void> = [];
+  // A mutable variable `fire` updates before invoking listeners, so a test
+  // that fires "disconnected" actually gets a disconnected `current()` when
+  // the resulting refresh reads it — a fixed closure here would silently
+  // turn every fired state back into whatever `connected` was at harness
+  // creation, and the "drops on disconnect" test would assert nothing real.
+  let currentState: ConnectionState = (
+    (opts.connected ?? true) ? { kind: "connected" } : { kind: "disconnected" }
+  ) as ConnectionState;
   const spec: SignalSpec = {
     id: "blame",
     needsGateway: opts.needsGateway ?? true,
@@ -40,10 +48,7 @@ function harness(opts: {
     signals: [spec],
     signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
     connection: {
-      current: () =>
-        ((opts.connected ?? true)
-          ? { kind: "connected" }
-          : { kind: "disconnected" }) as ConnectionState,
+      current: () => currentState,
       onState: (l) => {
         listeners.push(l);
         return { dispose: () => undefined };
@@ -54,6 +59,7 @@ function harness(opts: {
     log: silentLog as unknown as Parameters<typeof createController>[0]["log"],
   });
   const fire = (s: ConnectionState): void => {
+    currentState = s;
     for (const l of listeners) l(s);
   };
   return { controller, posted, fire };
@@ -219,11 +225,16 @@ describe("createController", () => {
   test("refreshes when the connection drops, so stale answers do not linger", async () => {
     const h = harness({ collect: async () => section(1) });
     await h.controller.collect(snap(1));
-    const before = h.posted.length;
     h.fire({ kind: "disconnected" } as ConnectionState);
     await Promise.resolve();
     await Promise.resolve();
-    expect(h.posted.length).toBeGreaterThan(before);
+    // The claim is not just "something more was posted" — it is that the
+    // stale blame answer on screen is replaced by the needs-Gateway
+    // placeholder. A harness whose current() ignored the fired state could
+    // not fail this assertion even with no refresh logic at all.
+    const last = h.posted.at(-1) as unknown as { type: string; sections: SignalSection[] };
+    expect(last.type).toBe("render");
+    expect(last.sections[0]?.empty).toBe("Needs the Nimbus Gateway.");
   });
 
   test("posts an error section rather than leaving one loading forever", async () => {
@@ -262,5 +273,266 @@ describe("createController", () => {
     // Two attempts, not one: a failed collection must not be cached as
     // in-flight, or the key would be permanently poisoned.
     expect(calls).toBe(2);
+  });
+
+  test("does not cache a transient section — a caught Gateway hiccup must not pin itself in place", async () => {
+    let calls = 0;
+    const h = harness({
+      collect: async () => {
+        calls += 1;
+        return {
+          id: "blame",
+          title: "History",
+          rows: [{ label: "Blame unavailable: ECONNRESET", iconId: "error" }],
+          transient: true,
+        };
+      },
+    });
+    await h.controller.collect(snap(1));
+    await h.controller.collect(snap(2));
+    expect(calls).toBe(2);
+  });
+
+  test("invalidating mid-flight means the next collection refetches, and the stale answer never lands in the cache", async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      collect: async () => {
+        calls += 1;
+        if (calls === 1) await gate;
+        return section(1);
+      },
+    });
+    const first = h.controller.collect(snap(1));
+    // Give runOne a turn to register its in-flight entry before invalidating.
+    await Promise.resolve();
+    h.controller.invalidatePath("src/a.ts");
+    release?.();
+    await first;
+    // If the stale answer had landed in the cache despite the invalidation,
+    // this second collection (same key) would be served from cache and
+    // `calls` would stay at 1.
+    await h.controller.collect(snap(2));
+    expect(calls).toBe(2);
+  });
+
+  test("invalidatePath drops a related-shaped entry whose key never mentions the path", async () => {
+    let calls = 0;
+    const spec: SignalSpec = {
+      id: "related",
+      needsGateway: true,
+      collect: async () => {
+        calls += 1;
+        return { id: "related", title: "Related", rows: [] };
+      },
+      // Keyed purely on the selected text — e.g. "parseWidget" — exactly like
+      // relatedSection's real key once a selection is active: a key that
+      // never contains "src/a.ts" anywhere in its text.
+      cacheKey: () => "parseWidget",
+    };
+    const controller = createController({
+      signals: [spec],
+      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({ dispose: () => undefined }),
+      },
+      post: () => undefined,
+      isVisible: () => true,
+      log: silentLog as never,
+    });
+    await controller.collect(snap(1)); // snapshot path is "src/a.ts"
+    controller.invalidatePath("src/a.ts");
+    await controller.collect(snap(2));
+    expect(calls).toBe(2);
+  });
+
+  test("evicts the oldest cache entry once the per-signal limit is exceeded", async () => {
+    const calls: string[] = [];
+    const spec: SignalSpec = {
+      id: "blame",
+      needsGateway: true,
+      collect: async (s) => {
+        calls.push(`${s.path}:${s.line}`);
+        return section(1);
+      },
+      cacheKey: (s) => (s.line === undefined ? undefined : `${s.path}:${s.line}`),
+    };
+    const controller = createController({
+      signals: [spec],
+      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({ dispose: () => undefined }),
+      },
+      post: () => undefined,
+      isVisible: () => true,
+      log: silentLog as never,
+      cacheLimit: 2,
+    });
+    await controller.collect(snap(1, 1));
+    await controller.collect(snap(2, 2));
+    await controller.collect(snap(3, 3)); // evicts line 1's entry (limit 2)
+    await controller.collect(snap(4, 1)); // line 1 again: must recollect
+    expect(calls).toEqual(["src/a.ts:1", "src/a.ts:2", "src/a.ts:3", "src/a.ts:1"]);
+  });
+
+  test("dispose tears down the connection subscription", () => {
+    let subDisposed = false;
+    const controller = createController({
+      signals: [],
+      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({
+          dispose: () => {
+            subDisposed = true;
+          },
+        }),
+      },
+      post: () => undefined,
+      isVisible: () => true,
+      log: silentLog as never,
+    });
+    controller.dispose();
+    expect(subDisposed).toBe(true);
+  });
+
+  test("dispose fences a still-running collection's post — nothing reaches a torn-down view", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      collect: async () => {
+        await gate;
+        return section(1);
+      },
+    });
+    const inFlightCollect = h.controller.collect(snap(1));
+    h.controller.dispose();
+    release?.();
+    await inFlightCollect;
+    const sections = h.posted.filter((p) => p.type === "section");
+    expect(sections).toHaveLength(0);
+  });
+
+  test("a signal with no cache key is recollected every time, unlike a keyed one", async () => {
+    let localCalls = 0;
+    let gatewayCalls = 0;
+    const localSpec: SignalSpec = {
+      id: "problems",
+      needsGateway: false,
+      collect: async () => {
+        localCalls += 1;
+        return { id: "problems", title: "Problems", rows: [] };
+      },
+      cacheKey: () => undefined,
+    };
+    const gatewaySpec: SignalSpec = {
+      id: "blame",
+      needsGateway: true,
+      collect: async () => {
+        gatewayCalls += 1;
+        return section(1);
+      },
+      cacheKey: (s) => (s.line === undefined ? undefined : `${s.path}:${s.line}`),
+    };
+    const controller = createController({
+      signals: [localSpec, gatewaySpec],
+      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({ dispose: () => undefined }),
+      },
+      post: () => undefined,
+      isVisible: () => true,
+      log: silentLog as never,
+    });
+    await controller.collect(snap(1));
+    await controller.collect(snap(2));
+    expect(localCalls).toBe(2);
+    expect(gatewayCalls).toBe(1);
+  });
+
+  test("invalidateSignal clears only that signal's cache, leaving others intact", async () => {
+    let blameCalls = 0;
+    let relatedCalls = 0;
+    const blameSpec: SignalSpec = {
+      id: "blame",
+      needsGateway: true,
+      collect: async () => {
+        blameCalls += 1;
+        return section(1);
+      },
+      cacheKey: (s) => (s.line === undefined ? undefined : `${s.path}:${s.line}`),
+    };
+    const relatedSpec: SignalSpec = {
+      id: "related",
+      needsGateway: true,
+      collect: async () => {
+        relatedCalls += 1;
+        return { id: "related", title: "Related", rows: [] };
+      },
+      cacheKey: (s) => s.path,
+    };
+    const controller = createController({
+      signals: [blameSpec, relatedSpec],
+      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({ dispose: () => undefined }),
+      },
+      post: () => undefined,
+      isVisible: () => true,
+      log: silentLog as never,
+    });
+    await controller.collect(snap(1));
+    controller.invalidateSignal("blame");
+    await controller.collect(snap(2));
+    expect(blameCalls).toBe(2);
+    expect(relatedCalls).toBe(1);
+  });
+
+  test("invalidateAll clears every signal's cache", async () => {
+    let blameCalls = 0;
+    let relatedCalls = 0;
+    const blameSpec: SignalSpec = {
+      id: "blame",
+      needsGateway: true,
+      collect: async () => {
+        blameCalls += 1;
+        return section(1);
+      },
+      cacheKey: (s) => (s.line === undefined ? undefined : `${s.path}:${s.line}`),
+    };
+    const relatedSpec: SignalSpec = {
+      id: "related",
+      needsGateway: true,
+      collect: async () => {
+        relatedCalls += 1;
+        return { id: "related", title: "Related", rows: [] };
+      },
+      cacheKey: (s) => s.path,
+    };
+    const controller = createController({
+      signals: [blameSpec, relatedSpec],
+      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({ dispose: () => undefined }),
+      },
+      post: () => undefined,
+      isVisible: () => true,
+      log: silentLog as never,
+    });
+    await controller.collect(snap(1));
+    controller.invalidateAll();
+    await controller.collect(snap(2));
+    expect(blameCalls).toBe(2);
+    expect(relatedCalls).toBe(2);
   });
 });
