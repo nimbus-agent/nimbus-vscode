@@ -1,10 +1,22 @@
 import type { WhyPeek } from "@nimbus-dev/client";
 import { describe, expect, test } from "vitest";
 
-import { renderPeek } from "../../src/briefs/peek.js";
+import { peekFields, renderPeek } from "../../src/briefs/peek.js";
 
 const NOW = 1_000_000_000_000;
 const TARGET = { ref: "src/auth/session.ts", line: 41 };
+
+const EMPTY = {
+  subject: null,
+  author: null,
+  authorEmail: null,
+  commitSha: null,
+  committedAt: null,
+  commitSubject: null,
+  pr: null,
+  ticket: null,
+  hasMore: false,
+};
 
 function peek(over: Partial<WhyPeek> = {}): WhyPeek {
   return {
@@ -24,6 +36,41 @@ function peek(over: Partial<WhyPeek> = {}): WhyPeek {
     ...over,
   };
 }
+
+describe("peekFields", () => {
+  test("declines when nothing resolved", () => {
+    expect(peekFields(EMPTY, 1_000)).toBeUndefined();
+  });
+
+  test("shortens the sha to seven characters", () => {
+    const fields = peekFields({ ...EMPTY, commitSha: "abcdef1234567890" }, 1_000);
+    expect(fields?.shortSha).toBe("abcdef1");
+  });
+
+  test("formats the commit time relative to now", () => {
+    const fields = peekFields({ ...EMPTY, author: "Ada", committedAt: 0 }, 60_000);
+    expect(fields?.author).toBe("Ada");
+    expect(fields?.relativeTime).toBeDefined();
+  });
+
+  test("labels a PR by number and a ticket by key, carrying their urls", () => {
+    const fields = peekFields(
+      {
+        ...EMPTY,
+        pr: { number: 42, title: "t", url: "https://example.test/pr/42" },
+        ticket: { key: "OPS-7", title: "t", url: null },
+      },
+      1_000,
+    );
+    expect(fields?.pr).toEqual({ label: "PR #42", url: "https://example.test/pr/42" });
+    expect(fields?.ticket).toEqual({ label: "OPS-7" });
+  });
+
+  test("never exposes the author email — it is a personal identifier nobody asked to display", () => {
+    const fields = peekFields({ ...EMPTY, author: "Ada", authorEmail: "ada@example.test" }, 1_000);
+    expect(JSON.stringify(fields)).not.toContain("ada@example.test");
+  });
+});
 
 describe("renderPeek", () => {
   test("leads with author, age and short sha", () => {
