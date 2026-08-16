@@ -139,6 +139,45 @@ describe("identical repaints", () => {
   });
 });
 
+describe("per-section updates", () => {
+  test("a section message replaces only that section", () => {
+    dispatch("vscode-webview://abc", {
+      type: "render",
+      generation: 1,
+      sections: [
+        { id: "problems", title: "Problems", rows: [{ label: "P" }] },
+        { id: "blame", title: "History", rows: [], loading: true },
+      ],
+      offers: [],
+      isDirty: false,
+    });
+    dispatch("vscode-webview://abc", {
+      type: "section",
+      generation: 1,
+      section: { id: "blame", title: "History", rows: [{ label: "Ada" }] },
+    });
+    const html = document.getElementById("signals")?.innerHTML ?? "";
+    expect(html).toContain("Ada");
+    expect(html).toContain("P");
+  });
+
+  test("ignores a section from a superseded generation", () => {
+    dispatch("vscode-webview://abc", {
+      type: "render",
+      generation: 2,
+      sections: [{ id: "blame", title: "History", rows: [], loading: true }],
+      offers: [],
+      isDirty: false,
+    });
+    dispatch("vscode-webview://abc", {
+      type: "section",
+      generation: 1,
+      section: { id: "blame", title: "History", rows: [{ label: "stale" }] },
+    });
+    expect(document.getElementById("signals")?.innerHTML ?? "").not.toContain("stale");
+  });
+});
+
 // The producer half of the webview→host boundary, and the only exercise of the
 // data-target JSON round trip that protocol.ts then validates.
 describe("clicking an offer", () => {

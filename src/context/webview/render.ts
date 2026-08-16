@@ -33,9 +33,11 @@ export function renderSections(sections: readonly SignalSection[]): string {
   return sections
     .map((section) => {
       const body =
-        section.rows.length === 0
-          ? `<p class="empty">${escapeHtml(section.empty ?? "Nothing to show.")}</p>`
-          : `<ul class="rows">${section.rows.map((r) => renderRow(r.label, r.detail)).join("")}</ul>`;
+        section.rows.length > 0
+          ? `<ul class="rows">${section.rows.map((r) => renderRow(r.label, r.detail)).join("")}</ul>`
+          : `<p class="empty">${escapeHtml(
+              section.loading === true ? "Loading…" : (section.empty ?? "Nothing to show."),
+            )}</p>`;
       return `<section class="signal" data-signal="${escapeHtml(section.id)}"><h2>${escapeHtml(
         section.title,
       )}</h2>${body}</section>`;
