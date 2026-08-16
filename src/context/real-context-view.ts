@@ -95,12 +95,24 @@ export function registerContextView(deps: {
       line: d.range.start.line,
     }));
 
+  // A LOCAL ordering token — distinct from the controller's own generation
+  // counter, which stamps a snapshot only once it reaches controller.collect()
+  // (i.e. AFTER this function's own await). Without this, two collect() calls
+  // whose gitSummary() lookups resolve out of order can have the
+  // later-started (staler) call reach the controller second and take the
+  // HIGHER generation, so its render overwrites the fresher one and every
+  // later section reply fences against a stale answer. This restores true
+  // call order before a snapshot ever reaches the controller.
+  let collectSeq = 0;
+
   const collect = async (): Promise<void> => {
     if (view === undefined || !view.visible) return;
+    collectSeq += 1;
+    const mine = collectSeq;
     const editor = vscode.window.activeTextEditor;
     const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
     const git = await gitSummary(editor?.document.fileName);
-    if (view === undefined) return;
+    if (mine !== collectSeq || view === undefined) return;
     const snapshot = buildSnapshot({
       // The controller owns the generation counter now; the snapshot carries
       // whatever it is told, and 0 here means "the controller will stamp it".
@@ -186,10 +198,15 @@ export function registerContextView(deps: {
   // runs — subscribing only to what is there at activation is how this trigger
   // ends up never firing at all. Re-attaching on every open also covers a repo
   // closing: its listener is disposed with the rest.
+  // Guards the two async chains below against a teardown that lands while
+  // deps.git() is still pending: without it, a subscription can be created
+  // AFTER dispose() has already run and never gets torn down.
+  let gitWiringDisposed = false;
   const gitSubs: Array<{ dispose(): void }> = [];
   const attachGitListeners = async (): Promise<void> => {
     const api = await deps.git();
     for (const previous of gitSubs.splice(0)) previous.dispose();
+    if (gitWiringDisposed) return;
     for (const repo of api?.repositories() ?? []) {
       gitSubs.push(
         repo.onDidChange(() => {
@@ -201,15 +218,27 @@ export function registerContextView(deps: {
   };
 
   let openSub: { dispose(): void } | undefined;
-  void deps.git().then((api) => {
-    openSub = api?.onDidOpenRepository(() => {
-      void attachGitListeners().then(() => {
-        controller.invalidateSignal("git");
-        recollect();
+  void deps
+    .git()
+    .then((api) => {
+      const sub = api?.onDidOpenRepository(() => {
+        void attachGitListeners()
+          .then(() => {
+            controller.invalidateSignal("git");
+            recollect();
+          })
+          .catch((e: unknown) => deps.log.warn(`context panel git re-attach failed: ${errMsg(e)}`));
       });
-    });
-    void attachGitListeners();
-  });
+      if (gitWiringDisposed) {
+        sub?.dispose();
+        return;
+      }
+      openSub = sub;
+      void attachGitListeners().catch((e: unknown) =>
+        deps.log.warn(`context panel git listeners failed: ${errMsg(e)}`),
+      );
+    })
+    .catch((e: unknown) => deps.log.warn(`context panel git init failed: ${errMsg(e)}`));
 
   return vscode.Disposable.from(
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
@@ -223,6 +252,7 @@ export function registerContextView(deps: {
     { dispose: () => controller.dispose() },
     {
       dispose: () => {
+        gitWiringDisposed = true;
         openSub?.dispose();
         for (const s of gitSubs.splice(0)) s.dispose();
       },
