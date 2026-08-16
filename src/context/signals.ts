@@ -1,12 +1,14 @@
 import type { RankedSearchItem, WhyPeek } from "@nimbus-dev/client";
 
+import { peekFields } from "../briefs/peek.js";
+import { errMsg } from "../logging.js";
 import type { ContextSnapshot } from "./snapshot.js";
 
 // The signals the panel reads, as DATA — the same shape BRIEF_CATALOG uses, so
 // adding a fifth signal is one entry rather than an edit in four files. Both
 // entries here are local reads; the two Gateway-backed signals arrive in PR 2.
 
-export type SignalId = "problems" | "git";
+export type SignalId = "problems" | "git" | "blame";
 
 /**
  * The two Gateway calls this panel makes, and nothing else. A narrow structural
@@ -88,6 +90,47 @@ export async function gitSection(
   return { ...base, rows };
 }
 
+// Blame for the cursor line. This call reaches no model — it is a synchronous
+// git-and-index lookup — which is why it is safe on every cursor rest and why
+// it is the documented exemption from the egress gate.
+export async function blameSection(
+  snapshot: ContextSnapshot,
+  deps: SignalDeps,
+): Promise<SignalSection> {
+  const base = { id: "blame" as const, title: "History" };
+  if (snapshot.path === undefined || snapshot.line === undefined) {
+    return { ...base, rows: [], empty: "No file open." };
+  }
+  const client = deps.client();
+  if (client === undefined) return { ...base, rows: [], empty: "Needs the Nimbus Gateway." };
+  try {
+    const peek = await client.agentsWhyPeek({ ref: snapshot.path, line: snapshot.line });
+    const fields = peekFields(peek, deps.now());
+    if (fields === undefined) {
+      return {
+        ...base,
+        rows: [],
+        empty: "No history for this line yet — has `nimbus init` indexed this repo?",
+      };
+    }
+    const head = [fields.author, fields.relativeTime, fields.shortSha].filter(
+      (part): part is string => part !== undefined,
+    );
+    const rows: SignalRow[] = [];
+    if (head.length > 0) rows.push({ label: head.join(" · "), iconId: "person" });
+    if (fields.commitSubject !== undefined) {
+      rows.push({ label: fields.commitSubject, iconId: "git-commit" });
+    }
+    // Labels only, no links: this panel's renderer emits text nodes, and adding
+    // anchors would widen what the webview may contain for one row.
+    if (fields.pr !== undefined) rows.push({ label: fields.pr.label, iconId: "git-pull-request" });
+    if (fields.ticket !== undefined) rows.push({ label: fields.ticket.label, iconId: "tag" });
+    return { ...base, rows };
+  } catch (e: unknown) {
+    return { ...base, rows: [{ label: `Blame unavailable: ${errMsg(e)}`, iconId: "error" }] };
+  }
+}
+
 // No title here on purpose: the rendered heading comes from the section each
 // collector returns, so a title on the spec would be a second copy nothing reads.
 export interface SignalSpec {
@@ -106,4 +149,13 @@ export interface SignalSpec {
 export const SIGNAL_CATALOG: readonly SignalSpec[] = [
   { id: "problems", needsGateway: false, collect: problemsSection, cacheKey: () => undefined },
   { id: "git", needsGateway: false, collect: gitSection, cacheKey: () => undefined },
+  {
+    id: "blame",
+    needsGateway: true,
+    collect: blameSection,
+    // Keyed on the line, so moving WITHIN a line — or scrolling, which fires no
+    // cursor event at all — costs nothing.
+    cacheKey: (s) =>
+      s.path === undefined || s.line === undefined ? undefined : `${s.path}:${s.line}`,
+  },
 ];

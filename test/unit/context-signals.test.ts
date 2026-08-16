@@ -102,9 +102,14 @@ describe("gitSection", () => {
 });
 
 describe("SIGNAL_CATALOG", () => {
-  test("covers both local signals and claims no Gateway", () => {
-    expect(SIGNAL_CATALOG.map((s) => s.id)).toEqual(["problems", "git"]);
-    expect(SIGNAL_CATALOG.every((s) => s.needsGateway === false)).toBe(true);
+  test("covers three signals: two local, one Gateway-backed", () => {
+    expect(SIGNAL_CATALOG.map((s) => s.id)).toEqual(["problems", "git", "blame"]);
+    expect(
+      SIGNAL_CATALOG.filter((s) => s.id === "problems" || s.id === "git").every(
+        (s) => s.needsGateway === false,
+      ),
+    ).toBe(true);
+    expect(SIGNAL_CATALOG.find((s) => s.id === "blame")?.needsGateway).toBe(true);
   });
 
   test("each entry collects the section its id names", async () => {
@@ -115,8 +120,13 @@ describe("SIGNAL_CATALOG", () => {
     }
   });
 
-  test("local signals declare no cache key — they are cheap and always recollected", () => {
+  test("local signals declare no cache key; blame caches by line", () => {
     const snap = buildSnapshot({ generation: 9, editor });
-    for (const spec of SIGNAL_CATALOG) expect(spec.cacheKey(snap)).toBeUndefined();
+    const problsms = SIGNAL_CATALOG.find((s) => s.id === "problems");
+    const git = SIGNAL_CATALOG.find((s) => s.id === "git");
+    const blame = SIGNAL_CATALOG.find((s) => s.id === "blame");
+    expect(problsms?.cacheKey(snap)).toBeUndefined();
+    expect(git?.cacheKey(snap)).toBeUndefined();
+    expect(blame?.cacheKey(snap)).toBe("src/a.ts:0");
   });
 });
