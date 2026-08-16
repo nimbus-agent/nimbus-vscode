@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.17.2](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.17.1...v0.17.2) (2026-08-16)
+
+
+### Bug Fixes
+
+* **chat:** resolve the Gateway client per call so reconnect does not strand it ([#103](https://github.com/nimbus-agent/nimbus-vscode/issues/103)) ([e7936f0](https://github.com/nimbus-agent/nimbus-vscode/commit/e7936f0a0f79dbcc38ee7e13956b71e31135e87d))
+* **diagnostics:** remove a latent quadratic regex, and clear the Sonar backlog ([#105](https://github.com/nimbus-agent/nimbus-vscode/issues/105)) ([8d5ec5a](https://github.com/nimbus-agent/nimbus-vscode/commit/8d5ec5a0f012a14e85a1448bb46505a094466edd))
+
 ## [0.17.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.17.0...v0.17.1) (2026-08-13)
 
 
