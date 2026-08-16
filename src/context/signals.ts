@@ -10,6 +10,23 @@ import type { ContextSnapshot } from "./snapshot.js";
 
 export type SignalId = "problems" | "git" | "blame" | "related";
 
+// The heading a section carries, keyed by id. Read by every collector below
+// AND by the controller's own loading/disconnected/error placeholders, so a
+// renamed signal cannot leave one place saying "History" and another saying
+// something else — there is exactly one copy, and both sides read it.
+export const SECTION_TITLES: Record<SignalId, string> = {
+  problems: "Problems",
+  git: "Git",
+  blame: "History",
+  related: "Related",
+};
+
+// Likewise for the message shown when a Gateway-backed signal has no client
+// to call: the two collectors below and the controller's own disconnected
+// placeholder must agree on the exact wording, since a test on either side
+// asserts it verbatim.
+export const NEEDS_GATEWAY = "Needs the Nimbus Gateway.";
+
 /**
  * The two Gateway calls this panel makes, and nothing else. A narrow structural
  * seam rather than the whole client: these modules stay pure and unit-testable,
@@ -42,6 +59,13 @@ export interface SignalSection {
   readonly empty?: string;
   /** True while a Gateway-backed collector is still in flight. */
   readonly loading?: boolean;
+  /**
+   * True when this section is an error the collector recovered from rather
+   * than a real answer — e.g. a dropped RPC. The controller must not cache a
+   * transient section: a caught Gateway hiccup would otherwise pin itself
+   * into that key forever, since the collectors resolve rather than reject.
+   */
+  readonly transient?: boolean;
 }
 
 // Errors and warnings only. Information and Hint are excluded for the same
@@ -53,7 +77,7 @@ export async function problemsSection(
   snapshot: ContextSnapshot,
   _deps: SignalDeps,
 ): Promise<SignalSection> {
-  const base = { id: "problems" as const, title: "Problems" };
+  const base = { id: "problems" as const, title: SECTION_TITLES.problems };
   if (snapshot.path === undefined) return { ...base, rows: [], empty: "No file open." };
   const rows = snapshot.diagnostics
     .filter((d) => d.severity <= WARNING)
@@ -73,7 +97,7 @@ export async function gitSection(
   snapshot: ContextSnapshot,
   _deps: SignalDeps,
 ): Promise<SignalSection> {
-  const base = { id: "git" as const, title: "Git" };
+  const base = { id: "git" as const, title: SECTION_TITLES.git };
   const git = snapshot.git;
   if (git === undefined) return { ...base, rows: [], empty: "No git repository here." };
   const rows: SignalRow[] = [{ label: git.branch ?? "Detached HEAD", iconId: "git-branch" }];
@@ -97,12 +121,12 @@ export async function blameSection(
   snapshot: ContextSnapshot,
   deps: SignalDeps,
 ): Promise<SignalSection> {
-  const base = { id: "blame" as const, title: "History" };
+  const base = { id: "blame" as const, title: SECTION_TITLES.blame };
   if (snapshot.path === undefined || snapshot.line === undefined) {
     return { ...base, rows: [], empty: "No file open." };
   }
   const client = deps.client();
-  if (client === undefined) return { ...base, rows: [], empty: "Needs the Nimbus Gateway." };
+  if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY };
   try {
     const peek = await client.agentsWhyPeek({ ref: snapshot.path, line: snapshot.line });
     const fields = peekFields(peek, deps.now());
@@ -127,7 +151,13 @@ export async function blameSection(
     if (fields.ticket !== undefined) rows.push({ label: fields.ticket.label, iconId: "tag" });
     return { ...base, rows };
   } catch (e: unknown) {
-    return { ...base, rows: [{ label: `Blame unavailable: ${errMsg(e)}`, iconId: "error" }] };
+    // transient: a dropped RPC is worth retrying on the next visit to this
+    // line, not pinning into the cache as if it were a real answer.
+    return {
+      ...base,
+      rows: [{ label: `Blame unavailable: ${errMsg(e)}`, iconId: "error" }],
+      transient: true,
+    };
   }
 }
 
@@ -138,11 +168,11 @@ export async function relatedSection(
   snapshot: ContextSnapshot,
   deps: SignalDeps,
 ): Promise<SignalSection> {
-  const base = { id: "related" as const, title: "Related" };
+  const base = { id: "related" as const, title: SECTION_TITLES.related };
   const query = snapshot.selection ?? snapshot.path;
   if (query === undefined) return { ...base, rows: [], empty: "No file open." };
   const client = deps.client();
-  if (client === undefined) return { ...base, rows: [], empty: "Needs the Nimbus Gateway." };
+  if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY };
   try {
     const items = await client.searchRanked({ name: query, limit: deps.searchLimit() });
     const rows: SignalRow[] = items
@@ -159,12 +189,20 @@ export async function relatedSection(
     }
     return { ...base, rows };
   } catch (e: unknown) {
-    return { ...base, rows: [{ label: `Search unavailable: ${errMsg(e)}`, iconId: "error" }] };
+    // transient: see blameSection's catch — a dropped RPC should be retried,
+    // not remembered as this line's answer.
+    return {
+      ...base,
+      rows: [{ label: `Search unavailable: ${errMsg(e)}`, iconId: "error" }],
+      transient: true,
+    };
   }
 }
 
-// No title here on purpose: the rendered heading comes from the section each
-// collector returns, so a title on the spec would be a second copy nothing reads.
+// No title here on purpose: both the collector's own section and the
+// controller's loading/disconnected/error placeholders read the same
+// SECTION_TITLES entry above, so a title on the spec would be a third copy
+// nothing reads.
 export interface SignalSpec {
   readonly id: SignalId;
   /** Whether collecting this signal needs the Gateway socket. */
@@ -194,9 +232,14 @@ export const SIGNAL_CATALOG: readonly SignalSpec[] = [
     id: "related",
     needsGateway: true,
     collect: relatedSection,
-    // Keyed on the query itself, so it is one call per file switch rather than
-    // one per keystroke. The selection is already clamped to 300 chars in the
-    // snapshot, so this key is bounded.
-    cacheKey: (s) => s.selection ?? s.path,
+    // Keyed on the path AND the query, so it is one call per (file, selection)
+    // pair rather than one per keystroke — and so two different files with the
+    // same selected text never share a cache entry, which would leave the
+    // wrong file un-excluded from its own results (relatedSection excludes a
+    // row by comparing it to snapshot.path). The selection is already clamped
+    // to 300 chars in the snapshot, so this key is bounded. No path at all
+    // (no file open) leaves this uncached: cheap, and there is nothing to key
+    // it on.
+    cacheKey: (s) => (s.path === undefined ? undefined : `${s.path}:${s.selection ?? ""}`),
   },
 ];

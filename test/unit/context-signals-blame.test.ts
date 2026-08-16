@@ -93,4 +93,15 @@ describe("blameSection", () => {
     const section = await blameSection(buildSnapshot({ generation: 7, editor }), deps(client));
     expect(section.rows[0]?.label).toContain("socket closed");
   });
+
+  test("marks a failed lookup transient, so the controller does not cache it", async () => {
+    const client: ContextClientLike = {
+      agentsWhyPeek: async () => {
+        throw new Error("socket closed");
+      },
+      searchRanked: async () => [],
+    };
+    const section = await blameSection(buildSnapshot({ generation: 8, editor }), deps(client));
+    expect(section.transient).toBe(true);
+  });
 });

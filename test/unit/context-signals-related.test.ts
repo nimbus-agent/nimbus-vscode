@@ -91,4 +91,15 @@ describe("relatedSection", () => {
     const section = await relatedSection(buildSnapshot({ generation: 8, editor }), deps(client));
     expect(section.rows[0]?.label).toContain("socket closed");
   });
+
+  test("marks a failed search transient, so the controller does not cache it", async () => {
+    const client: ContextClientLike = {
+      agentsWhyPeek: async () => ({}) as Awaited<ReturnType<ContextClientLike["agentsWhyPeek"]>>,
+      searchRanked: async () => {
+        throw new Error("socket closed");
+      },
+    };
+    const section = await relatedSection(buildSnapshot({ generation: 9, editor }), deps(client));
+    expect(section.transient).toBe(true);
+  });
 });

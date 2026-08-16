@@ -133,6 +133,19 @@ describe("SIGNAL_CATALOG", () => {
     expect(problsms?.cacheKey(snap)).toBeUndefined();
     expect(git?.cacheKey(snap)).toBeUndefined();
     expect(blame?.cacheKey(snap)).toBe("src/a.ts:0");
-    expect(related?.cacheKey(snap)).toBe("src/a.ts");
+    expect(related?.cacheKey(snap)).toBe("src/a.ts:");
+  });
+
+  test("related's cache key includes the path, so two files sharing a selection do not collide", () => {
+    const related = SIGNAL_CATALOG.find((s) => s.id === "related");
+    const a = buildSnapshot({
+      generation: 10,
+      editor: { ...editor, selection: "parseWidget" },
+    });
+    const b = buildSnapshot({
+      generation: 11,
+      editor: { ...editor, path: "src/b.ts", selection: "parseWidget" },
+    });
+    expect(related?.cacheKey(a)).not.toBe(related?.cacheKey(b));
   });
 });
