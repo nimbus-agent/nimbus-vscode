@@ -1,6 +1,7 @@
 # Ambient context panel — design
 
-Status: approved, not implemented.
+Status: approved, not implemented. Revised 2026-08-16 after design review
+(`2026-08-16-ambient-context-panel-review.md`).
 Roadmap row: Phase 2, *Ambient context panel* (effort L).
 
 ## The problem
@@ -52,7 +53,7 @@ pure core plus exactly one file that touches `vscode`.
 
 | File | Purpose | Touches `vscode` |
 | --- | --- | --- |
-| `snapshot.ts` | The `ContextSnapshot` type and its construction from plain data: repo-relative path, `languageId`, cursor line, selection text, branch, changed-file summary, diagnostics. No I/O. | no |
+| `snapshot.ts` | The `ContextSnapshot` type and its construction from plain data: repo-relative path, `languageId`, cursor line, clamped selection text, `isDirty`, branch, changed-file summary, diagnostics. No I/O. | no |
 | `signals.ts` | `SIGNAL_CATALOG` — a data array, one entry per signal: id, title, whether it needs the Gateway, and a pure `collect(snapshot, deps)`. | no |
 | `offers.ts` | `ContextSnapshot` × `BRIEF_CATALOG.context` → the briefs runnable right now, with pre-filled arguments. | no |
 | `protocol.ts` | The host↔webview message union, mirroring `chat-protocol.ts`. | no |
@@ -73,10 +74,15 @@ stays in the pure host modules, where the unit tests are.
 
 Two, both targeted:
 
-1. **`src/scm/git-types.ts` + `src/scm/real-git.ts`** gain a `branch()` verb.
-   `GitRepositoryLike` today exposes `rootPath`, `changedFiles`, `fileDiff`,
-   `untrackedPaths`, `log` and `inputBox` — there is no way to read the current
-   branch, and the git signal needs one.
+1. **`src/scm/git-types.ts` + `src/scm/real-git.ts`** gain two verbs, `branch()`
+   and `onDidChange(listener)`. `GitRepositoryLike` today exposes `rootPath`,
+   `changedFiles`, `fileDiff`, `untrackedPaths`, `log` and `inputBox` — there is
+   no way to read the current branch, and no event at all. Without the event, a
+   branch switch made while the user is idle leaves the panel offering
+   `Safe to deploy?` pre-filled with the *previous* branch: wrongness, not
+   staleness. `RawRepository` in `real-git.ts` is a structural narrowing of the
+   git extension's repository object, whose `state` exposes both `HEAD` and
+   `onDidChange`, so this is a local edit to that interface and its adapter.
 2. **`src/briefs/peek.ts`** splits `renderPeek` into a pure field extractor the
    panel consumes plus the existing markdown-with-`command:`-link wrapper the
    hover keeps. One interpretation of a `WhyPeek`, two renderings.
@@ -84,10 +90,18 @@ Two, both targeted:
 ### Second esbuild entry
 
 `esbuild.mjs` gains an entry for `src/context/webview/main.ts` → `media/context.js`,
-in both the build and watch configurations. `media/` is already a directory
-allowlist in `.vscodeignore` and in `scripts/check-vsix-contents.mjs`, so no
-packaging change is required. Add `media/context.js` to that script's
-"must exist" assertion so a missing bundle cannot pass the guard trivially.
+in both the build and watch configurations.
+
+**The stylesheet does not go through esbuild.** `media/webview.css` is produced
+by a `copyFileSync` at the bottom of `esbuild.mjs`, not by a bundler entry, so
+`media/context.css` needs a second `copyFileSync` line. An esbuild entry alone
+yields a panel that renders unstyled and still passes every guard.
+
+`media/` is already a directory allowlist in `.vscodeignore` (`!media/**`) and in
+`scripts/check-vsix-contents.mjs` (`ALLOWED_DIRS`), so no packaging change is
+required for either file. Add `media/context.js` **and** `media/context.css` to
+that script's "must exist" assertion, so a missing bundle or a dropped
+`copyFileSync` cannot pass the guard trivially.
 
 ## Data flow
 
@@ -104,11 +118,22 @@ editor / selection / diagnostic / git event
 | Signal | Source | Cache key | Needs Gateway |
 | --- | --- | --- | --- |
 | `blame` | `agentsWhyPeek` | `path + line` | yes (ungated) |
-| `related` | `searchRanked` | `path`, or the selection text when there is one | yes (ungated) |
+| `related` | `searchRanked` | `path`, or the clamped selection text when there is one | yes (ungated) |
 | `problems` | VS Code's diagnostic collection | `path` + diagnostic count/versions | no |
 | `git` | `GitApiLike` | repo root + branch + changed-file list | no |
 
 `offers` is derived rather than collected — pure, instantaneous, always current.
+
+### Selection is clamped at the snapshot boundary
+
+Selecting a whole large file must not put that string in a snapshot, a cache key
+or a query. The repo already has two clamps, and the right one is not the
+model-context one: `QUICK_ASK_MAX_CONTEXT_CHARS` (50 000, via `clampContext`)
+sizes text bound for a model, while `NORMALIZED_QUERY_MAX_CHARS` (300, clamped on
+a word boundary) sizes text bound for the index. `related` is an index query, so
+it takes the query precedent — the snapshot stores selection already clamped to
+300 chars on a word boundary, reusing the diagnostics helper rather than
+introducing a third limit. The cache key is then bounded for free.
 
 ### Three properties fixed by design
 
@@ -138,6 +163,12 @@ sidebar. `WebviewView.onDidChangeVisibility` is a hard on/off: while hidden the
 controller records snapshots but runs no collectors, and on becoming visible it
 collects once for the current context. Most sessions therefore cost nothing.
 
+Window focus (`window.state.focused`) is deliberately **not** tracked as a
+second pause condition. Collection is event-driven, not polled: while the VS
+Code window is unfocused, no editor, selection or diagnostic events fire, so
+there is nothing to suppress. Tracking focus would add API surface and a state
+to test for a case that already costs zero.
+
 **2. Debounce, tiered by event.** Cursor and selection 300 ms trailing; active
 editor change 150 ms (Ctrl+Tab cycling is the rapid case); diagnostics 500 ms,
 because a language server re-lints in bursts and each burst fires several events
@@ -159,6 +190,43 @@ generation fence is what protects correctness. Coalescing is only about waste.
 `connected`, the two Gateway signals are not attempted. They render "needs the
 Gateway" once rather than retrying and filling the log.
 
+### Invalidation
+
+The cache expires on events, not on a timer. Four triggers:
+
+- **Save** (`onDidSaveTextDocument`) — drop every entry for that path. The
+  indexer may pick the file up, so `related` can legitimately change.
+- **Git state change** (the new `onDidChange` seam verb) — recompute the `git`
+  snapshot fields and drop the `git` section's entry.
+- **Disconnect** — clear everything; the index may change while we are away.
+- **Reconnect** — the symmetric half, and the one the first draft of this spec
+  omitted. The controller subscribes to `SidebarConnection.onState`, the same
+  event every sidebar view already uses, and on a transition **into**
+  `connected` it drops the "needs the Gateway" sections and re-collects if the
+  view is visible. Without it the panel stays dead until the user happens to
+  move the cursor.
+
+**Deliberately not a trigger: `onDidChangeTextDocument`, and document `version`
+is deliberately not part of any cache key.** That event fires per keystroke, so
+keying `blame` on `version` would invalidate on every keystroke and cost an RPC
+at every subsequent cursor rest — exactly the storm this section exists to
+prevent. It would also buy nothing: `agentsWhyPeek` answers about **committed**
+content, so a mid-edit refetch returns the same answer against a line number
+that has shifted either way. Unsaved edits are communicated instead, at zero
+cost, by the dirty marker below.
+
+### Dirty documents
+
+`ContextSnapshot` carries `isDirty`. When it is set, the `blame` section renders
+a marker saying the file has unsaved edits and the attribution may not line up
+with what is on screen.
+
+Blame is **not** suppressed for a dirty file. The shipped hover
+(`briefs.showHoverBlame`) has exactly this exposure today, so the panel inherits
+it rather than introducing it — and hiding blame while the user edits would
+remove it at the moment it is most wanted. The marker states the limit; the save
+trigger above clears it.
+
 Realistic worst case, actively navigating with the panel visible: about one
 `whyPeek` per line the cursor rests on and one `searchRanked` per file opened —
 both local lookups that reach no model.
@@ -177,11 +245,18 @@ already-registered command through `executeCommand`.
   the panel does not know, but arrive with the branch pre-filled where there is
   one.
 
-**Command allowlist.** A webview is untrusted input. The host validates every
-posted command against an allowlist derived from `BRIEF_CATALOG`,
-`SIGNAL_CATALOG` and the diagnostics/SCM command ids, and never passes a
-webview-supplied string to `executeCommand`. A unit test asserts an unknown id
-is refused and logged.
+**Command allowlist, and argument validation.** A webview is untrusted input.
+The host validates every posted message on two axes and never passes a
+webview-supplied string to `executeCommand`:
+
+1. **The id**, against a `ReadonlyArray<string>` derived from `BRIEF_CATALOG`,
+   `SIGNAL_CATALOG` and the diagnostics/SCM command ids.
+2. **The arguments**, against a per-command validator. An allowlisted id with a
+   malformed payload is refused exactly like an unknown id — `nimbus.brief.why`
+   accepts `{ ref: string, line: number }` and nothing else, rather than letting
+   arbitrary JSON reach a command handler.
+
+Unit tests assert both refusals, and that each is logged.
 
 ## Settings
 
@@ -214,7 +289,8 @@ Each is an explicit render, never a blank panel:
 | Layer | Covers |
 | --- | --- |
 | Vitest, pure core | Snapshot construction; each collector over fake deps; offers derivation against `BRIEF_CATALOG`; the protocol allowlist. |
-| Vitest, controller with a fake clock | Debounce tiers; cache-key hits; in-flight coalescing; the generation fence discarding a late reply; visibility pause suppressing collection entirely. |
+| Vitest, controller with a fake clock | Debounce tiers; cache-key hits; in-flight coalescing; the generation fence discarding a late reply; **hidden means no collector runs**, asserted rather than assumed; each of the four invalidation triggers; reconnect re-collecting while visible and *not* collecting while hidden. |
+| Vitest, protocol | An unknown command id is refused and logged; an allowlisted id with malformed args is refused and logged; selection longer than the query clamp is truncated on a word boundary. |
 | `webview-render` style | Sections render independently, with loading, error and empty each covered. |
 | `manifest-context.test.ts` | The view, the setting and the commands are declared in `package.json`. |
 | `real-context-view.ts` | Smoke only, excluded from coverage like `real-chat-panel.ts`. |
@@ -247,7 +323,8 @@ Gateway RPC at all, so the panel is useful while disconnected from day one.
 
 **PR 2 — Gateway signals and cadence.** The `blame` and `related` collectors,
 the `peek.ts` split, and the whole of the cadence section: debounce tiers,
-cache, coalescing, generation fence, visibility pause.
+cache, coalescing, generation fence, visibility pause, the four invalidation
+triggers, and the dirty marker.
 
 **PR 3 — polish.** Action wiring end to end, the degraded states, the
 `nimbus.context.enabled` setting, `docs/settings.md`, the ROADMAP move to
@@ -255,9 +332,11 @@ cache, coalescing, generation fence, visibility pause.
 
 ## Open questions
 
-None blocking. Two to settle during implementation, both local to PR 2:
+None blocking. One to settle during implementation, local to PR 2:
 
 - The exact LRU size per signal. 50 is a starting figure, not a measured one.
-- Whether `related` should key on selection text at all, or only on path.
-  Selection-keyed lookups are more relevant but far more numerous; if the debounce
-  proves insufficient, path-only is the fallback.
+
+Settled by the 2026-08-16 review, and recorded here so they are not reopened by
+default: selection keying stays (clamped at the 300-char index-query limit, which
+bounds the key); document `version` stays out of every cache key; window focus is
+not a pause condition. Reasoning for each is inline above.
