@@ -19,9 +19,9 @@ import {
 // decision (what the context is, which briefs fit, what may be executed) lives
 // in the pure modules beside this file, which carry the tests.
 //
-// PR 1 re-collects on every event, with no debounce and no cache: both signals
-// here are local reads. PR 2 introduces controller.ts when the Gateway-backed
-// signals arrive and cost per collection starts to matter.
+// PR 1 re-collects on every event, with no cache: both signals here are local
+// reads. PR 2 introduces controller.ts when the Gateway-backed signals arrive
+// and cost per collection starts to matter.
 
 const VIEW_ID = "nimbus.contextView";
 
@@ -35,6 +35,12 @@ export function registerContextView(deps: {
   let view: vscode.WebviewView | undefined;
 
   const gitSummary = async (): Promise<GitSummary | undefined> => {
+    // KNOWN LIMITATION: repositories()[0] is an arbitrary repository, not the
+    // one containing the file on screen — in a multi-root workspace it is
+    // whichever the git extension happens to list first. PR 2 should select by
+    // the longest rootPath prefix of the active file, the way rootFor does in
+    // src/briefs/params.ts; it lands there rather than here because that is
+    // where the collection path becomes testable.
     const repo = (await deps.git())?.repositories()[0];
     if (repo === undefined) return undefined;
     // changedPaths stays UNREAD in PR 1: filling it means an async changedFiles
@@ -141,6 +147,11 @@ export function registerContextView(deps: {
       // Collection is suspended entirely while the view is hidden; becoming
       // visible collects once for the current context.
       webviewView.onDidChangeVisibility(() => recollect());
+      // Drop the reference when the view goes away: a debounced collection can
+      // still fire after disposal, and collect() gates on `view` being set.
+      webviewView.onDidDispose(() => {
+        view = undefined;
+      });
     },
   };
 
@@ -175,7 +186,18 @@ function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
 <link rel="stylesheet" href="${styleUri.toString()}" />
 </head>
 <body>
-<main id="root" aria-live="polite"></main>
+<main id="root">
+  <!--
+    aria-live is scoped to the informational half only, as real-chat-panel.ts
+    scopes it to its own sections. The offers are focusable buttons: a live
+    region containing interactive controls re-announces them on every change,
+    and this panel's content changes whenever the cursor moves. The two mounts
+    are also repainted independently, so a new diagnostic no longer destroys
+    keyboard focus on an offer button.
+  -->
+  <section id="signals" aria-live="polite"></section>
+  <section id="offers"></section>
+</main>
 <script nonce="${nonce}" src="${scriptUri.toString()}"></script>
 </body>
 </html>`;

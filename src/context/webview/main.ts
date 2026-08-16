@@ -1,5 +1,5 @@
 import type { ContextViewToExtension, ExtensionToContextView } from "../protocol.js";
-import { renderPanel } from "./render.js";
+import { renderOffers, renderSignals } from "./render.js";
 
 // The browser half of the context panel. It decides nothing: it renders what
 // the host sends and posts back the command a clicked offer names.
@@ -11,8 +11,20 @@ declare function acquireVsCodeApi(): VsCodeApi;
 
 const vscode = acquireVsCodeApi();
 
-function mount(): HTMLElement | null {
-  return document.getElementById("root");
+// The last HTML written into each mount. The host re-collects on a debounce, and
+// with PR 1's two signals most collections produce a byte-identical render —
+// moving the cursor within one file always does. Writing innerHTML anyway would
+// make the `aria-live` signals region re-announce unchanged text and destroy
+// keyboard focus inside the mount, so an identical repaint is skipped. Nothing
+// else writes to these mounts, so the cache cannot drift from the DOM.
+const painted: Record<string, string | undefined> = {};
+
+function paint(id: string, html: string): void {
+  const el = document.getElementById(id);
+  if (el === null) return;
+  if (painted[id] === html) return;
+  painted[id] = html;
+  el.innerHTML = html;
 }
 
 function onClick(event: MouseEvent): void {
@@ -46,18 +58,14 @@ window.addEventListener("message", (event: MessageEvent<ExtensionToContextView>)
   ) {
     return;
   }
-  const root = mount();
-  if (root === null) return;
   const typed = message as ExtensionToContextView;
   if (typed.type === "paused") {
-    root.innerHTML = "";
+    paint("signals", "");
+    paint("offers", "");
     return;
   }
-  root.innerHTML = renderPanel({
-    sections: typed.sections,
-    offers: typed.offers,
-    isDirty: typed.isDirty,
-  });
+  paint("signals", renderSignals({ sections: typed.sections, isDirty: typed.isDirty }));
+  paint("offers", renderOffers(typed.offers));
 });
 
 document.addEventListener("click", onClick);
