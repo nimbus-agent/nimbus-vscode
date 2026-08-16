@@ -64,6 +64,10 @@ window.addEventListener("message", (event: MessageEvent<ExtensionToContextView>)
     paint("offers", "");
     return;
   }
+  // Matched explicitly rather than assumed as the else branch: a message type
+  // this bundle does not yet know about — added by a later host version, say —
+  // must be dropped, not rendered as though it were a render message.
+  if (typed.type !== "render") return;
   paint("signals", renderSignals({ sections: typed.sections, isDirty: typed.isDirty }));
   paint("offers", renderOffers(typed.offers));
 });

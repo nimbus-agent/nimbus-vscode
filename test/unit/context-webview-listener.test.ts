@@ -85,6 +85,13 @@ describe("context webview message listener", () => {
     expect(() => dispatch("vscode-webview://abc", { noType: true })).not.toThrow();
     expect(rootHtml()).not.toContain("Line 3: boom");
   });
+
+  test("drops a message with an unrecognised type without mutating the DOM", () => {
+    dispatch("vscode-webview://abc", RENDER_MESSAGE);
+    const before = rootHtml();
+    expect(() => dispatch("vscode-webview://abc", { type: "explode" })).not.toThrow();
+    expect(rootHtml()).toBe(before);
+  });
 });
 
 // The host re-collects on a debounce; with PR 1's two signals, moving the cursor
