@@ -37,9 +37,10 @@ export function registerContextView(deps: {
   const gitSummary = async (): Promise<GitSummary | undefined> => {
     const repo = (await deps.git())?.repositories()[0];
     if (repo === undefined) return undefined;
-    // changedPaths stays empty in PR 1: filling it means an async changedFiles
-    // call per collection, which belongs with PR 2's controller.
-    return { branch: repo.branch(), changedPaths: [] };
+    // changedPaths stays UNREAD in PR 1: filling it means an async changedFiles
+    // call per collection, which belongs with PR 2's controller. Undefined, not
+    // [], so gitSection renders no count row rather than claiming zero.
+    return { branch: repo.branch(), changedPaths: undefined };
   };
 
   // Bound the READ, not just the stored value. Ctrl+A on a large file makes

@@ -46,25 +46,30 @@ export function gitSection(snapshot: ContextSnapshot): SignalSection {
   const base = { id: "git" as const, title: "Git" };
   const git = snapshot.git;
   if (git === undefined) return { ...base, rows: [], empty: "No git repository here." };
-  const count = git.changedPaths.length;
-  return {
-    ...base,
-    rows: [
-      { label: git.branch ?? "Detached HEAD", iconId: "git-branch" },
-      { label: `${count} changed ${count === 1 ? "file" : "files"}`, iconId: "diff" },
-    ],
-  };
+  const rows: SignalRow[] = [{ label: git.branch ?? "Detached HEAD", iconId: "git-branch" }];
+  // Only when the collector actually looked. An unread changedPaths renders no
+  // row at all: "0 changed files" beside a correct branch name is a statement
+  // the panel has not earned, and it would be wrong for most users.
+  const changed = git.changedPaths;
+  if (changed !== undefined) {
+    rows.push({
+      label: `${changed.length} changed ${changed.length === 1 ? "file" : "files"}`,
+      iconId: "diff",
+    });
+  }
+  return { ...base, rows };
 }
 
+// No title here on purpose: the rendered heading comes from the section each
+// collector returns, so a title on the spec would be a second copy nothing reads.
 export interface SignalSpec {
   readonly id: SignalId;
-  readonly title: string;
   /** Whether collecting this signal needs the Gateway socket. */
   readonly needsGateway: boolean;
   readonly collect: (snapshot: ContextSnapshot) => SignalSection;
 }
 
 export const SIGNAL_CATALOG: readonly SignalSpec[] = [
-  { id: "problems", title: "Problems", needsGateway: false, collect: problemsSection },
-  { id: "git", title: "Git", needsGateway: false, collect: gitSection },
+  { id: "problems", needsGateway: false, collect: problemsSection },
+  { id: "git", needsGateway: false, collect: gitSection },
 ];

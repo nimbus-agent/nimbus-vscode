@@ -63,6 +63,17 @@ describe("gitSection", () => {
     expect(gitSection(snap).rows[1]?.label).toBe("1 changed file");
   });
 
+  test("omits the count row entirely when no one looked at the changed files", () => {
+    const snap = buildSnapshot({
+      generation: 41,
+      editor,
+      git: { branch: "main", changedPaths: undefined },
+    });
+    const rows = gitSection(snap).rows;
+    expect(rows.map((r) => r.label)).toEqual(["main"]);
+    expect(rows.some((r) => r.label.includes("changed"))).toBe(false);
+  });
+
   test("reports a detached HEAD rather than pretending there is a branch", () => {
     const snap = buildSnapshot({
       generation: 6,

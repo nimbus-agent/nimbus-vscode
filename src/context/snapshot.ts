@@ -21,8 +21,13 @@ export interface DiagnosticSummary {
 export interface GitSummary {
   /** Undefined on a detached HEAD, or before the git extension resolves state. */
   readonly branch: string | undefined;
-  /** Repo-relative, as git reports them — safe to display. */
-  readonly changedPaths: readonly string[];
+  /**
+   * Repo-relative, as git reports them — safe to display. Undefined when the
+   * collector did not look: the panel then says nothing about changed files
+   * rather than claiming there are none. PR 1's collector never looks; PR 2's
+   * async collection path fills this in.
+   */
+  readonly changedPaths: readonly string[] | undefined;
 }
 
 export interface EditorInput {
