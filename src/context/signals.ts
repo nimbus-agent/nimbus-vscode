@@ -5,10 +5,10 @@ import { errMsg } from "../logging.js";
 import type { ContextSnapshot } from "./snapshot.js";
 
 // The signals the panel reads, as DATA — the same shape BRIEF_CATALOG uses, so
-// adding a fifth signal is one entry rather than an edit in four files. Both
-// entries here are local reads; the two Gateway-backed signals arrive in PR 2.
+// adding a fifth signal is one entry rather than an edit in four files. Four
+// signals here: two local reads (problems, git) and two Gateway-backed (blame, related).
 
-export type SignalId = "problems" | "git" | "blame";
+export type SignalId = "problems" | "git" | "blame" | "related";
 
 /**
  * The two Gateway calls this panel makes, and nothing else. A narrow structural
@@ -131,6 +131,38 @@ export async function blameSection(
   }
 }
 
+// Ranked neighbours from the LOCAL index. Reaches no model, exactly as Find
+// related and the diagnostics' prior-occurrences search do; it still needs the
+// Gateway socket, and is only ever as good as what has been indexed.
+export async function relatedSection(
+  snapshot: ContextSnapshot,
+  deps: SignalDeps,
+): Promise<SignalSection> {
+  const base = { id: "related" as const, title: "Related" };
+  const query = snapshot.selection ?? snapshot.path;
+  if (query === undefined) return { ...base, rows: [], empty: "No file open." };
+  const client = deps.client();
+  if (client === undefined) return { ...base, rows: [], empty: "Needs the Nimbus Gateway." };
+  try {
+    const items = await client.searchRanked({ name: query, limit: deps.searchLimit() });
+    const rows: SignalRow[] = items
+      // Self-exclusion, the same rule Find related applies: an item is not its
+      // own neighbour, and leaving it in wastes the top slot.
+      .filter((i) => i.name !== snapshot.path)
+      .map((i) => ({
+        label: i.name,
+        ...(i.service.length > 0 ? { detail: i.service } : {}),
+        iconId: "file",
+      }));
+    if (rows.length === 0) {
+      return { ...base, rows, empty: "Nothing related in the local index." };
+    }
+    return { ...base, rows };
+  } catch (e: unknown) {
+    return { ...base, rows: [{ label: `Search unavailable: ${errMsg(e)}`, iconId: "error" }] };
+  }
+}
+
 // No title here on purpose: the rendered heading comes from the section each
 // collector returns, so a title on the spec would be a second copy nothing reads.
 export interface SignalSpec {
@@ -157,5 +189,14 @@ export const SIGNAL_CATALOG: readonly SignalSpec[] = [
     // cursor event at all — costs nothing.
     cacheKey: (s) =>
       s.path === undefined || s.line === undefined ? undefined : `${s.path}:${s.line}`,
+  },
+  {
+    id: "related",
+    needsGateway: true,
+    collect: relatedSection,
+    // Keyed on the query itself, so it is one call per file switch rather than
+    // one per keystroke. The selection is already clamped to 300 chars in the
+    // snapshot, so this key is bounded.
+    cacheKey: (s) => s.selection ?? s.path,
   },
 ];

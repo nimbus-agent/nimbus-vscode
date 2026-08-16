@@ -102,14 +102,18 @@ describe("gitSection", () => {
 });
 
 describe("SIGNAL_CATALOG", () => {
-  test("covers three signals: two local, one Gateway-backed", () => {
-    expect(SIGNAL_CATALOG.map((s) => s.id)).toEqual(["problems", "git", "blame"]);
+  test("covers four signals: two local, two Gateway-backed", () => {
+    expect(SIGNAL_CATALOG.map((s) => s.id)).toEqual(["problems", "git", "blame", "related"]);
     expect(
       SIGNAL_CATALOG.filter((s) => s.id === "problems" || s.id === "git").every(
         (s) => s.needsGateway === false,
       ),
     ).toBe(true);
-    expect(SIGNAL_CATALOG.find((s) => s.id === "blame")?.needsGateway).toBe(true);
+    expect(
+      SIGNAL_CATALOG.filter((s) => s.id === "blame" || s.id === "related").every(
+        (s) => s.needsGateway === true,
+      ),
+    ).toBe(true);
   });
 
   test("each entry collects the section its id names", async () => {
@@ -120,13 +124,15 @@ describe("SIGNAL_CATALOG", () => {
     }
   });
 
-  test("local signals declare no cache key; blame caches by line", () => {
+  test("local signals declare no cache key; blame caches by line; related caches by query", () => {
     const snap = buildSnapshot({ generation: 9, editor });
     const problsms = SIGNAL_CATALOG.find((s) => s.id === "problems");
     const git = SIGNAL_CATALOG.find((s) => s.id === "git");
     const blame = SIGNAL_CATALOG.find((s) => s.id === "blame");
+    const related = SIGNAL_CATALOG.find((s) => s.id === "related");
     expect(problsms?.cacheKey(snap)).toBeUndefined();
     expect(git?.cacheKey(snap)).toBeUndefined();
     expect(blame?.cacheKey(snap)).toBe("src/a.ts:0");
+    expect(related?.cacheKey(snap)).toBe("src/a.ts");
   });
 });
