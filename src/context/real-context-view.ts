@@ -4,6 +4,7 @@ import * as vscode from "vscode";
 import { toRelativeRef } from "../briefs/params.js";
 import { errMsg, type Logger } from "../logging.js";
 import type { GitApiLike } from "../scm/git-types.js";
+import { repoContaining } from "../scm/repo-select.js";
 import { createDebouncer, DEBOUNCE_MS } from "./debounce.js";
 import { offersFor } from "./offers.js";
 import { validateInbound } from "./protocol.js";
@@ -34,14 +35,12 @@ export function registerContextView(deps: {
   let generation = 0;
   let view: vscode.WebviewView | undefined;
 
-  const gitSummary = async (): Promise<GitSummary | undefined> => {
-    // KNOWN LIMITATION: repositories()[0] is an arbitrary repository, not the
-    // one containing the file on screen — in a multi-root workspace it is
-    // whichever the git extension happens to list first. PR 2 should select by
-    // the longest rootPath prefix of the active file, the way rootFor does in
-    // src/briefs/params.ts; it lands there rather than here because that is
-    // where the collection path becomes testable.
-    const repo = (await deps.git())?.repositories()[0];
+  const gitSummary = async (fileName: string | undefined): Promise<GitSummary | undefined> => {
+    const repos = (await deps.git())?.repositories() ?? [];
+    // fileName is the editor's absolute path — a local filesystem lookup, not
+    // a payload; the repo-relative toRelativeRef value is still what reaches
+    // the snapshot below.
+    const repo = repoContaining(repos, fileName);
     if (repo === undefined) return undefined;
     // changedPaths stays UNREAD in PR 1: filling it means an async changedFiles
     // call per collection, which belongs with PR 2's controller. Undefined, not
@@ -77,7 +76,7 @@ export function registerContextView(deps: {
     const mine = generation;
     const editor = vscode.window.activeTextEditor;
     const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-    const git = await gitSummary();
+    const git = await gitSummary(editor?.document.fileName);
     // A minimal fence: the git lookup is awaited, so a later collection can
     // overtake this one. PR 2 generalises this across all four signals.
     if (mine !== generation || view === undefined) return;
