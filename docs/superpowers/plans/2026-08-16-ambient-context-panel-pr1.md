@@ -1697,6 +1697,34 @@ eye — this step is the point of the task, not a formality:
 Record anything that fails here as a defect to fix before the commit — a green
 unit suite is not evidence this surface works.
 
+**Added after implementation, from the reviews.** These come from reading the
+finished code, so they name things the nine points above do not:
+
+10. **Check the Git section against `git status`.** `changedPaths` is genuinely
+    empty until PR 2. The count row is now omitted rather than claiming zero —
+    confirm you see a branch row and no count, not "0 changed files".
+11. **Expect no icons.** No codicon font ships, so the icon spans were removed;
+    `iconId` is still carried in the data for a later PR. Rows and buttons should
+    read cleanly, with no stray indent where an icon used to be.
+12. **Open a multi-root window with two repos on different branches.** The panel
+    reads `repositories()[0]`, which is not necessarily the repo containing the
+    file on screen. This is a known limitation recorded in the code; PR 2 selects
+    by longest `rootPath` prefix. Confirm which branch it shows.
+13. **Tab into an offer button, then move the cursor in the editor.** Focus must
+    survive the re-render — the panel now skips repainting a mount whose HTML is
+    unchanged, and offers sit outside the `aria-live` region. With a screen
+    reader on, moving the cursor should not re-announce the panel.
+14. **Watch the view's initial height.** A webview view above six tree views can
+    resolve to a few pixels tall on a fresh profile. Item 1 checks it is *first*,
+    not that it is *usable*.
+15. **Hide the Context view entirely** (right-click the container → uncheck
+    Context), keep editing for a minute, then check the output channel for
+    `context panel collect failed` lines. Expect silence.
+16. **Click each of the six offers while disconnected from the Gateway.** All six
+    should report not being connected; none should log
+    `context panel refused a message`. A refusal there would mean the offer list
+    and the command allowlist have drifted apart.
+
 - [ ] **Step 10: Commit**
 
 ```bash
