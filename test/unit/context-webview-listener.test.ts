@@ -57,4 +57,11 @@ describe("context webview message listener", () => {
     dispatch("https://evil.example", RENDER_MESSAGE);
     expect(rootHtml()).not.toContain("Line 3: boom");
   });
+
+  test("ignores payloads that do not look like ExtensionToContextView", () => {
+    expect(() => dispatch("vscode-webview://abc", null)).not.toThrow();
+    expect(() => dispatch("vscode-webview://abc", "not an object")).not.toThrow();
+    expect(() => dispatch("vscode-webview://abc", { noType: true })).not.toThrow();
+    expect(rootHtml()).toBe("");
+  });
 });

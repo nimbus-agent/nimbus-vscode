@@ -35,17 +35,28 @@ window.addEventListener("message", (event: MessageEvent<ExtensionToContextView>)
   // directly at the listener rather than through an indirection it may not
   // follow, and so this bundle stays free of the chat webview's module.
   if (!event.origin.startsWith("vscode-webview://")) return;
+  const message: unknown = event.data;
+  // A trusted origin says nothing about payload shape: guard against a
+  // null/non-object message or one missing `type` before branching on it,
+  // matching src/chat/webview/main.ts's same check.
+  if (
+    message === null ||
+    typeof message !== "object" ||
+    typeof (message as { type?: unknown }).type !== "string"
+  ) {
+    return;
+  }
   const root = mount();
   if (root === null) return;
-  const message = event.data;
-  if (message.type === "paused") {
+  const typed = message as ExtensionToContextView;
+  if (typed.type === "paused") {
     root.innerHTML = "";
     return;
   }
   root.innerHTML = renderPanel({
-    sections: message.sections,
-    offers: message.offers,
-    isDirty: message.isDirty,
+    sections: typed.sections,
+    offers: typed.offers,
+    isDirty: typed.isDirty,
   });
 });
 
