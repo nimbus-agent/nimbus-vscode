@@ -68,7 +68,7 @@ function policyFor(source: string | undefined): QuotedTokenPolicy {
 }
 
 // Cut on a word boundary so the tail of the query is never half a token.
-function clampOnWord(text: string, max: number): string {
+export function clampOnWord(text: string, max: number): string {
   if (text.length <= max) return text;
   const cut = text.slice(0, max);
   const lastSpace = cut.lastIndexOf(" ");

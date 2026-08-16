@@ -1,7 +1,12 @@
 import { describe, expect, test } from "vitest";
 
 import type { GitRepositoryLike } from "../../src/scm/git-types.js";
-import { classifyRepositories, findRepoByRoot, repoLabel } from "../../src/scm/repo-select.js";
+import {
+  classifyRepositories,
+  findRepoByRoot,
+  repoContaining,
+  repoLabel,
+} from "../../src/scm/repo-select.js";
 
 function fakeRepo(rootPath: string): GitRepositoryLike {
   return {
@@ -11,6 +16,7 @@ function fakeRepo(rootPath: string): GitRepositoryLike {
     untrackedPaths: async () => [],
     log: async () => [],
     inputBox: { value: "" },
+    branch: () => "main",
   };
 }
 
@@ -51,5 +57,35 @@ describe("findRepoByRoot", () => {
   });
   test("returns undefined when the repository closed", () => {
     expect(findRepoByRoot([fakeRepo("/a")], "/b")).toBeUndefined();
+  });
+});
+
+describe("repoContaining", () => {
+  test("chooses the containing repo among several", () => {
+    const a = fakeRepo("/home/dev/a");
+    const b = fakeRepo("/home/dev/b");
+    expect(repoContaining([a, b], "/home/dev/b/src/file.ts")).toBe(b);
+  });
+
+  test("the innermost repo wins when one root nests inside another", () => {
+    const outer = fakeRepo("/home/dev/proj");
+    const inner = fakeRepo("/home/dev/proj/vendor/lib");
+    expect(repoContaining([outer, inner], "/home/dev/proj/vendor/lib/src/file.ts")).toBe(inner);
+  });
+
+  test("returns undefined when no root matches", () => {
+    const a = fakeRepo("/home/dev/a");
+    expect(repoContaining([a], "/home/dev/elsewhere/file.ts")).toBeUndefined();
+  });
+
+  test("returns the sole repository when fileName is undefined", () => {
+    const a = fakeRepo("/home/dev/a");
+    expect(repoContaining([a], undefined)).toBe(a);
+  });
+
+  test("returns undefined when fileName is undefined and several repos exist", () => {
+    const a = fakeRepo("/home/dev/a");
+    const b = fakeRepo("/home/dev/b");
+    expect(repoContaining([a, b], undefined)).toBeUndefined();
   });
 });

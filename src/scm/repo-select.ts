@@ -1,3 +1,4 @@
+import { rootFor } from "../briefs/params.js";
 import type { GitRepositoryLike } from "./git-types.js";
 
 export type RepoChoice =
@@ -30,4 +31,29 @@ export function findRepoByRoot(
   rootPath: string,
 ): GitRepositoryLike | undefined {
   return repos.find((r) => r.rootPath === rootPath);
+}
+
+// The repository containing `fileName`, in a multi-root workspace where more
+// than one is open. Delegates the longest-root-first matching (and the
+// Windows drive-letter/UNC case-insensitivity rule) to rootFor rather than
+// re-deriving it — repo roots and workspace roots are matched by the same
+// rule, so one implementation earns both call sites.
+//
+// With no fileName (no active editor) there is nothing to match against: the
+// sole repository is returned when there is exactly one, and undefined
+// otherwise — guessing among several would reintroduce the arbitrary choice
+// this function exists to replace.
+export function repoContaining(
+  repos: readonly GitRepositoryLike[],
+  fileName: string | undefined,
+): GitRepositoryLike | undefined {
+  if (fileName === undefined) {
+    return repos.length === 1 ? repos[0] : undefined;
+  }
+  const root = rootFor(
+    fileName,
+    repos.map((r) => r.rootPath),
+  );
+  if (root === undefined) return undefined;
+  return findRepoByRoot(repos, root);
 }

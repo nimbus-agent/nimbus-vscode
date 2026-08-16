@@ -39,12 +39,13 @@ extracted from).
 
 ### 2. Bundled — no runtime npm dependency
 
-[`esbuild.mjs`](../esbuild.mjs) produces two bundles:
+[`esbuild.mjs`](../esbuild.mjs) produces three bundles:
 
 | Entry | Platform | Output | Notes |
 | --- | --- | --- | --- |
 | `src/extension.ts` | node / CJS | `dist/extension.js` | `target: node18`, minified in prod, `vscode` external. |
 | `src/chat/webview/main.ts` | browser / IIFE | `media/webview.js` | `globalName: NimbusWebview`, always minified (ships in the `.vsix`, reloads on every panel open). `styles.css` is copied to `media/webview.css`. |
+| `src/context/webview/main.ts` | browser / IIFE | `media/context.js` | `globalName: NimbusContextView`, always minified. The ambient context panel's webview view; its `styles.css` is copied to `media/context.css`. Deliberately does **not** import the chat webview's render module, which would pull marked + DOMPurify into a panel that renders no markdown. |
 
 Every dependency — including `@nimbus-dev/client`, `marked`, and `dompurify` —
 is **inlined at build time**. The only thing left external is `vscode`, which the

@@ -415,6 +415,11 @@
     "views": {
       "nimbus": [
         {
+          "id": "nimbus.contextView",
+          "name": "Context",
+          "type": "webview"
+        },
+        {
           "id": "nimbus.auditView",
           "name": "Audit"
         },

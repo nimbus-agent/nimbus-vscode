@@ -11,7 +11,10 @@
 // `bun run build`. CI runs it on every push/PR.
 //
 // Checks:
-//   1. Both bundles exist (dist/extension.js, media/webview.js).
+//   1. The extension bundle and the chat webview bundle exist
+//      (dist/extension.js, media/webview.js). The build produces a third bundle,
+//      media/context.js — its presence is guarded by check-vsix-contents.mjs,
+//      which requires it (and media/context.css) in the packaged payload.
 //   2. The extension bundle's only external require()s are node builtins +
 //      "vscode" — in particular @nimbus-dev/client must be inlined, not required.
 import { existsSync, readFileSync } from "node:fs";
@@ -25,7 +28,7 @@ const allowed = new Set(["vscode", ...builtinModules, ...builtinModules.map((m) 
 
 const failures = [];
 
-// 1. Bundles must exist — a missing artifact means `bun run build` didn't run.
+// 1. These two must exist — a missing artifact means `bun run build` didn't run.
 for (const artifact of [EXTENSION_BUNDLE, WEBVIEW_BUNDLE]) {
   if (!existsSync(artifact)) {
     failures.push(`missing build artifact: ${artifact} (did you run \`bun run build\`?)`);

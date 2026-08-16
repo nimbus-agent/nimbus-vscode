@@ -23,6 +23,8 @@ export interface GitRepositoryLike {
   // Most recent commit messages, newest first.
   log(maxEntries: number): Promise<readonly string[]>;
   readonly inputBox: { value: string };
+  /** Current branch name; undefined on a detached HEAD. */
+  branch(): string | undefined;
 }
 
 export interface GitApiLike {

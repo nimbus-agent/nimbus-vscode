@@ -5,7 +5,7 @@ description: >
   respect: which `vscode` imports are actually allowed (the "shim only" rule in
   five docs is not what the code does), what the egress choke-point test
   enforces, which test layer runs where and why the ExTester UI suite cannot run
-  in CI, the exact 16 files that ship in the .vsix and why one directory ships
+  in CI, the exact 18 files that ship in the .vsix and why one directory ships
   with no guard at all, and the five places the Quick Ask preset list is copied.
   Use when asking "does this ship to users", "why didn't my UI test run in CI",
   "what else do I have to update", "can I call the Gateway directly", "where do
@@ -56,10 +56,11 @@ code that is already correct. The real shape:
 - `src/vscode-shim.ts` imports **nothing** from `vscode` — zero occurrences. It is
   `*Like` interfaces plus `PROGRESS_LOCATION_NOTIFICATION = 15` (the concrete enum
   is not importable from a pure module).
-- `import * as vscode from "vscode"` appears in exactly **seven** files:
-  `src/extension.ts`, and the six `real-*.ts` adapters — `briefs/real-hover.ts`,
+- `import * as vscode from "vscode"` appears in exactly **eight** files:
+  `src/extension.ts`, and the seven `real-*.ts` adapters — `briefs/real-hover.ts`,
   `chat/real-chat-panel.ts`, `chat-participant/real-participant.ts`,
-  `diagnostics/real-provider.ts`, `lm-tools/real-lm-tools.ts`, `scm/real-git.ts`.
+  `context/real-context-view.ts`, `diagnostics/real-provider.ts`,
+  `lm-tools/real-lm-tools.ts`, `scm/real-git.ts`.
 - What the docs *mean* is the useful rule: **logic modules take a narrow `*Like`
   interface; the `vscode` API itself lives in a `real-*.ts` adapter.** New
   `vscode` surface goes in an adapter. Nothing enforces the seven-file list — it
@@ -152,7 +153,7 @@ That is how the harness stays honest while its own suite sits outside CI.
 so a unit test missing `import { describe } from "vitest"` typechecks clean and
 fails only under `bun run test`.
 
-## 5. What ships in the .vsix — 16 files, six of them prose
+## 5. What ships in the .vsix — 18 files, six of them prose
 
 `.vscodeignore` is an **allowlist** (`**`, then `!` re-includes), because vsce's
 denylist default fails open — every new top-level directory silently joins the
@@ -162,11 +163,12 @@ The payload today (`vsce listFiles`, PackageManager.None):
 
 ```
 package.json  icon.png  README.md  CHANGELOG.md  LICENSE  SECURITY.md
-dist/extension.js  media/webview.js  media/webview.css  resources/nimbus.svg
+dist/extension.js  media/webview.js  media/webview.css
+media/context.js  media/context.css  resources/nimbus.svg
 resources/walkthrough/{welcome,connect,ask,search,quick-ask,explore}.md
 ```
 
-**Six of the sixteen are `resources/walkthrough/*.md`** — user-facing onboarding
+**Six of the eighteen are `resources/walkthrough/*.md`** — user-facing onboarding
 copy, wired to `contributes.walkthroughs[].steps[].media.markdown` in
 `package.json` and rendered in the Get Started walkthrough. They sit next to
 `docs/` in a file tree and read like internal notes, so they are routinely missed
@@ -180,9 +182,12 @@ a `!` line in `.vscodeignore` *and* an entry in `ALLOWED_FILES`. But
 (line 31), and `.vscodeignore` already carries `!resources/**` — so **a new file
 dropped anywhere under `resources/` ships to users with zero edits and zero guard
 failures.** That is exactly the walkthrough directory. Its only presence check is
-the three-entry `missing` list at line 60 — `dist/extension.js`,
-`media/webview.js`, `package.json`, there so an empty payload cannot satisfy an
-allowlist trivially — so the guard also cannot tell you a walkthrough markdown
+the `missing` list at line 60 — `dist/extension.js`, `media/webview.js`,
+`media/context.js`, `media/context.css`, `package.json`, there so an empty
+payload cannot satisfy an allowlist trivially (the ambient context panel added
+the two `media/context.*` entries; it is the one artifact pair whose *presence*
+is guarded, since `media/webview.css` still is not) — so the guard also cannot
+tell you a walkthrough markdown
 file went *missing*: delete or rename one
 and it simply stops shipping, silently, leaving a broken walkthrough step. Nothing
 validates that the `media.markdown` paths in `package.json` resolve. Only

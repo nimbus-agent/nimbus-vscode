@@ -39,8 +39,22 @@ if (isWatch) {
     outfile: "media/webview.js",
     logLevel: "info",
   });
+  const ctxCtx = await context({
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    globalName: "NimbusContextView",
+    sourcemap: isDev,
+    minify: true,
+    treeShaking: true,
+    entryPoints: ["src/context/webview/main.ts"],
+    outfile: "media/context.js",
+    logLevel: "info",
+  });
   await extCtx.watch();
   await webCtx.watch();
+  await ctxCtx.watch();
 } else {
   await build({
     ...baseExt,
@@ -63,8 +77,23 @@ if (isWatch) {
     outfile: "media/webview.js",
     logLevel: "info",
   });
+
+  await build({
+    bundle: true,
+    platform: "browser",
+    target: "es2022",
+    format: "iife",
+    globalName: "NimbusContextView",
+    sourcemap: isDev,
+    minify: true,
+    treeShaking: true,
+    entryPoints: ["src/context/webview/main.ts"],
+    outfile: "media/context.js",
+    logLevel: "info",
+  });
 }
 
 copyFileSync("src/chat/webview/styles.css", "media/webview.css");
+copyFileSync("src/context/webview/styles.css", "media/context.css");
 
 process.stdout.write(`esbuild: bundles produced (minify=${!isDev}, sourcemaps=${isDev})\n`);

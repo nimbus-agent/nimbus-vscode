@@ -57,9 +57,14 @@ if (unexpected.length > 0) {
 
 // A .vsix without the bundle would "pass" an allowlist trivially — assert the
 // payload is actually present so the guard cannot be satisfied by an empty set.
-const missing = ["dist/extension.js", "media/webview.js", "package.json"].filter(
-  (required) => !files.includes(required),
-);
+const missing = [
+  "dist/extension.js",
+  "media/webview.js",
+  "media/webview.css",
+  "media/context.js",
+  "media/context.css",
+  "package.json",
+].filter((required) => !files.includes(required));
 if (missing.length > 0) {
   console.error(`check-vsix-contents: FAILED — missing required file(s): ${missing.join(", ")}`);
   console.error("(did you run `bun run build`?)");

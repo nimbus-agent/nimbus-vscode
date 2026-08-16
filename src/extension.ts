@@ -31,6 +31,7 @@ import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js"
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
+import { registerContextView } from "./context/real-context-view.js";
 import { DIAGNOSTIC_COMMANDS, diagnosticActionsFor } from "./diagnostics/actions.js";
 import { createDiagnosticCommands } from "./diagnostics/commands.js";
 import { buildDiagnosticContext } from "./diagnostics/context.js";
@@ -663,6 +664,7 @@ export function activateWithDeps(
     connection,
     getClient: () => nimbus(),
   });
+  const gitApi = deps.git ?? createRealGitApi(log);
   const sidebarViews: ReadonlyArray<[string, SidebarView]> = [
     ["nimbus.auditView", auditView],
     ["nimbus.egressView", egressView],
@@ -680,6 +682,7 @@ export function activateWithDeps(
       { dispose: () => view.dispose() },
     );
   }
+  ctx.subscriptions.push(registerContextView({ log, git: gitApi }));
 
   const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
   const openSource = deps.openSource ?? createSourceOpener();
@@ -700,7 +703,7 @@ export function activateWithDeps(
     });
 
   const scm = createScmCommands({
-    git: deps.git ?? createRealGitApi(log),
+    git: gitApi,
     client: () => {
       const client = nimbus();
       return client === undefined
