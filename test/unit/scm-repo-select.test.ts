@@ -17,6 +17,7 @@ function fakeRepo(rootPath: string): GitRepositoryLike {
     log: async () => [],
     inputBox: { value: "" },
     branch: () => "main",
+    onDidChange: () => ({ dispose: () => undefined }),
   };
 }
 

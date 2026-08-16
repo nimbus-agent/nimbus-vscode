@@ -26,6 +26,7 @@ interface RawRepository {
     HEAD?: { name?: string };
     untrackedChanges?: RawChange[];
     workingTreeChanges?: RawChange[];
+    onDidChange(listener: () => void): { dispose(): void };
   };
   diffIndexWithHEAD(): Promise<RawChange[]>;
   diffIndexWithHEAD(path: string): Promise<string>;
@@ -36,6 +37,7 @@ interface RawRepository {
 
 interface RawGitApi {
   repositories: RawRepository[];
+  onDidOpenRepository(listener: () => void): { dispose(): void };
 }
 
 function adaptRepository(raw: RawRepository): GitRepositoryLike {
@@ -72,6 +74,7 @@ function adaptRepository(raw: RawRepository): GitRepositoryLike {
     log: async (maxEntries) => (await raw.log({ maxEntries })).map((c) => c.message),
     inputBox: raw.inputBox,
     branch: () => raw.state.HEAD?.name,
+    onDidChange: (listener: () => void) => raw.state.onDidChange(listener),
   };
 }
 
@@ -87,7 +90,10 @@ export function createRealGitApi(log: Logger): () => Promise<GitApiLike | undefi
       if (typeof getApi !== "function") return undefined;
       const api = getApi.call(exports, 1) as RawGitApi | undefined;
       if (api === undefined || !Array.isArray(api.repositories)) return undefined;
-      return { repositories: () => api.repositories.map(adaptRepository) };
+      return {
+        repositories: () => api.repositories.map(adaptRepository),
+        onDidOpenRepository: (listener: () => void) => api.onDidOpenRepository(listener),
+      };
     } catch (e) {
       log.warn(`scm: git extension unavailable: ${errMsg(e)}`);
       return undefined;

@@ -42,10 +42,14 @@ export function registerContextView(deps: {
     // the snapshot below.
     const repo = repoContaining(repos, fileName);
     if (repo === undefined) return undefined;
-    // changedPaths stays UNREAD in PR 1: filling it means an async changedFiles
-    // call per collection, which belongs with PR 2's controller. Undefined, not
-    // [], so gitSection renders no count row rather than claiming zero.
-    return { branch: repo.branch(), changedPaths: undefined };
+    try {
+      const changed = await repo.changedFiles("all");
+      return { branch: repo.branch(), changedPaths: changed.map((c) => c.path) };
+    } catch (e: unknown) {
+      // A failed diff must not cost the branch row, which is already in hand.
+      deps.log.warn(`context panel could not read changed files: ${errMsg(e)}`);
+      return { branch: repo.branch(), changedPaths: undefined };
+    }
   };
 
   // Bound the READ, not just the stored value. Ctrl+A on a large file makes

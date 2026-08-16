@@ -3,6 +3,8 @@
 // extension's own shape (which real-git.ts adapts). Types only — no logic, so
 // this file needs no tests.
 
+import type { DisposableLike } from "../vscode-shim.js";
+
 // "staged" = index vs HEAD (what a commit would contain).
 // "all"    = working tree vs HEAD (staged + unstaged tracked changes).
 export type DiffScope = "staged" | "all";
@@ -25,8 +27,22 @@ export interface GitRepositoryLike {
   readonly inputBox: { value: string };
   /** Current branch name; undefined on a detached HEAD. */
   branch(): string | undefined;
+  /**
+   * Fires when the repository's state changes — branch switch, stage, checkout.
+   * Without it, a branch switch made while the user sits still leaves the
+   * context panel showing the previous branch until some other event happens.
+   */
+  onDidChange(listener: () => void): DisposableLike;
 }
 
 export interface GitApiLike {
   repositories(): readonly GitRepositoryLike[];
+  /**
+   * Fires when the git extension opens or discovers a repository. Repositories
+   * populate ASYNCHRONOUSLY — the extension can be active while still scanning —
+   * so a consumer that subscribes only to what `repositories()` returns at
+   * activation can attach to nothing at all and never hear about a branch
+   * switch again.
+   */
+  onDidOpenRepository(listener: () => void): DisposableLike;
 }
