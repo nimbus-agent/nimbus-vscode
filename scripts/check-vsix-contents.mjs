@@ -60,6 +60,7 @@ if (unexpected.length > 0) {
 const missing = [
   "dist/extension.js",
   "media/webview.js",
+  "media/webview.css",
   "media/context.js",
   "media/context.css",
   "package.json",
