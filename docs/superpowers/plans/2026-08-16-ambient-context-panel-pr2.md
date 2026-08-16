@@ -1811,6 +1811,53 @@ all sixteen points. Then, for this PR's additions:
     the History and Related sections must change to "Needs the Nimbus Gateway"
     on their own, not keep showing answers that are no longer current.
 
+**Added after implementation, from the final review and its fix wave.** These
+come from reading the finished code, so they name things the ten points above
+cannot. Several cover code that ships with no automated test at all, because
+`real-context-view.ts` is untested `vscode` glue by convention.
+
+11. **The blame line number — the highest-value check here.** Put the cursor on a
+    line whose neighbours have different commits (the technique
+    `src/briefs/params.ts` used to settle this originally). The panel's History
+    section, the hover on that same line, and `Why is this here?` must all name
+    the **same** commit. Before the fix they disagreed: the panel described the
+    line above. Only a live Gateway proves it.
+12. **The changed-file count — a known regression, and the one thing here that is
+    expected to be wrong.** The count now reads the git extension's
+    `workingTreeChanges` instead of running a diff. That set is **unstaged-only**
+    and, under the default `git.untrackedChanges: "mixed"`, **includes untracked
+    files**. So staging a modified file makes the count fall, and staging
+    everything shows "0 changed files" beside a dirty repo. Stage something,
+    add an untracked file, and compare against `git status`. Decide whether the
+    count should mean "not yet committed" (which needs the index changes folded
+    back in, a seam addition) or "not yet staged" (which needs the label and the
+    docs to say so).
+13. **Git churn.** With the panel open, type steadily in a file inside a repo and
+    watch the output channel. A git event now invalidates **all** caches, so a
+    watcher firing steadily could re-issue both Gateway calls every 150 ms.
+    Confirm the cadence matches what the debounce tier promises rather than a
+    storm — and watch for a feedback path, since a `git diff` touching
+    `.git/index` can itself trigger the extension's watcher.
+14. **Commit invalidation.** Visit a line so blame appears, commit it, then return
+    to that line. It must show the new sha and author, not the pre-commit one.
+15. **The first render.** Problems and Git must paint with real rows immediately
+    and never flash "Loading…"; only History and Related may show it. With a
+    screen reader, only those two should be announced as loading.
+16. **A file outside every workspace root.** `toRelativeRef` falls back to a bare
+    basename, and that basename is what now reaches the Gateway on every cursor
+    rest. Confirm it degrades to "No history for this line yet" rather than
+    returning blame from a different file that happens to share the name.
+17. **Whether an index item's `name` ever equals the repo-relative path.** The
+    self-exclusion in Related assumes it does. If the index stores basenames or
+    service-qualified keys, the open file will always appear as its own top
+    neighbour. Only a live index answers this.
+18. **A second repository opened mid-session.** The `onDidOpenRepository`
+    re-attach has never run against the real git extension. Open another folder,
+    switch branches in it, and confirm the Git section updates for a file there.
+19. **The selected-text egress.** Select a block of code and check the Gateway's
+    egress ledger and logs. This is the first surface that sends selection text
+    with no click; confirm what is recorded matches what the README now claims.
+
 - [ ] **Step 7: Commit**
 
 ```bash
