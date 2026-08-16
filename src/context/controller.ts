@@ -53,7 +53,7 @@ interface CacheEntry {
 }
 
 // An in-flight collection, tagged the same way for the same reason, plus the
-// invalidation epoch it started under — see bumpEpoch below.
+// invalidation epoch of ITS OWN signal that it started under — see epochOf.
 interface FlightEntry {
   readonly promise: Promise<SignalSection>;
   readonly path: string | undefined;
@@ -70,10 +70,30 @@ export function createController(deps: ControllerDeps): ContextController {
   let lastSnapshot: ContextSnapshot | undefined;
   let disposed = false;
   // Bumped by every invalidation path (path/signal/all, and the connection
-  // listener's clear). A runOne that started under an older epoch must not
+  // listener's clear). A collection that started under an older epoch must not
   // let its eventual answer land in the cache: the invalidation happened for
   // a reason, and an in-flight promise that predates it does not know that.
-  let epoch = 0;
+  //
+  // PER SIGNAL, not one global counter. A single counter made every
+  // invalidation everyone's problem: invalidating `git` (which the glue does on
+  // each repository event) would refuse to cache, and refuse to coalesce, an
+  // in-flight `blame` or `related` too — so under a burst of git events the
+  // caches never filled at all, which is the one thing this module exists for.
+  const epochs = new Map<SignalId, number>();
+  const epochOf = (id: SignalId): number => epochs.get(id) ?? 0;
+  const bumpEpoch = (id: SignalId): void => {
+    epochs.set(id, epochOf(id) + 1);
+  };
+  // Every signal we could possibly hold state for: the configured specs plus
+  // anything already in the tables, so a bump-everything cannot miss a key.
+  const allSignalIds = (): SignalId[] => [
+    ...new Set<SignalId>([
+      ...deps.signals.map((s) => s.id),
+      ...caches.keys(),
+      ...inFlight.keys(),
+      ...epochs.keys(),
+    ]),
+  ];
 
   const cacheFor = (id: SignalId): Map<string, CacheEntry> => {
     const existing = caches.get(id);
@@ -110,7 +130,9 @@ export function createController(deps: ControllerDeps): ContextController {
   // survives the drop and would otherwise still call `remember` when it
   // resolves — the epoch check in `runOne` is what catches that case.
   const invalidateWhere = (matches: (path: string | undefined) => boolean): void => {
-    epoch += 1;
+    // Every signal: this path (invalidatePath / invalidateAll / a connection
+    // state change) touches all of their caches, so all of their epochs move.
+    for (const id of allSignalIds()) bumpEpoch(id);
     for (const cache of caches.values()) {
       for (const [key, entry] of [...cache.entries()]) {
         if (matches(entry.path)) cache.delete(key);
@@ -144,24 +166,37 @@ export function createController(deps: ControllerDeps): ContextController {
     deps.post(message);
   };
 
-  const runOne = async (
+  // Never leave a section on "Loading…". The two Gateway collectors catch their
+  // own RPC failures, but anything thrown outside that — or by a future signal
+  // whose author forgets — would hang that section for the rest of the session,
+  // with only a log line to explain it.
+  const errorSection = (spec: SignalSpec, e: unknown): SignalSection => ({
+    id: spec.id,
+    title: SECTION_TITLES[spec.id],
+    rows: [{ label: `Unavailable: ${errMsg(e)}`, iconId: "error" }],
+    transient: true,
+  });
+
+  // The cache/coalesce/remember half, with no opinion about who gets the
+  // answer: a Gateway-backed signal posts it later as its own `section`
+  // message, a local one rides the first render. Rejects if the collector does.
+  const resolveSection = async (
     spec: SignalSpec,
     snapshot: ContextSnapshot,
-    mine: number,
-  ): Promise<void> => {
+  ): Promise<SignalSection> => {
     const key = spec.cacheKey(snapshot);
     const path = snapshot.path;
-    const epochAtStart = epoch;
+    const epochAtStart = epochOf(spec.id);
     // Hoisted above the try so the `finally` below can identify — and only
     // remove — the in-flight entry THIS call created or reused.
     let pending: Promise<SignalSection> | undefined;
     try {
       if (key !== undefined) {
         const existing = flightFor(spec.id).get(key);
-        // Only reuse an entry from the CURRENT epoch. One that predates an
-        // invalidation is normally already gone (invalidateWhere deletes
-        // matching entries), but this is the belt to that suspenders.
-        if (existing !== undefined && existing.epoch === epoch) pending = existing.promise;
+        // Only reuse an entry from the CURRENT epoch of this signal. One that
+        // predates an invalidation is normally already gone (invalidateWhere
+        // deletes matching entries), but this is the belt to that suspenders.
+        if (existing !== undefined && existing.epoch === epochAtStart) pending = existing.promise;
       }
       if (pending === undefined) {
         // Called INSIDE the try on purpose. A collector that throws
@@ -169,78 +204,112 @@ export function createController(deps: ControllerDeps): ContextController {
         // in-flight entry would survive forever and every later collection for
         // the same key would await a promise that can only reject.
         pending = spec.collect(snapshot, deps.signalDeps);
-        if (key !== undefined) flightFor(spec.id).set(key, { promise: pending, path, epoch });
+        if (key !== undefined) {
+          flightFor(spec.id).set(key, { promise: pending, path, epoch: epochAtStart });
+        }
       }
       const section = await pending;
-      // Worth remembering only if nothing invalidated this key while the
-      // collection was in flight, and the answer is not a transient error a
+      // Worth remembering only if nothing invalidated THIS SIGNAL's key while
+      // the collection was in flight, and the answer is not a transient error a
       // collector recovered from — the two Gateway collectors resolve rather
       // than reject on a dropped RPC, so a caught hiccup must not pin itself
       // into the cache as if it were a real answer.
-      if (key !== undefined && epoch === epochAtStart && section.transient !== true) {
+      if (key !== undefined && epochOf(spec.id) === epochAtStart && section.transient !== true) {
         remember(spec.id, key, { section, path });
       }
-      // The fence: a later snapshot has overtaken this one, so this answer is
-      // about a line or file the user has already left.
-      if (mine !== generation) return;
-      post({ type: "section", generation: mine, section });
-    } catch (e: unknown) {
-      deps.log.warn(`context signal ${spec.id} failed: ${errMsg(e)}`);
-      // Never leave a section on "Loading…". The two collectors catch their own
-      // RPC failures, but anything thrown outside that — or by a future signal
-      // whose author forgets — would hang that section for the rest of the
-      // session, with only a log line to explain it.
-      if (mine === generation) {
-        post({
-          type: "section",
-          generation: mine,
-          section: {
-            id: spec.id,
-            title: SECTION_TITLES[spec.id],
-            rows: [{ label: `Unavailable: ${errMsg(e)}`, iconId: "error" }],
-            transient: true,
-          },
-        });
-      }
+      return section;
     } finally {
       if (key !== undefined) {
         const current = flightFor(spec.id).get(key);
-        // Only delete OUR entry: a newer runOne may already have replaced it
-        // (e.g. an invalidation removed this one and a fresh collection is
+        // Only delete OUR entry: a newer collection may already have replaced
+        // it (e.g. an invalidation removed this one and a fresh collection is
         // already running), and this cleanup must not clobber that one.
         if (current !== undefined && current.promise === pending) flightFor(spec.id).delete(key);
       }
     }
   };
 
+  // resolveSection, with a failure turned into a section rather than a throw.
+  const sectionFor = async (
+    spec: SignalSpec,
+    snapshot: ContextSnapshot,
+  ): Promise<SignalSection> => {
+    try {
+      return await resolveSection(spec, snapshot);
+    } catch (e: unknown) {
+      deps.log.warn(`context signal ${spec.id} failed: ${errMsg(e)}`);
+      return errorSection(spec, e);
+    }
+  };
+
+  const runOne = async (
+    spec: SignalSpec,
+    snapshot: ContextSnapshot,
+    mine: number,
+  ): Promise<void> => {
+    const section = await sectionFor(spec, snapshot);
+    // The fence: a later snapshot has overtaken this one, so this answer is
+    // about a line or file the user has already left.
+    if (mine !== generation) return;
+    post({ type: "section", generation: mine, section });
+  };
+
   const collect = async (snapshot: ContextSnapshot): Promise<void> => {
-    if (!deps.isVisible()) return;
+    // Matches post()'s discipline. A glue-side collection can sit awaiting git
+    // across a dispose(), and resuming into RPCs whose answers are then thrown
+    // away helps nobody.
+    if (disposed || !deps.isVisible()) return;
     generation += 1;
     const mine = generation;
     lastSnapshot = snapshot;
     const connected = deps.connection.current().kind === "connected";
 
-    const initial: SignalSection[] = [];
+    // Filled in signal order. A slot stays undefined only until the local
+    // collection filling it resolves, which the await below waits for.
+    const slots: Array<SignalSection | undefined> = deps.signals.map(() => undefined);
     const toRun: SignalSpec[] = [];
-    for (const spec of deps.signals) {
+    const locals: Array<Promise<void>> = [];
+    deps.signals.forEach((spec, index) => {
       if (spec.needsGateway && !connected) {
-        initial.push(disconnectedSection(spec));
-        continue;
+        slots[index] = disconnectedSection(spec);
+        return;
       }
       const key = spec.cacheKey(snapshot);
       const cached = key === undefined ? undefined : cacheFor(spec.id).get(key);
       if (cached !== undefined) {
-        initial.push(cached.section);
-        continue;
+        slots[index] = cached.section;
+        return;
       }
-      initial.push(loadingSection(spec));
+      if (!spec.needsGateway) {
+        // A local read costs nothing but a synchronous pass over data already
+        // in hand, so it rides the FIRST render with its real rows. Marking it
+        // "Loading…" instead repainted the signals mount twice for every
+        // collection and made a screen reader announce a loading row on every
+        // cursor rest — for a section that was never going to be late.
+        locals.push(
+          sectionFor(spec, snapshot).then((section) => {
+            slots[index] = section;
+          }),
+        );
+        return;
+      }
+      slots[index] = loadingSection(spec);
       toRun.push(spec);
+    });
+
+    // Awaited only when there is something to await, so a collection with no
+    // local work still posts its render in the same turn it was asked for.
+    if (locals.length > 0) {
+      await Promise.all(locals);
+      // A newer collection overtook us while the local reads resolved; its
+      // render is the current one and this one must not clobber it.
+      if (mine !== generation) return;
     }
 
     post({
       type: "render",
       generation: mine,
-      sections: initial,
+      sections: slots.filter((s): s is SignalSection => s !== undefined),
       offers: offersFor(snapshot),
       isDirty: snapshot.isDirty,
     });
@@ -275,7 +344,8 @@ export function createController(deps: ControllerDeps): ContextController {
     collect,
     invalidatePath: (path) => invalidateWhere((p) => p === path),
     invalidateSignal: (id) => {
-      epoch += 1;
+      // Only this signal's epoch: the whole point of keeping them apart.
+      bumpEpoch(id);
       cacheFor(id).clear();
       flightFor(id).clear();
     },
@@ -285,6 +355,7 @@ export function createController(deps: ControllerDeps): ContextController {
       sub.dispose();
       caches.clear();
       inFlight.clear();
+      epochs.clear();
     },
   };
 }

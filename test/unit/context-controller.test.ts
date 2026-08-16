@@ -497,6 +497,168 @@ describe("createController", () => {
     expect(relatedCalls).toBe(1);
   });
 
+  // The epoch is per signal, not one global counter. With a single counter, the
+  // glue's per-repository-event invalidation of `git` also refused to cache —
+  // and refused to coalesce — every in-flight `blame` and `related`, so under a
+  // burst of git events the caches never filled at all.
+  describe("per-signal invalidation epochs", () => {
+    function twoGatewaySignals(collectBlame: () => Promise<SignalSection>) {
+      let relatedCalls = 0;
+      const blameSpec: SignalSpec = {
+        id: "blame",
+        needsGateway: true,
+        collect: () => collectBlame(),
+        cacheKey: (s) => (s.line === undefined ? undefined : `${s.path}:${s.line}`),
+      };
+      const relatedSpec: SignalSpec = {
+        id: "related",
+        needsGateway: true,
+        collect: async () => {
+          relatedCalls += 1;
+          return { id: "related", title: "Related", rows: [] };
+        },
+        cacheKey: (s) => s.path,
+      };
+      const controller = createController({
+        signals: [blameSpec, relatedSpec],
+        signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+        connection: {
+          current: () => ({ kind: "connected" }) as ConnectionState,
+          onState: () => ({ dispose: () => undefined }),
+        },
+        post: () => undefined,
+        isVisible: () => true,
+        log: silentLog as never,
+      });
+      return { controller, relatedCalls: () => relatedCalls };
+    }
+
+    test("invalidating one signal mid-flight still lets another's answer be cached", async () => {
+      let blameCalls = 0;
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      const h = twoGatewaySignals(async () => {
+        blameCalls += 1;
+        if (blameCalls === 1) await gate;
+        return section(1);
+      });
+      const first = h.controller.collect(snap(1));
+      h.controller.invalidateSignal("related");
+      release?.();
+      await first;
+      await h.controller.collect(snap(2));
+      // 1, not 2: `related`'s invalidation says nothing about `blame`, so
+      // blame's in-flight answer still landed in blame's cache.
+      expect(blameCalls).toBe(1);
+    });
+
+    test("invalidating one signal does not break another's in-flight coalescing", async () => {
+      let blameCalls = 0;
+      let release: (() => void) | undefined;
+      const gate = new Promise<void>((r) => {
+        release = r;
+      });
+      const h = twoGatewaySignals(async () => {
+        blameCalls += 1;
+        await gate;
+        return section(1);
+      });
+      const first = h.controller.collect(snap(1));
+      h.controller.invalidateSignal("related");
+      const second = h.controller.collect(snap(2));
+      release?.();
+      await Promise.all([first, second]);
+      expect(blameCalls).toBe(1);
+    });
+
+    test("invalidating one signal still forces that signal to recollect", async () => {
+      let blameCalls = 0;
+      const h = twoGatewaySignals(async () => {
+        blameCalls += 1;
+        return section(1);
+      });
+      await h.controller.collect(snap(1));
+      h.controller.invalidateSignal("blame");
+      await h.controller.collect(snap(2));
+      expect(blameCalls).toBe(2);
+      expect(h.relatedCalls()).toBe(1);
+    });
+  });
+
+  // Local signals cost nothing but a pass over data already in hand, so they
+  // belong in the first render with their real rows. Marking them "Loading…"
+  // repainted the signals mount twice per collection and made a screen reader
+  // announce a loading row on every cursor rest.
+  test("puts a local signal's real rows in the first render, never Loading…", async () => {
+    const posted: Array<{ type: string; sections?: SignalSection[] }> = [];
+    const localSpec: SignalSpec = {
+      id: "problems",
+      needsGateway: false,
+      collect: async () => ({
+        id: "problems",
+        title: "Problems",
+        rows: [{ label: "Line 3: boom" }],
+      }),
+      cacheKey: () => undefined,
+    };
+    const gatewaySpec: SignalSpec = {
+      id: "blame",
+      needsGateway: true,
+      collect: async () => section(1),
+      cacheKey: (s) => (s.line === undefined ? undefined : `${s.path}:${s.line}`),
+    };
+    const controller = createController({
+      signals: [localSpec, gatewaySpec],
+      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({ dispose: () => undefined }),
+      },
+      post: (m) => posted.push(m as { type: string; sections?: SignalSection[] }),
+      isVisible: () => true,
+      log: silentLog as never,
+    });
+    await controller.collect(snap(1));
+    const first = posted[0];
+    expect(first?.type).toBe("render");
+    const problems = first?.sections?.find((s) => s.id === "problems");
+    expect(problems?.rows.map((r) => r.label)).toEqual(["Line 3: boom"]);
+    expect(problems?.loading).toBeUndefined();
+    // The Gateway-backed one is still the only late arrival.
+    expect(first?.sections?.find((s) => s.id === "blame")?.loading).toBe(true);
+    // Order is signal order, whichever resolves first.
+    expect(first?.sections?.map((s) => s.id)).toEqual(["problems", "blame"]);
+  });
+
+  test("a local signal that throws renders an error row in the first render", async () => {
+    const posted: Array<{ type: string; sections?: SignalSection[] }> = [];
+    const controller = createController({
+      signals: [
+        {
+          id: "problems",
+          needsGateway: false,
+          collect: async () => {
+            throw new Error("local exploded");
+          },
+          cacheKey: () => undefined,
+        },
+      ],
+      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({ dispose: () => undefined }),
+      },
+      post: (m) => posted.push(m as { type: string; sections?: SignalSection[] }),
+      isVisible: () => true,
+      log: silentLog as never,
+    });
+    await controller.collect(snap(1));
+    expect(posted[0]?.sections?.[0]?.rows[0]?.label).toContain("local exploded");
+    expect(posted[0]?.sections?.[0]?.loading).toBeUndefined();
+  });
+
   test("invalidateAll clears every signal's cache", async () => {
     let blameCalls = 0;
     let relatedCalls = 0;
