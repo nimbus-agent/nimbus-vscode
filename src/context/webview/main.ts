@@ -28,6 +28,13 @@ function onClick(event: MouseEvent): void {
 }
 
 window.addEventListener("message", (event: MessageEvent<ExtensionToContextView>) => {
+  // Trust boundary (CodeQL js/missing-origin-check, Sonar S2819): only the VS
+  // Code host can post a `vscode-webview://<id>` origin — it's an
+  // opaque, browser-assigned origin a foreign page cannot forge. Checked
+  // inline, not via an imported helper, so static analysis sees the guard
+  // directly at the listener rather than through an indirection it may not
+  // follow, and so this bundle stays free of the chat webview's module.
+  if (!event.origin.startsWith("vscode-webview://")) return;
   const root = mount();
   if (root === null) return;
   const message = event.data;
