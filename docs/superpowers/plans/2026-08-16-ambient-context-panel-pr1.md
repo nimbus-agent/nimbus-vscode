@@ -1461,9 +1461,9 @@ import {
 // decision (what the context is, which briefs fit, what may be executed) lives
 // in the pure modules beside this file, which carry the tests.
 //
-// PR 1 re-collects on every event, with no debounce and no cache: both signals
-// here are local reads. PR 2 introduces controller.ts when the Gateway-backed
-// signals arrive and cost per collection starts to matter.
+// PR 1 re-collects on every event, with no cache: both signals here are local
+// reads. PR 2 introduces controller.ts when the Gateway-backed signals arrive
+// and cost per collection starts to matter.
 
 const VIEW_ID = "nimbus.contextView";
 
@@ -1479,9 +1479,10 @@ export function registerContextView(deps: {
   const gitSummary = async (): Promise<GitSummary | undefined> => {
     const repo = (await deps.git())?.repositories()[0];
     if (repo === undefined) return undefined;
-    // changedPaths stays empty in PR 1: filling it means an async changedFiles
-    // call per collection, which belongs with PR 2's controller.
-    return { branch: repo.branch(), changedPaths: [] };
+    // changedPaths stays UNREAD in PR 1: filling it means an async changedFiles
+    // call per collection, which belongs with PR 2's controller. Undefined, not
+    // [], so gitSection renders no count row rather than claiming zero.
+    return { branch: repo.branch(), changedPaths: undefined };
   };
 
   // Bound the READ, not just the stored value. Ctrl+A on a large file makes
@@ -1758,9 +1759,9 @@ generation fence, the invalidation triggers, and the seam's `onDidChange` verb
 pre-fill for the prompted briefs (PR 3); the ExTester spec (PR 3).
 
 **Two limits a PR-1 reviewer will notice, to be named in the PR description
-rather than left to be found:** the `git` signal reports the branch but a
-`changedPaths` array that is always empty, and a branch switch made with no
-editor activity leaves that section stale until the next event. Both resolve in
+rather than left to be found:** the `git` signal reports the branch but leaves
+`changedPaths` undefined, and a branch switch made with no editor activity
+leaves that section stale until the next event. Both resolve in
 PR 2 — the first needs the async collection path `controller.ts` introduces, the
 second needs the seam's `onDidChange` verb and the invalidation trigger that
 consumes it.

@@ -318,13 +318,14 @@ Three PRs, each independently reviewable and shippable.
 **PR 1 — shell and free signals.** `src/context/` pure core (`snapshot.ts`,
 `signals.ts`, `offers.ts`, `protocol.ts`), `real-context-view.ts`, the webview
 bundle and its esbuild entry, the `problems` and `git` signals, and
-catalog-derived offers. Includes the `branch()` addition to the git seam. No
-Gateway RPC at all, so the panel is useful while disconnected from day one.
+catalog-derived offers. Includes the `branch()` addition to the git seam, the
+cadence section's visibility pause and debounce tiers, and the dirty marker.
+No Gateway RPC at all, so the panel is useful while disconnected from day one.
 
 **PR 2 — Gateway signals and cadence.** The `blame` and `related` collectors,
-the `peek.ts` split, and the whole of the cadence section: debounce tiers,
-cache, coalescing, generation fence, visibility pause, the four invalidation
-triggers, and the dirty marker.
+the `peek.ts` split, and the rest of the cadence section: the cache, in-flight
+coalescing, the general generation fence, the four invalidation triggers, and
+the seam's `onDidChange` verb.
 
 **PR 3 — polish.** Action wiring end to end, the degraded states, the
 `nimbus.context.enabled` setting, `docs/settings.md`, the ROADMAP move to
