@@ -682,7 +682,25 @@ export function activateWithDeps(
       { dispose: () => view.dispose() },
     );
   }
-  ctx.subscriptions.push(registerContextView({ log, git: gitApi }));
+  ctx.subscriptions.push(
+    registerContextView({
+      log,
+      git: gitApi,
+      // The panel's two calls reach no model, so they take the RAW client —
+      // routing them through the egress gate would be wrong, and the
+      // choke-point test allows both by name.
+      client: () => {
+        const client = nimbus();
+        if (client === undefined) return undefined;
+        return {
+          agentsWhyPeek: (p) => client.agentsWhyPeek(p),
+          searchRanked: (params) => client.searchRanked(params),
+        };
+      },
+      connection,
+      searchLimit: () => settings.searchLimit(),
+    }),
+  );
 
   const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
   const openSource = deps.openSource ?? createSourceOpener();
