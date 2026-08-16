@@ -79,6 +79,9 @@ describe("blameSection", () => {
   test("sits out while disconnected instead of failing", async () => {
     const section = await blameSection(buildSnapshot({ generation: 5, editor }), deps(undefined));
     expect(section.empty).toBe("Needs the Nimbus Gateway.");
+    // And transient: "no Gateway" is a fact about right now, not about this
+    // line, so the controller must not cache it against this key.
+    expect(section.transient).toBe(true);
   });
 
   test("says so when there is no file", async () => {

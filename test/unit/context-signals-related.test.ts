@@ -74,6 +74,18 @@ describe("relatedSection", () => {
   test("sits out while disconnected", async () => {
     const section = await relatedSection(buildSnapshot({ generation: 6, editor }), deps(undefined));
     expect(section.empty).toBe("Needs the Nimbus Gateway.");
+    // And transient, so a socket that dropped mid-collection is not cached as
+    // this file's answer.
+    expect(section.transient).toBe(true);
+  });
+
+  // The mirror of blameSection's identical branch: with no editor there is
+  // neither a selection nor a path to query, so the collector must say so
+  // rather than searching for "undefined" or asking with no name at all.
+  test("says so when there is no file", async () => {
+    const section = await relatedSection(buildSnapshot({ generation: 10 }), deps(stub([])));
+    expect(section.rows).toEqual([]);
+    expect(section.empty).toBe("No file open.");
   });
 
   test("says so when the index has nothing", async () => {

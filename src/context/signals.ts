@@ -127,7 +127,12 @@ export async function blameSection(
     return { ...base, rows: [], empty: "No file open." };
   }
   const client = deps.client();
-  if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY };
+  // transient: "no Gateway" is a fact about right now, not about this line.
+  // The controller normally short-circuits a Gateway-backed signal while
+  // disconnected, so this branch is the race — the socket dropping between
+  // that check and this call — and caching it would pin the placeholder to
+  // this key.
+  if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY, transient: true };
   try {
     // Through whyParams — NOT the raw snapshot line. snapshot.line is
     // zero-based (VS Code's convention) and this parameter is one-based,
@@ -179,12 +184,18 @@ export async function relatedSection(
   const query = snapshot.selection ?? snapshot.path;
   if (query === undefined) return { ...base, rows: [], empty: "No file open." };
   const client = deps.client();
-  if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY };
+  // transient: see blameSection's — a dropped socket is not this file's answer.
+  if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY, transient: true };
   try {
     const items = await client.searchRanked({ name: query, limit: deps.searchLimit() });
     const rows: SignalRow[] = items
-      // Self-exclusion, the same rule Find related applies: an item is not its
-      // own neighbour, and leaving it in wastes the top slot.
+      // Self-exclusion: an item is not its own neighbour, and leaving it in
+      // wastes the top slot. The rule is exact-match against the open file's
+      // PATH — not against the query, which is what Find related's `sameName`
+      // compares (trimmed and case-folded). The difference matters when the
+      // query is a selection: a result whose name equals the selected text is
+      // a legitimate neighbour here and is kept, while the open file is
+      // excluded even though it never matches the query.
       .filter((i) => i.name !== snapshot.path)
       .map((i) => ({
         label: i.name,

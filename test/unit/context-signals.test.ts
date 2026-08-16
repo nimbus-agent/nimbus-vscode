@@ -126,11 +126,11 @@ describe("SIGNAL_CATALOG", () => {
 
   test("local signals declare no cache key; blame caches by line; related caches by query", () => {
     const snap = buildSnapshot({ generation: 9, editor });
-    const problsms = SIGNAL_CATALOG.find((s) => s.id === "problems");
+    const problems = SIGNAL_CATALOG.find((s) => s.id === "problems");
     const git = SIGNAL_CATALOG.find((s) => s.id === "git");
     const blame = SIGNAL_CATALOG.find((s) => s.id === "blame");
     const related = SIGNAL_CATALOG.find((s) => s.id === "related");
-    expect(problsms?.cacheKey(snap)).toBeUndefined();
+    expect(problems?.cacheKey(snap)).toBeUndefined();
     expect(git?.cacheKey(snap)).toBeUndefined();
     expect(blame?.cacheKey(snap)).toBe("src/a.ts:0");
     expect(related?.cacheKey(snap)).toBe("src/a.ts:");
