@@ -117,6 +117,13 @@ describe("DEFAULT_QUICK_ASK_PRESETS", () => {
     ["README.md", "live as **Quick Ask presets**"],
     ["docs/settings.md", "Empty shows the built-in defaults ("],
     ["docs/architecture.md", "Resolves the configurable quick-ask preset actions ("],
+    // SHIPPED copy: the walkthrough markdown is packaged into the VSIX via the
+    // `!resources/**` re-include in .vscodeignore and rendered in the Get Started
+    // walkthrough, so a stale list here is user-facing. It was missing from this table
+    // when the table was written, and stayed at four presets while the four sites above
+    // were corrected — the site list is itself an allowlist, and it went stale exactly
+    // the way the docs it polices did.
+    ["resources/walkthrough/quick-ask.md", "then pick a preset ("],
   ])("%s enumerates every built-in preset label", (file, anchor) => {
     const src = readFileSync(join(REPO_ROOT, file), "utf8");
     // Fail loudly if the sentence moved, rather than passing because the labels
