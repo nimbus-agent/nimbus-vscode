@@ -36,7 +36,7 @@ describe("extension manifest: context panel", () => {
     expect(views.find((v) => v.id === "nimbus.contextView")?.type).toBe("webview");
   });
 
-  test("places it first — an ambient panel below five collapsed trees is invisible", () => {
+  test("places it first — an ambient panel below six collapsed trees is invisible", () => {
     expect(views[0]?.id).toBe("nimbus.contextView");
   });
 
@@ -62,7 +62,7 @@ describe("extension manifest: context panel", () => {
     }
   });
 
-  test("collapses the six tree views so Context holds the space on first open", () => {
+  test("sets visibility=collapsed on the six tree views, and leaves it unset on the context view", () => {
     const context = views.find((v) => v.id === "nimbus.contextView");
     expect(context?.visibility).toBeUndefined();
     for (const id of [
