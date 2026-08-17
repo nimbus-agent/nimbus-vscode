@@ -10,6 +10,23 @@ const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.js
 
 const views = manifest.contributes?.views?.nimbus ?? [];
 
+type Config = { properties?: Record<string, { type?: string; default?: unknown }> };
+const configManifest = manifest as unknown as {
+  contributes?: { configuration?: Config | Config[] };
+};
+
+describe("extension manifest: context setting", () => {
+  test("contributes nimbus.context.enabled, defaulting to on", () => {
+    const raw = configManifest.contributes?.configuration;
+    const blocks = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
+    const property = blocks
+      .flatMap((b) => Object.entries(b.properties ?? {}))
+      .find(([key]) => key === "nimbus.context.enabled")?.[1];
+    expect(property?.type).toBe("boolean");
+    expect(property?.default).toBe(true);
+  });
+});
+
 describe("extension manifest: context panel", () => {
   test("declares the context view in the Nimbus container", () => {
     expect(views.some((v) => v.id === "nimbus.contextView")).toBe(true);

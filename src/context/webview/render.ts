@@ -15,6 +15,16 @@ import type { SignalSection } from "../signals.js";
 // element and a stray flex gap before every label. The ids stay in the data
 // model for whichever PR ships the font.
 
+// Shown when nimbus.context.enabled is false. The view deliberately stays in
+// the sidebar when the setting is off, so it has to say why it is empty —
+// a blank panel reads as a broken one.
+//
+// `.empty` and nothing else: that class already exists in styles.css and is
+// what every other empty state in this panel uses, so this inherits the panel's
+// theming for free. No <code> element — styles.css has no rule for one, so it
+// would render in a browser-default font matching nothing else here.
+export const DISABLED_NOTICE = `<p class="empty">Context panel is off — turn on nimbus.context.enabled to use it.</p>`;
+
 export function escapeHtml(text: string): string {
   return text
     .replaceAll("&", "&amp;")

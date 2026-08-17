@@ -37,6 +37,7 @@ export function registerContextView(deps: {
   client: () => ContextClientLike | undefined;
   connection: SidebarConnection;
   searchLimit: () => number;
+  contextEnabled: () => boolean;
 }): vscode.Disposable {
   let view: vscode.WebviewView | undefined;
 
@@ -114,6 +115,14 @@ export function registerContextView(deps: {
 
   const collect = async (): Promise<void> => {
     if (view === undefined || !view.visible) return;
+    // The setting is read per collection, not captured: it can change under a
+    // long-lived view, and the config listener below only exists to repaint
+    // promptly, not to be the authority.
+    if (!deps.contextEnabled()) {
+      controller.invalidateAll();
+      view.webview.postMessage({ type: "paused", reason: "disabled" }).then(undefined, () => {});
+      return;
+    }
     collectSeq += 1;
     const mine = collectSeq;
     const editor = vscode.window.activeTextEditor;
@@ -273,6 +282,12 @@ export function registerContextView(deps: {
     vscode.window.onDidChangeTextEditorSelection(() => onSelection.trigger()),
     vscode.languages.onDidChangeDiagnostics(() => onDiagnostics.trigger()),
     vscode.workspace.onDidSaveTextDocument((document) => onSave(document)),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("nimbus.context.enabled")) return;
+      // Turning it back on must not wait for the next cursor move, and turning
+      // it off must clear what is on screen now.
+      recollect();
+    }),
     { dispose: () => onSelection.dispose() },
     { dispose: () => onEditor.dispose() },
     { dispose: () => onDiagnostics.dispose() },

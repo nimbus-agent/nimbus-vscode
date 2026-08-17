@@ -699,6 +699,7 @@ export function activateWithDeps(
       },
       connection,
       searchLimit: () => settings.searchLimit(),
+      contextEnabled: () => settings.contextEnabled(),
     }),
   );
 
