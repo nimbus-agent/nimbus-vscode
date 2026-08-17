@@ -25,11 +25,29 @@ async function openContextView(): Promise<WebviewView> {
   return new WebviewView();
 }
 
+// Used inside driver.wait() predicates (see the three call sites below), so
+// this must never let an exception escape: the outer iframe.webview.ready
+// element does not exist until the webview signals ready, and until then
+// WebviewMixin's switchToFrame() sees getViewToSwitchTo() return undefined
+// and silently no-ops rather than throwing (`if (!view) { return; }`) —
+// leaving the driver in the main document, where findWebElement's #root
+// lookup then throws NoSuchElementError. driver.wait() does not swallow a
+// thrown error from its predicate; it rejects the whole wait immediately
+// instead of retrying. Catching here, and returning "" rather than
+// propagating, is what lets the poll actually absorb the load latency it
+// exists to absorb. switchToFrame() itself is inside the try (not just
+// findWebElement) for the same reason on the other failure mode: if the outer
+// iframe DOES exist but the inner active-frame never renders within
+// switchToFrame()'s own 5s wait, it throws from partway through having
+// already switched into the outer frame — that has to reach the same finally
+// too, or a later poll attempt is left searching the wrong document.
 async function textInPanel(view: WebviewView): Promise<string> {
-  await view.switchToFrame();
   try {
+    await view.switchToFrame();
     const root = await view.findWebElement({ css: "#root" });
     return await root.getText();
+  } catch {
+    return "";
   } finally {
     await view.switchBack();
   }
