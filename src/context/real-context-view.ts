@@ -119,6 +119,13 @@ export function registerContextView(deps: {
     // long-lived view, and the config listener below only exists to repaint
     // promptly, not to be the authority.
     if (!deps.contextEnabled()) {
+      // Bump the fence even though this branch never reaches the controller:
+      // a collect() already parked on the `await deps.git()` below, started
+      // while the setting was still on, resumes after this returns and checks
+      // `mine !== collectSeq` — without this bump that check still passes,
+      // letting a stale collection reach the Gateway and repaint over the
+      // "Context panel is off" notice this branch is about to post.
+      collectSeq += 1;
       controller.invalidateAll();
       view.webview.postMessage({ type: "paused", reason: "disabled" }).then(undefined, () => {});
       return;
