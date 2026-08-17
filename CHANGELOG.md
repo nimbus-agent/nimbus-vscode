@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.18.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.17.2...v0.18.0) (2026-08-17)
+
+
+### Features
+
+* **context:** blame and related neighbours in the context panel ([#112](https://github.com/nimbus-agent/nimbus-vscode/issues/112)) ([5684096](https://github.com/nimbus-agent/nimbus-vscode/commit/56840967350812e69830fa808ad37fa58034197e))
+* **context:** offer the agents that fit what is on screen ([#109](https://github.com/nimbus-agent/nimbus-vscode/issues/109)) ([776599f](https://github.com/nimbus-agent/nimbus-vscode/commit/776599f383e1b4aed1b4d44f8b4de5ba750732fa))
+
 ## [0.17.2](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.17.1...v0.17.2) (2026-08-16)
 
 
