@@ -100,7 +100,10 @@ describe("gitSection", () => {
     );
   });
 
-  test("counts a path once when it is both staged and modified", async () => {
+  // The union and Set-dedupe happen in gitSummaryFor (real-context-view.ts),
+  // untested vscode/git-extension glue by repo convention — gitSection only
+  // ever sees an already-deduped list, so this case checks the plural render.
+  test("renders a plural count for a multi-entry changed-path list", async () => {
     const section = await gitSection(
       buildSnapshot({
         generation: 1,
