@@ -152,12 +152,16 @@ describe("relatedSection", () => {
     expect(section.rows.map((r) => r.detail)).toEqual(["filesystem", "filesystem"]);
   });
 
-  test("excludes the open file when the index holds it under a longer root", async () => {
-    // The live index really does carry both shapes: rawMeta.file is
-    // repo-root-relative, so a file indexed while it sat in a git worktree keeps
-    // that prefix, while snapshot.path is workspace-root-relative.
+  test("excludes the open file via its repo-relative path when it differs from the workspace-relative one", async () => {
+    // The live index stores rawMeta.file repo-root-relative, so a file
+    // indexed while it sat in a git worktree carries that prefix, while
+    // snapshot.path stays workspace-root-relative. snapshot.repoPath is the
+    // projection that lines up with what the index stored.
     const section = await relatedSection(
-      buildSnapshot({ generation: 14, editor }),
+      buildSnapshot({
+        generation: 14,
+        editor: { ...editor, repoPath: ".claude/worktrees/wt/src/a.ts" },
+      }),
       deps(
         stub([
           itemInFile("aThing (function)", "filesystem", ".claude/worktrees/wt/src/a.ts"),
@@ -166,6 +170,20 @@ describe("relatedSection", () => {
       ),
     );
     expect(section.rows.map((r) => r.label)).toEqual(["bThing (function)"]);
+  });
+
+  // Regression test for a suffix-match design this collector used to have:
+  // matching "file.endsWith('/'+path)" also matches two genuinely different
+  // files that merely share a directory-boundary-aligned tail.
+  test("keeps a different file whose path merely ends with the open file's path", async () => {
+    const section = await relatedSection(
+      buildSnapshot({
+        generation: 17,
+        editor: { ...editor, path: "src/a.ts", repoPath: "src/a.ts" },
+      }),
+      deps(stub([itemInFile("index (function)", "filesystem", "packages/service-b/src/a.ts")])),
+    );
+    expect(section.rows.map((r) => r.label)).toEqual(["index (function)"]);
   });
 
   test("does not collapse same-named items from different services", async () => {

@@ -197,20 +197,15 @@ export async function relatedSection(
     };
     // rawMeta.file is REPO-root-relative; snapshot.path is WORKSPACE-root-
     // relative. They coincide when the workspace is the repo root and diverge
-    // otherwise — verified against this repo's own live index, which holds
-    // ".claude/worktrees/ambient-context-panel/src/context/controller.ts"
-    // beside "src/chat-participant/ops-commands.ts". An `===` test excludes the
-    // second and silently keeps the first, which is the staler row and the one
-    // most worth dropping. Comparing the whole relative path as a suffix
-    // handles both and is still specific: "…/src/context/controller.ts" ends
-    // with "/src/context/controller.ts"; "src/other/controller.ts" does not.
-    // Both sides are POSIX-style already — the Gateway stores forward slashes,
-    // toRelativeRef normalises to them — so no slash rewriting is done here.
-    // Inventing one would hide a genuine mismatch rather than fix it.
-    const sameFile = (file: string | undefined, path: string | undefined): boolean => {
-      if (file === undefined || path === undefined) return false;
-      return file === path || file.endsWith(`/${path}`) || path.endsWith(`/${file}`);
-    };
+    // otherwise (a git worktree, a monorepo package opened as a subfolder).
+    // Comparing both exactly — rather than suffix-matching one against the
+    // other — is the whole fix: a suffix match also matches two genuinely
+    // different files that merely share a directory-boundary-aligned tail
+    // (e.g. "src/index.ts" against "packages/service-b/src/index.ts" in a
+    // monorepo with parallel package layouts), wrongly dropping an unrelated
+    // result. snapshot.repoPath is the file's path under the SAME root
+    // rawMeta.file uses, computed once at snapshot-build time from the
+    // repository that contains the file — see real-context-view.ts.
     const seen = new Set<string>();
     const rows: SignalRow[] = [];
     for (const i of items) {
@@ -219,9 +214,11 @@ export async function relatedSection(
       // SYMBOL name ("runOpsCommand (function)"), never a repo-relative path,
       // so the old `i.name !== snapshot.path` rule never matched anything and
       // the panel filled with the open file's own symbols. rawMeta.file is the
-      // field that carries the path. The name comparison stays as a second
-      // rule for services that key an item by its path.
-      if (sameFile(file, snapshot.path)) continue;
+      // field that carries the path, compared against both projections of the
+      // open file since either can be the one the index used. The name
+      // comparison stays as a second rule for services that key an item by
+      // its path.
+      if (file !== undefined && (file === snapshot.repoPath || file === snapshot.path)) continue;
       if (i.name === snapshot.path) continue;
       // The index can hold several rows for one symbol (a re-index that did not
       // supersede the old row, a duplicate chunk). Three identical rows waste

@@ -55,6 +55,20 @@ describe("buildSnapshot", () => {
     expect(snap.isDirty).toBe(true);
   });
 
+  test("carries the repo-relative path through separately from the workspace-relative one", () => {
+    const snap = buildSnapshot({
+      generation: 7,
+      editor: { ...editor, repoPath: "packages/service-a/src/a.ts" },
+    });
+    expect(snap.path).toBe("src/a.ts");
+    expect(snap.repoPath).toBe("packages/service-a/src/a.ts");
+  });
+
+  test("leaves repoPath undefined when no repository contains the file", () => {
+    const snap = buildSnapshot({ generation: 8, editor });
+    expect(snap.repoPath).toBeUndefined();
+  });
+
   test("keeps the git summary and diagnostics it is handed", () => {
     const snap = buildSnapshot({
       generation: 6,

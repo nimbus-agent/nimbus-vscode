@@ -39,6 +39,13 @@ export interface EditorInput {
   readonly line: number;
   readonly selection: string;
   readonly isDirty: boolean;
+  /**
+   * Path relative to the git repository containing the file, as opposed to
+   * `path`, which is relative to the workspace root. Undefined when no
+   * repository contains the file. See `ContextSnapshot.repoPath` for why this
+   * exists.
+   */
+  readonly repoPath?: string;
 }
 
 export interface SnapshotInput {
@@ -57,6 +64,15 @@ export interface ContextSnapshot {
    */
   readonly generation: number;
   readonly path: string | undefined;
+  /**
+   * Repo-root-relative — the shape the local index stores in `rawMeta.file` —
+   * as against `path`, which is workspace-root-relative and is what the panel
+   * renders and what briefs are pre-filled with. The two coincide when the
+   * workspace is the repo root and diverge otherwise (a git worktree, a
+   * monorepo package opened as a subfolder). Undefined when no editor is open
+   * or no repository contains the file.
+   */
+  readonly repoPath: string | undefined;
   readonly languageId: string | undefined;
   readonly line: number | undefined;
   /** Already clamped to SELECTION_MAX_CHARS. Undefined when nothing is selected. */
@@ -77,6 +93,7 @@ export function buildSnapshot(input: SnapshotInput): ContextSnapshot {
   return {
     generation: input.generation,
     path: editor?.path,
+    repoPath: editor?.repoPath,
     languageId: editor?.languageId,
     line: editor?.line,
     selection: selection.length > 0 ? selection : undefined,

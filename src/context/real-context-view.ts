@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import { toRelativeRef } from "../briefs/params.js";
 import { errMsg, type Logger } from "../logging.js";
-import type { GitApiLike } from "../scm/git-types.js";
+import type { GitApiLike, GitRepositoryLike } from "../scm/git-types.js";
 import { repoContaining } from "../scm/repo-select.js";
 import type { SidebarConnection } from "../sidebar/tree-view.js";
 import { createController } from "./controller.js";
@@ -56,12 +56,10 @@ export function registerContextView(deps: {
     log: deps.log,
   });
 
-  const gitSummary = async (fileName: string | undefined): Promise<GitSummary | undefined> => {
-    const repos = (await deps.git())?.repositories() ?? [];
-    // fileName is the editor's absolute path — a local filesystem lookup, not
-    // a payload; the repo-relative toRelativeRef value is still what reaches
-    // the snapshot below.
-    const repo = repoContaining(repos, fileName);
+  // Takes the repo directly rather than looking it up itself, so collect()
+  // can resolve it once via repoContaining and reuse it for repoPath too —
+  // one git lookup per collection, not two.
+  const gitSummaryFor = (repo: GitRepositoryLike | undefined): GitSummary | undefined => {
     if (repo === undefined) return undefined;
     try {
       // changedPathsNow, NOT changedFiles("all"): this runs on every debounce
@@ -101,7 +99,7 @@ export function registerContextView(deps: {
   // A LOCAL ordering token — distinct from the controller's own generation
   // counter, which stamps a snapshot only once it reaches controller.collect()
   // (i.e. AFTER this function's own await). Without this, two collect() calls
-  // whose gitSummary() lookups resolve out of order can have the
+  // whose deps.git() lookups resolve out of order can have the
   // later-started (staler) call reach the controller second and take the
   // HIGHER generation, so its render overwrites the fresher one and every
   // later section reply fences against a stale answer. This restores true
@@ -114,7 +112,12 @@ export function registerContextView(deps: {
     const mine = collectSeq;
     const editor = vscode.window.activeTextEditor;
     const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
-    const git = await gitSummary(editor?.document.fileName);
+    const repos = (await deps.git())?.repositories() ?? [];
+    // fileName is the editor's absolute path — a local filesystem lookup, not
+    // a payload; the repo-relative values derived from it below are what
+    // reach the snapshot.
+    const repo = repoContaining(repos, editor?.document.fileName);
+    const git = gitSummaryFor(repo);
     if (mine !== collectSeq || view === undefined) return;
     const snapshot = buildSnapshot({
       // The controller owns the generation counter now; the snapshot carries
@@ -127,6 +130,12 @@ export function registerContextView(deps: {
               // Relative, never absolute: an absolute path names the user's home
               // directory, and this value is rendered.
               path: toRelativeRef(editor.document.fileName, roots),
+              // Relative to the containing repository, not the workspace — see
+              // ContextSnapshot.repoPath. Undefined when no repository
+              // contains the file, matching repoContaining's own contract.
+              ...(repo === undefined
+                ? {}
+                : { repoPath: toRelativeRef(editor.document.fileName, [repo.rootPath]) }),
               scheme: editor.document.uri.scheme,
               languageId: editor.document.languageId,
               line: editor.selection.active.line,
