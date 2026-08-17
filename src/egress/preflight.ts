@@ -42,6 +42,9 @@ export const EGRESS_FILES_SHOWN = 5;
 
 export const REDACTION_NOTE = "Paths sent as file names only — no directories, no repository path.";
 
+export const RELATIVE_PATH_NOTE =
+  "Paths sent relative to the repository root — no absolute paths, no machine layout.";
+
 export const LEAK_WARNING =
   "WARNING: this payload contains an absolute path from this machine. Nimbus does not add it — it is inside your own content.";
 
@@ -70,7 +73,26 @@ function leaked(p: EgressPayload): boolean {
 
 function footerLines(p: EgressPayload): string[] {
   const lines: string[] = [];
-  if (p.files.length > 0) lines.push(`  ${REDACTION_NOTE}`);
+  if (p.files.length > 0) {
+    // Which claim is true depends on what the call site actually put in. Quick
+    // Ask and the SCM trio redact to a basename; the briefs send the
+    // repo-relative ref, because that is what the Gateway resolves against.
+    // Asserting the stronger claim over the weaker payload is the one failure
+    // this surface cannot afford.
+    //
+    // Three states, not two. An ABSOLUTE name is neither a bare file name nor
+    // repository-relative, so it gets no reassurance at all rather than the
+    // weaker of two false claims — LEAK_WARNING below is what should speak
+    // then. No surface is supposed to produce one (Quick Ask and the SCM trio
+    // redact to a basename, the briefs send the repo-relative ref), which is
+    // exactly why the fallback must not quietly assert something nice about it.
+    const absolute = (name: string): boolean =>
+      name.startsWith("/") || name.startsWith("\\\\") || /^[A-Za-z]:[\\/]/.test(name);
+    const names = p.files.map((f) => f.name);
+    const bare = names.every((n) => !n.includes("/") && !n.includes("\\"));
+    if (bare) lines.push(`  ${REDACTION_NOTE}`);
+    else if (!names.some(absolute)) lines.push(`  ${RELATIVE_PATH_NOTE}`);
+  }
   if (leaked(p)) lines.push(`  ${LEAK_WARNING}`);
   for (const omission of p.omissions) lines.push(`  ${omission}`);
   return lines;

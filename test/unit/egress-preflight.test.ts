@@ -7,6 +7,7 @@ import {
   egressTitle,
   LEAK_WARNING,
   REDACTION_NOTE,
+  RELATIVE_PATH_NOTE,
   renderFullEgress,
   summarizeEgress,
 } from "../../src/egress/preflight.js";
@@ -67,6 +68,28 @@ describe("summarizeEgress", () => {
   });
   test("does not warn on a clean prompt", () => {
     expect(summarizeEgress(payload({ roots: ["C:\\gitrep\\nimbus"] }))).not.toContain(LEAK_WARNING);
+  });
+  test("claims file-name-only redaction only when every file name is a bare name", () => {
+    const s = summarizeEgress(payload({ files: [{ name: "logging.ts", note: "whole file" }] }));
+    expect(s).toContain(REDACTION_NOTE);
+  });
+  test("tells the truth when a file name carries a directory", () => {
+    const s = summarizeEgress(payload({ files: [{ name: "src/logging.ts", note: "whole file" }] }));
+    expect(s).not.toContain(REDACTION_NOTE);
+    expect(s).toContain(RELATIVE_PATH_NOTE);
+  });
+  test("a line:column suffix is still a bare file name", () => {
+    // A colon is not a directory separator, so "logging.ts:11" carries no
+    // directory and the stronger claim is true of it.
+    const s = summarizeEgress(payload({ files: [{ name: "logging.ts:11", note: "whole file" }] }));
+    expect(s).toContain(REDACTION_NOTE);
+  });
+  test("claims nothing at all for an absolute path", () => {
+    const s = summarizeEgress(
+      payload({ files: [{ name: "C:/Users/asaf/logging.ts", note: "whole file" }] }),
+    );
+    expect(s).not.toContain(REDACTION_NOTE);
+    expect(s).not.toContain(RELATIVE_PATH_NOTE);
   });
 });
 
