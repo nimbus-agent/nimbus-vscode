@@ -417,44 +417,31 @@
         {
           "id": "nimbus.contextView",
           "name": "Context",
-          "type": "webview",
-          "initialSize": 3
+          "type": "webview"
         },
         {
           "id": "nimbus.auditView",
-          "name": "Audit",
-          "initialSize": 1,
-          "visibility": "collapsed"
+          "name": "Audit"
         },
         {
           "id": "nimbus.egressView",
-          "name": "Egress",
-          "initialSize": 1,
-          "visibility": "collapsed"
+          "name": "Egress"
         },
         {
           "id": "nimbus.agentsView",
-          "name": "Agents",
-          "initialSize": 1,
-          "visibility": "collapsed"
+          "name": "Agents"
         },
         {
           "id": "nimbus.indexView",
-          "name": "Index",
-          "initialSize": 1,
-          "visibility": "collapsed"
+          "name": "Index"
         },
         {
           "id": "nimbus.sessionsView",
-          "name": "Sessions",
-          "initialSize": 1,
-          "visibility": "collapsed"
+          "name": "Sessions"
         },
         {
           "id": "nimbus.workflowsView",
-          "name": "Workflows",
-          "initialSize": 1,
-          "visibility": "collapsed"
+          "name": "Workflows"
         }
       ]
     },

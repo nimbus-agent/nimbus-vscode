@@ -229,3 +229,29 @@ The lesson worth keeping: `--profile` is not a clean slate. `--user-data-dir` is
   across a re-render, an unindexed repository, commit invalidation, Ctrl+A on a
   large file, the selected-text egress checked against the ledger, and Related
   refreshing on save. These were on the original "not run" list and remain there.
+
+### F1 — the retraction, 2026-08-18
+
+The "F1 — the correction" section above turned out to be wrong: it credited
+the fix to `--profile` masking the manifest's `visibility` default. A
+follow-up isolation pass on clean, disposable `--user-data-dir` launches (not
+`--profile`, which carries stored view state from prior runs) tested the
+manifest properties directly:
+
+1. `initialSize` alone, `visibility: collapsed` removed → six tree views
+   collapsed, Context view full height.
+2. **Neither property present** → **identical result**: six tree views
+   collapsed, Context view full height, every section and offer visible.
+
+Removing both properties changed nothing. That makes them inert: a fresh
+profile already opens the Context view at full height because it is a
+webview view placed first in its container, which is VS Code's own default
+regardless of manifest hints. The real ~140px case from the original pass was
+never a manifest question — it was a profile that already had a layout
+stored from an earlier version, with all seven views expanded. No manifest
+default can rewrite a layout VS Code has already saved for a user.
+
+Conclusion: F1 is a stored-layout phenomenon, not a manifest defect, and has
+no manifest-level fix. `initialSize` and `visibility` were reverted. Where a
+profile already shows the panel short, the remedy is the user's — collapse
+the other views, or drag the sash.

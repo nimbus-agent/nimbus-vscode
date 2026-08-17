@@ -53,27 +53,4 @@ describe("extension manifest: context panel", () => {
       expect(ids).toContain(id);
     }
   });
-
-  test("weights the context view above the tree views it sits over", () => {
-    const context = views.find((v) => v.id === "nimbus.contextView");
-    expect(context?.initialSize).toBeGreaterThanOrEqual(3);
-    for (const v of views.filter((x) => x.id !== "nimbus.contextView")) {
-      expect(v.initialSize ?? 1).toBeLessThan(context?.initialSize ?? 0);
-    }
-  });
-
-  test("sets visibility=collapsed on the six tree views, and leaves it unset on the context view", () => {
-    const context = views.find((v) => v.id === "nimbus.contextView");
-    expect(context?.visibility).toBeUndefined();
-    for (const id of [
-      "nimbus.auditView",
-      "nimbus.egressView",
-      "nimbus.agentsView",
-      "nimbus.indexView",
-      "nimbus.sessionsView",
-      "nimbus.workflowsView",
-    ]) {
-      expect(views.find((v) => v.id === id)?.visibility).toBe("collapsed");
-    }
-  });
 });
