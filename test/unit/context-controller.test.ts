@@ -3,6 +3,7 @@ import type { ConnectionState } from "../../src/connection/connection-manager.js
 import { createController } from "../../src/context/controller.js";
 import type { SignalSection, SignalSpec } from "../../src/context/signals.js";
 import { buildSnapshot, type ContextSnapshot } from "../../src/context/snapshot.js";
+import type { Logger } from "../../src/logging.js";
 
 const editor = {
   path: "src/a.ts",
@@ -23,6 +24,20 @@ const silentLog = {
   debug: () => undefined,
 };
 
+// Records every line logged, prefixed the way the real Logger prefixes them,
+// so a test can assert on cadence output the same way a human reads the
+// output channel.
+function makeRecordingLog(): Logger & { lines: string[] } {
+  const lines: string[] = [];
+  return {
+    lines,
+    error: (m) => lines.push(`[error] ${m}`),
+    warn: (m) => lines.push(`[warn] ${m}`),
+    info: (m) => lines.push(`[info] ${m}`),
+    debug: (m) => lines.push(`[debug] ${m}`),
+  };
+}
+
 function harness(opts: {
   collect: (snapshot: ContextSnapshot) => Promise<SignalSection>;
   needsGateway?: boolean;
@@ -30,6 +45,7 @@ function harness(opts: {
 }) {
   const posted: Array<{ type: string; section?: SignalSection }> = [];
   const listeners: Array<(s: ConnectionState) => void> = [];
+  const log = makeRecordingLog();
   // A mutable variable `fire` updates before invoking listeners, so a test
   // that fires "disconnected" actually gets a disconnected `current()` when
   // the resulting refresh reads it — a fixed closure here would silently
@@ -56,13 +72,13 @@ function harness(opts: {
     },
     post: (m) => posted.push(m as { type: string; section?: SignalSection }),
     isVisible: () => true,
-    log: silentLog as unknown as Parameters<typeof createController>[0]["log"],
+    log,
   });
   const fire = (s: ConnectionState): void => {
     currentState = s;
     for (const l of listeners) l(s);
   };
-  return { controller, posted, fire };
+  return { controller, posted, fire, log };
 }
 
 const section = (rows: number): SignalSection => ({
@@ -696,5 +712,23 @@ describe("createController", () => {
     await controller.collect(snap(2));
     expect(blameCalls).toBe(2);
     expect(relatedCalls).toBe(2);
+  });
+
+  // The panel's cadence — debounce tiers, cache hits, git churn — was
+  // otherwise unobservable from the output channel; see the two tests below.
+  test("logs one debug line per collection, naming the signals it ran", async () => {
+    const h = harness({ collect: async () => section(1) });
+    await h.controller.collect(snap(1, 3));
+    const debugs = h.log.lines.filter((l) => l.startsWith("[debug]"));
+    expect(debugs).toHaveLength(1);
+    expect(debugs[0]).toContain("src/a.ts:3");
+  });
+
+  test("says which signals were served from cache on a repeat collection", async () => {
+    const h = harness({ collect: async () => section(1) });
+    await h.controller.collect(snap(1, 3));
+    h.log.lines.length = 0;
+    await h.controller.collect(snap(2, 3));
+    expect(h.log.lines.join("\n")).toContain("cached");
   });
 });
