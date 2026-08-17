@@ -154,3 +154,78 @@ are worth knowing for the ExTester spec that PR 3 owes:
 - `SendKeys` does not reach an Electron window; `keybd_event` does.
 - View headers in the sidebar are drag handles, so a click intended to collapse
   one can reorder the container instead.
+
+---
+
+## PR 3 pass — 2026-08-18
+
+Run against the PR 3 branch (`worktree-context-panel-pr3`, head `9f0f258`),
+Gateway 2.2.0, in an Extension Development Host launched with a disposable
+`--user-data-dir` and `nimbus.logLevel: debug`.
+
+### Automated gate
+
+1289 tests / 95 files, `typecheck`, `lint`, `build`, `check-bundle`,
+`check-vsix-contents` (18 files), `check-settings-docs` (17 settings) — all green.
+The ExTester suite was run by the controller directly: **23 passing**, including
+the three new context-panel cases.
+
+### F1 — the correction
+
+**F1 is FIXED, and the three measurements recorded during implementation were
+wrong.** Those runs used `code --profile <name>` against the default
+user-data-dir, which carries existing view state and masks a manifest's
+`visibility` defaults. Re-measured with a genuinely clean `--user-data-dir`, the
+six tree views open **collapsed** and the Context view fills the sidebar:
+Problems, Git, History, Related and all six offers visible at once, no internal
+scrollbar.
+
+What the manifest cannot do is change a layout VS Code has already stored for an
+existing user — that is inherent to defaults, not a defect. So: fixed for a fresh
+profile, unchanged for anyone who already has the container laid out.
+
+The lesson worth keeping: `--profile` is not a clean slate. `--user-data-dir` is.
+
+### The other four, verified in the editor
+
+- **F2 — Related.** The open file's own rows are excluded. Where duplicates still
+  appear, they are real: this repo's index holds `src/logging.ts` alongside
+  `.claude/worktrees/briefs-pr3/src/logging.ts` and
+  `.claude/worktrees/ambient-context-panel/src/logging.ts` from earlier PRs'
+  worktrees — genuinely different files that share symbol names. A repo whose
+  index contains several checkouts will show one row per checkout.
+- **F3 — the count.** Untracked file → "1 changed file". `git add` it → **still
+  "1 changed file"** (it fell to zero before this branch). Clean tree → the row is
+  omitted entirely.
+- **F4 — the pre-flight note.** With a folder workspace, the modal reads
+  `src/logging.ts:18` above "Paths sent relative to the repository root — no
+  absolute paths, no machine layout." With a single file open and no workspace
+  root, the ref degrades to the basename `logging.ts:18` and the modal correctly
+  reverts to the stronger "file names only" claim. Both branches confirmed live.
+- **F5 — the log.** One line per collection, one per debounce tier rather than per
+  keystroke:
+  `context collect #13 logging.ts:13 [problems=local git=local blame=fetch related=cached]`.
+  Three of the four labels observed (`local`, `fetch`, `cached`) plus the
+  `(no file):-` fallback that no unit test covers.
+
+### Also observed
+
+- `nimbus.context.enabled` off → the view stays and says it is off; back on → the
+  panel refills with no cursor move, file switch or reload.
+- Stopping the Gateway flips History and Related to "Needs the Nimbus Gateway"
+  while Problems and Git keep working.
+- Cancelling at the gate is recorded as
+  `nimbus.brief.why cancelled at the pre-flight preview` — nothing sent.
+- A file opened outside any workspace root degrades to a basename ref, and blame
+  still resolves.
+- Zero `[warn]` or `[error]` lines in the channel across the whole session.
+
+### Still not verified
+
+- The `skipped` log label. Inconclusive rather than absent: the window reloaded
+  when the folder was opened, and VS Code started a fresh channel file that had
+  not flushed by the end of the session.
+- Multi-root windows, a second repository opened mid-session, focus survival
+  across a re-render, an unindexed repository, commit invalidation, Ctrl+A on a
+  large file, the selected-text egress checked against the ledger, and Related
+  refreshing on save. These were on the original "not run" list and remain there.
