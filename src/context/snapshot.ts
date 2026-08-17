@@ -49,7 +49,12 @@ export interface SnapshotInput {
 }
 
 export interface ContextSnapshot {
-  /** Monotonic; PR 2's fence uses it to discard late collector replies. */
+  /**
+   * Vestigial as of PR 2: the controller (controller.ts) now owns the
+   * generation counter and stamps it itself once a snapshot reaches
+   * controller.collect(), so this field is never read for fencing — see
+   * real-context-view.ts's collect(), which always passes 0 here.
+   */
   readonly generation: number;
   readonly path: string | undefined;
   readonly languageId: string | undefined;

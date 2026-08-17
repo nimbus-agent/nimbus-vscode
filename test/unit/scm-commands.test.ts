@@ -38,11 +38,15 @@ function fakeRepo(opts: FakeRepoOpts = {}): GitRepositoryLike {
   return {
     rootPath: opts.rootPath ?? "/home/dev/proj",
     changedFiles: async (_scope: DiffScope) => files,
+    // The state-backed read the context panel uses; the SCM trio still goes
+    // through changedFiles, so this only has to be shaped right.
+    changedPathsNow: () => files.map((f) => f.path),
     fileDiff: async (_scope: DiffScope, path: string) => diffs[path] ?? "",
     untrackedPaths: async () => opts.untracked ?? [],
     log: async () => opts.log ?? ["feat: earlier change"],
     inputBox: { value: opts.inputBoxValue ?? "" },
     branch: () => "main",
+    onDidChange: () => ({ dispose: () => undefined }),
   };
 }
 
@@ -66,7 +70,10 @@ function harness(
   const invoked: string[] = [];
   const opened: Array<{ title: string; content: string }> = [];
   const modalAnswers: string[] = [];
-  const api: GitApiLike = { repositories: () => repos };
+  const api: GitApiLike = {
+    repositories: () => repos,
+    onDidOpenRepository: () => ({ dispose: () => undefined }),
+  };
   // Recording message methods plus a bare (no active editor) default. Fixtures
   // that only need to stub activeTextEditor (e.g. editorDeps) pass a partial
   // `window` here, which is merged on top of this rather than replacing it —

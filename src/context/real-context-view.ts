@@ -5,10 +5,11 @@ import { toRelativeRef } from "../briefs/params.js";
 import { errMsg, type Logger } from "../logging.js";
 import type { GitApiLike } from "../scm/git-types.js";
 import { repoContaining } from "../scm/repo-select.js";
+import type { SidebarConnection } from "../sidebar/tree-view.js";
+import { createController } from "./controller.js";
 import { createDebouncer, DEBOUNCE_MS } from "./debounce.js";
-import { offersFor } from "./offers.js";
 import { validateInbound } from "./protocol.js";
-import { SIGNAL_CATALOG } from "./signals.js";
+import { type ContextClientLike, SIGNAL_CATALOG } from "./signals.js";
 import {
   buildSnapshot,
   type DiagnosticSummary,
@@ -17,12 +18,13 @@ import {
 } from "./snapshot.js";
 
 // Thin vscode-API glue — mirrors real-provider.ts and real-chat-panel.ts. Every
-// decision (what the context is, which briefs fit, what may be executed) lives
-// in the pure modules beside this file, which carry the tests.
+// decision (what the context is, which briefs fit, what may be executed, what
+// to cache) lives in the pure modules beside this file, which carry the tests.
 //
-// PR 1 re-collects on every event, with no cache: both signals here are local
-// reads. PR 2 introduces controller.ts when the Gateway-backed signals arrive
-// and cost per collection starts to matter.
+// PR 1 re-collected on every event, with no cache. PR 2 hands collection to
+// controller.ts, which owns the cache, in-flight coalescing, the generation
+// fence and invalidation — this file's job is now just: build a snapshot, and
+// wire the events that should invalidate or re-collect.
 
 const VIEW_ID = "nimbus.contextView";
 
@@ -31,9 +33,28 @@ export function registerContextView(deps: {
   // Async and possibly absent: this is the same accessor the SCM trio takes —
   // the built-in git extension may not have activated yet.
   git: () => Promise<GitApiLike | undefined>;
+  /** Undefined while disconnected — Gateway-backed signals then sit out. */
+  client: () => ContextClientLike | undefined;
+  connection: SidebarConnection;
+  searchLimit: () => number;
 }): vscode.Disposable {
-  let generation = 0;
   let view: vscode.WebviewView | undefined;
+
+  const controller = createController({
+    signals: SIGNAL_CATALOG,
+    signalDeps: {
+      client: deps.client,
+      now: () => Date.now(),
+      searchLimit: deps.searchLimit,
+    },
+    connection: deps.connection,
+    post: (message) => {
+      if (view === undefined) return;
+      void view.webview.postMessage(message);
+    },
+    isVisible: () => view?.visible === true,
+    log: deps.log,
+  });
 
   const gitSummary = async (fileName: string | undefined): Promise<GitSummary | undefined> => {
     const repos = (await deps.git())?.repositories() ?? [];
@@ -42,10 +63,17 @@ export function registerContextView(deps: {
     // the snapshot below.
     const repo = repoContaining(repos, fileName);
     if (repo === undefined) return undefined;
-    // changedPaths stays UNREAD in PR 1: filling it means an async changedFiles
-    // call per collection, which belongs with PR 2's controller. Undefined, not
-    // [], so gitSection renders no count row rather than claiming zero.
-    return { branch: repo.branch(), changedPaths: undefined };
+    try {
+      // changedPathsNow, NOT changedFiles("all"): this runs on every debounce
+      // tick while the user works, and changedFiles shells out to `git diff`.
+      // The git extension has already materialised its working-tree state, so
+      // this is a read of data in hand — the same state untrackedPaths reads.
+      return { branch: repo.branch(), changedPaths: repo.changedPathsNow() };
+    } catch (e: unknown) {
+      // A failed read must not cost the branch row, which is already in hand.
+      deps.log.warn(`context panel could not read changed files: ${errMsg(e)}`);
+      return { branch: repo.branch(), changedPaths: undefined };
+    }
   };
 
   // Bound the READ, not just the stored value. Ctrl+A on a large file makes
@@ -70,18 +98,28 @@ export function registerContextView(deps: {
       line: d.range.start.line,
     }));
 
+  // A LOCAL ordering token — distinct from the controller's own generation
+  // counter, which stamps a snapshot only once it reaches controller.collect()
+  // (i.e. AFTER this function's own await). Without this, two collect() calls
+  // whose gitSummary() lookups resolve out of order can have the
+  // later-started (staler) call reach the controller second and take the
+  // HIGHER generation, so its render overwrites the fresher one and every
+  // later section reply fences against a stale answer. This restores true
+  // call order before a snapshot ever reaches the controller.
+  let collectSeq = 0;
+
   const collect = async (): Promise<void> => {
     if (view === undefined || !view.visible) return;
-    generation += 1;
-    const mine = generation;
+    collectSeq += 1;
+    const mine = collectSeq;
     const editor = vscode.window.activeTextEditor;
     const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
     const git = await gitSummary(editor?.document.fileName);
-    // A minimal fence: the git lookup is awaited, so a later collection can
-    // overtake this one. PR 2 generalises this across all four signals.
-    if (mine !== generation || view === undefined) return;
+    if (mine !== collectSeq || view === undefined) return;
     const snapshot = buildSnapshot({
-      generation: mine,
+      // The controller owns the generation counter now; the snapshot carries
+      // whatever it is told, and 0 here means "the controller will stamp it".
+      generation: 0,
       ...(editor === undefined
         ? {}
         : {
@@ -99,13 +137,7 @@ export function registerContextView(deps: {
       ...(git === undefined ? {} : { git }),
       ...(editor === undefined ? {} : { diagnostics: diagnosticsFor(editor.document.uri) }),
     });
-    void view.webview.postMessage({
-      type: "render",
-      generation: mine,
-      sections: SIGNAL_CATALOG.map((spec) => spec.collect(snapshot)),
-      offers: offersFor(snapshot),
-      isDirty: snapshot.isDirty,
-    });
+    await controller.collect(snapshot);
   };
 
   const recollect = (): void => {
@@ -120,6 +152,21 @@ export function registerContextView(deps: {
   const onSelection = createDebouncer(DEBOUNCE_MS.selection, recollect);
   const onEditor = createDebouncer(DEBOUNCE_MS.editor, recollect);
   const onDiagnostics = createDebouncer(DEBOUNCE_MS.diagnostics, recollect);
+  // Git is the fourth source, at the editor tier. It is NOT a rare, deliberate
+  // event: the git extension fires onDidChange after every updateModelState(),
+  // which its working-tree watcher triggers while the user types.
+  //
+  // invalidateAll, not invalidateSignal("git"): `git`'s cacheKey is undefined,
+  // so its cache is permanently empty and clearing it clears nothing. What a
+  // commit or a branch switch actually invalidates is BLAME — whose key is
+  // path:line, with no mention of HEAD — so without this the panel would keep
+  // reporting the pre-commit author and sha for every line already visited.
+  // (Carrying HEAD on GitSummary and folding it into blame's key is the
+  // narrower fix; it is a seam change, deferred to PR 3.)
+  const onGit = createDebouncer(DEBOUNCE_MS.editor, () => {
+    controller.invalidateAll();
+    recollect();
+  });
 
   const provider: vscode.WebviewViewProvider = {
     resolveWebviewView(webviewView) {
@@ -154,16 +201,75 @@ export function registerContextView(deps: {
     },
   };
 
+  // Save: the indexer may pick the file up, so `related` can legitimately
+  // change. Drop that path's entries, then collect.
+  const onSave = (document: vscode.TextDocument): void => {
+    const roots = (vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath);
+    controller.invalidatePath(toRelativeRef(document.fileName, roots));
+    recollect();
+  };
+
+  // Git state: branch switches and staging change what the git section says.
+  //
+  // Re-attached rather than attached once. The git extension discovers
+  // repositories asynchronously, so the set can still be empty when this first
+  // runs — subscribing only to what is there at activation is how this trigger
+  // ends up never firing at all. Re-attaching on every open also covers a repo
+  // closing: its listener is disposed with the rest.
+  // Guards the two async chains below against a teardown that lands while
+  // deps.git() is still pending: without it, a subscription can be created
+  // AFTER dispose() has already run and never gets torn down.
+  let gitWiringDisposed = false;
+  const gitSubs: Array<{ dispose(): void }> = [];
+  const attachGitListeners = async (): Promise<void> => {
+    const api = await deps.git();
+    for (const previous of gitSubs.splice(0)) previous.dispose();
+    if (gitWiringDisposed) return;
+    for (const repo of api?.repositories() ?? []) {
+      gitSubs.push(repo.onDidChange(() => onGit.trigger()));
+    }
+  };
+
+  let openSub: { dispose(): void } | undefined;
+  void deps
+    .git()
+    .then((api) => {
+      const sub = api?.onDidOpenRepository(() => {
+        void attachGitListeners()
+          // Same reasoning as onGit: a repository appearing can change the
+          // branch, the changed-file count and every cached blame answer.
+          .then(() => onGit.trigger())
+          .catch((e: unknown) => deps.log.warn(`context panel git re-attach failed: ${errMsg(e)}`));
+      });
+      if (gitWiringDisposed) {
+        sub?.dispose();
+        return;
+      }
+      openSub = sub;
+      void attachGitListeners().catch((e: unknown) =>
+        deps.log.warn(`context panel git listeners failed: ${errMsg(e)}`),
+      );
+    })
+    .catch((e: unknown) => deps.log.warn(`context panel git init failed: ${errMsg(e)}`));
+
   return vscode.Disposable.from(
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
     vscode.window.onDidChangeActiveTextEditor(() => onEditor.trigger()),
     vscode.window.onDidChangeTextEditorSelection(() => onSelection.trigger()),
     vscode.languages.onDidChangeDiagnostics(() => onDiagnostics.trigger()),
-    // Save is a deliberate single act, not a burst — collect straight away.
-    vscode.workspace.onDidSaveTextDocument(() => recollect()),
+    vscode.workspace.onDidSaveTextDocument((document) => onSave(document)),
     { dispose: () => onSelection.dispose() },
     { dispose: () => onEditor.dispose() },
     { dispose: () => onDiagnostics.dispose() },
+    { dispose: () => onGit.dispose() },
+    { dispose: () => controller.dispose() },
+    {
+      dispose: () => {
+        gitWiringDisposed = true;
+        openSub?.dispose();
+        for (const s of gitSubs.splice(0)) s.dispose();
+      },
+    },
   );
 }
 

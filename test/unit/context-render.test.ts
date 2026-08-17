@@ -49,6 +49,21 @@ describe("renderSections", () => {
   });
 });
 
+describe("renderSections loading state", () => {
+  test("renders a loading line for a section still in flight", () => {
+    const html = renderSections([{ id: "blame", title: "History", rows: [], loading: true }]);
+    expect(html).toContain("Loading…");
+  });
+
+  test("prefers rows over the loading line once they arrive", () => {
+    const html = renderSections([
+      { id: "blame", title: "History", rows: [{ label: "Ada" }], loading: true },
+    ]);
+    expect(html).toContain("Ada");
+    expect(html).not.toContain("Loading…");
+  });
+});
+
 describe("renderOffers", () => {
   test("carries the command and its pre-filled target on the button", () => {
     const html = renderOffers([

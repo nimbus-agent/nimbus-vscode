@@ -1,4 +1,5 @@
 import type { ContextViewToExtension, ExtensionToContextView } from "../protocol.js";
+import type { SignalSection } from "../signals.js";
 import { renderOffers, renderSignals } from "./render.js";
 
 // The browser half of the context panel. It decides nothing: it renders what
@@ -18,6 +19,13 @@ const vscode = acquireVsCodeApi();
 // keyboard focus inside the mount, so an identical repaint is skipped. Nothing
 // else writes to these mounts, so the cache cannot drift from the DOM.
 const painted: Record<string, string | undefined> = {};
+
+// Sections arrive independently: the local ones ride the first render, and each
+// Gateway-backed one lands when its RPC resolves. Keeping them by id means a
+// late blame answer repaints one section rather than the whole panel.
+let sections: SignalSection[] = [];
+let currentGeneration = -1;
+let currentIsDirty = false;
 
 function paint(id: string, html: string): void {
   const el = document.getElementById(id);
@@ -64,11 +72,34 @@ window.addEventListener("message", (event: MessageEvent<ExtensionToContextView>)
     paint("offers", "");
     return;
   }
+  if (typed.type === "section") {
+    // The same discipline as the payload check above, at the one place this
+    // listener reaches two levels into a message: a `section` without a
+    // section object would otherwise throw inside the listener.
+    const section: unknown = (typed as { section?: unknown }).section;
+    if (section === null || typeof section !== "object") return;
+    if (typeof (section as { id?: unknown }).id !== "string") return;
+    // Fenced: a section from a superseded collection describes a line or file
+    // the user has already left.
+    if (typed.generation !== currentGeneration) return;
+    // Replace in place, never append. This relies on an invariant the
+    // controller holds: the FIRST render seeds a slot for every signal id —
+    // cached, local, disconnected or "Loading…" — so the id arriving here
+    // always already has a slot. A section for an id with no slot is dropped
+    // by this map rather than appended, which is the safe direction: the
+    // alternative would grow the panel a duplicate heading at a time.
+    sections = sections.map((s) => (s.id === typed.section.id ? typed.section : s));
+    paint("signals", renderSignals({ sections, isDirty: currentIsDirty }));
+    return;
+  }
   // Matched explicitly rather than assumed as the else branch: a message type
   // this bundle does not yet know about — added by a later host version, say —
   // must be dropped, not rendered as though it were a render message.
   if (typed.type !== "render") return;
-  paint("signals", renderSignals({ sections: typed.sections, isDirty: typed.isDirty }));
+  currentGeneration = typed.generation;
+  currentIsDirty = typed.isDirty;
+  sections = [...typed.sections];
+  paint("signals", renderSignals({ sections, isDirty: currentIsDirty }));
   paint("offers", renderOffers(typed.offers));
 });
 
