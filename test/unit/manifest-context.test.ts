@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-type View = { id: string; name: string; type?: string; initialSize?: number };
+type View = { id: string; name: string; type?: string; initialSize?: number; visibility?: string };
 
 const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
   contributes?: { views?: { nimbus?: View[] } };
@@ -59,6 +59,21 @@ describe("extension manifest: context panel", () => {
     expect(context?.initialSize).toBeGreaterThanOrEqual(3);
     for (const v of views.filter((x) => x.id !== "nimbus.contextView")) {
       expect(v.initialSize ?? 1).toBeLessThan(context?.initialSize ?? 0);
+    }
+  });
+
+  test("collapses the six tree views so Context holds the space on first open", () => {
+    const context = views.find((v) => v.id === "nimbus.contextView");
+    expect(context?.visibility).toBeUndefined();
+    for (const id of [
+      "nimbus.auditView",
+      "nimbus.egressView",
+      "nimbus.agentsView",
+      "nimbus.indexView",
+      "nimbus.sessionsView",
+      "nimbus.workflowsView",
+    ]) {
+      expect(views.find((v) => v.id === id)?.visibility).toBe("collapsed");
     }
   });
 });

@@ -423,32 +423,38 @@
         {
           "id": "nimbus.auditView",
           "name": "Audit",
-          "initialSize": 1
+          "initialSize": 1,
+          "visibility": "collapsed"
         },
         {
           "id": "nimbus.egressView",
           "name": "Egress",
-          "initialSize": 1
+          "initialSize": 1,
+          "visibility": "collapsed"
         },
         {
           "id": "nimbus.agentsView",
           "name": "Agents",
-          "initialSize": 1
+          "initialSize": 1,
+          "visibility": "collapsed"
         },
         {
           "id": "nimbus.indexView",
           "name": "Index",
-          "initialSize": 1
+          "initialSize": 1,
+          "visibility": "collapsed"
         },
         {
           "id": "nimbus.sessionsView",
           "name": "Sessions",
-          "initialSize": 1
+          "initialSize": 1,
+          "visibility": "collapsed"
         },
         {
           "id": "nimbus.workflowsView",
           "name": "Workflows",
-          "initialSize": 1
+          "initialSize": 1,
+          "visibility": "collapsed"
         }
       ]
     },
