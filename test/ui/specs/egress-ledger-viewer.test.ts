@@ -1,7 +1,8 @@
 import { expect } from "chai";
-import { EditorView, ModalDialog, TextEditor, VSBrowser, Workbench } from "vscode-extension-tester";
+import { EditorView, TextEditor, VSBrowser, Workbench } from "vscode-extension-tester";
 
 import { fake } from "../helpers/gateway.js";
+import { waitForModal } from "../helpers/modal.js";
 
 // --- Investigation (Task 5) ------------------------------------------------
 //
@@ -48,31 +49,6 @@ import { fake } from "../helpers/gateway.js";
 // ----------------------------------------------------------------------------
 
 const FIXTURE_FILE = "test/ui/fixture-workspace/src/session.ts";
-
-// Same polling rationale as briefs-gated.test.ts: ModalDialog's getters do a
-// single findElement with no built-in wait, so this must poll via the page
-// object's own API rather than assume the modal is already rendered the
-// instant executeCommand() resolves — and it must fail loudly, not fall
-// through, if the modal never appears.
-async function waitForModal(): Promise<ModalDialog> {
-  let dialog: ModalDialog | undefined;
-  await VSBrowser.instance.driver.wait(
-    async () => {
-      const candidate = new ModalDialog();
-      try {
-        await candidate.getMessage();
-      } catch {
-        return false;
-      }
-      dialog = candidate;
-      return true;
-    },
-    10000,
-    "no pre-flight modal appeared",
-  );
-  if (dialog === undefined) throw new Error("no pre-flight modal appeared");
-  return dialog;
-}
 
 describe("the ledger's Show Last Outbound Payload reflects a real send", () => {
   before(async () => {

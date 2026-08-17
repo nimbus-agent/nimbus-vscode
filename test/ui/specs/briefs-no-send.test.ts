@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { EditorView, InputBox, ModalDialog, VSBrowser, Workbench } from "vscode-extension-tester";
 
 import { fake } from "../helpers/gateway.js";
+import { waitForModal } from "../helpers/modal.js";
 
 // validateInput runs on VS Code's own debounce after the input changes, so the
 // message element can still hold the OLD text (here, the prompt itself) for a
@@ -20,28 +21,6 @@ async function waitForMessage(input: InputBox, contains: string): Promise<string
     // message actually settled on, instead of a bare Selenium timeout.
   }
   return last;
-}
-
-// Same rationale as briefs-gated.test.ts's copy: ModalDialog's getters do a
-// single findElement with no built-in wait.
-async function waitForModal(): Promise<ModalDialog> {
-  let dialog: ModalDialog | undefined;
-  await VSBrowser.instance.driver.wait(
-    async () => {
-      const candidate = new ModalDialog();
-      try {
-        await candidate.getMessage();
-      } catch {
-        return false;
-      }
-      dialog = candidate;
-      return true;
-    },
-    10000,
-    "no pre-flight modal appeared",
-  );
-  if (dialog === undefined) throw new Error("no pre-flight modal appeared");
-  return dialog;
 }
 
 async function runCommand(name: string): Promise<void> {
