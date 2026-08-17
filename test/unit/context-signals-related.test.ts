@@ -21,6 +21,15 @@ type Item = Awaited<ReturnType<ContextClientLike["searchRanked"]>>[number];
 const item = (name: string, service: string): Item =>
   ({ name, service, indexPrimaryKey: `${service}:${name}`, score: 1 }) as unknown as Item;
 
+const itemInFile = (name: string, service: string, file: string): Item =>
+  ({
+    name,
+    service,
+    indexPrimaryKey: `${service}:${name}:${file}`,
+    score: 1,
+    rawMeta: { file },
+  }) as unknown as Item;
+
 function deps(client: ContextClientLike | undefined, limit = 5): SignalDeps {
   return { client: () => client, now: () => 0, searchLimit: () => limit };
 }
@@ -90,7 +99,7 @@ describe("relatedSection", () => {
 
   test("says so when the index has nothing", async () => {
     const section = await relatedSection(buildSnapshot({ generation: 7, editor }), deps(stub([])));
-    expect(section.empty).toBe("Nothing related in the local index.");
+    expect(section.empty).toBe("Nothing else in the local index looks related.");
   });
 
   test("reports a failed search as an error row rather than throwing", async () => {
@@ -113,5 +122,88 @@ describe("relatedSection", () => {
     };
     const section = await relatedSection(buildSnapshot({ generation: 9, editor }), deps(client));
     expect(section.transient).toBe(true);
+  });
+
+  test("excludes items whose rawMeta.file is the open file", async () => {
+    const section = await relatedSection(
+      buildSnapshot({ generation: 10, editor }),
+      deps(
+        stub([
+          itemInFile("aThing (function)", "filesystem", "src/a.ts"),
+          itemInFile("bThing (function)", "filesystem", "src/b.ts"),
+        ]),
+      ),
+    );
+    expect(section.rows.map((r) => r.label)).toEqual(["bThing (function)"]);
+  });
+
+  test("collapses duplicate rows for the same symbol in the same file", async () => {
+    const section = await relatedSection(
+      buildSnapshot({ generation: 11, editor }),
+      deps(
+        stub([
+          itemInFile("bThing (function)", "filesystem", "src/b.ts"),
+          itemInFile("bThing (function)", "filesystem", "src/b.ts"),
+          itemInFile("bThing (function)", "filesystem", "src/c.ts"),
+        ]),
+      ),
+    );
+    expect(section.rows.map((r) => r.label)).toEqual(["bThing (function)", "bThing (function)"]);
+    expect(section.rows.map((r) => r.detail)).toEqual(["filesystem", "filesystem"]);
+  });
+
+  test("excludes the open file when the index holds it under a longer root", async () => {
+    // The live index really does carry both shapes: rawMeta.file is
+    // repo-root-relative, so a file indexed while it sat in a git worktree keeps
+    // that prefix, while snapshot.path is workspace-root-relative.
+    const section = await relatedSection(
+      buildSnapshot({ generation: 14, editor }),
+      deps(
+        stub([
+          itemInFile("aThing (function)", "filesystem", ".claude/worktrees/wt/src/a.ts"),
+          itemInFile("bThing (function)", "filesystem", "src/b.ts"),
+        ]),
+      ),
+    );
+    expect(section.rows.map((r) => r.label)).toEqual(["bThing (function)"]);
+  });
+
+  test("does not collapse same-named items from different services", async () => {
+    const section = await relatedSection(
+      buildSnapshot({ generation: 15, editor }),
+      deps(stub([item("deploy failed", "jira"), item("deploy failed", "slack")])),
+    );
+    expect(section.rows.map((r) => r.detail)).toEqual(["jira", "slack"]);
+  });
+
+  test("collapses same-named items from one service that carry no file", async () => {
+    // Five github_actions rows for one commit's re-runs differ only by run id.
+    const section = await relatedSection(
+      buildSnapshot({ generation: 16, editor }),
+      deps(
+        stub([
+          item("nightly — success", "github_actions"),
+          item("nightly — success", "github_actions"),
+        ]),
+      ),
+    );
+    expect(section.rows).toHaveLength(1);
+  });
+
+  test("keeps an item whose rawMeta carries no usable file", async () => {
+    const section = await relatedSection(
+      buildSnapshot({ generation: 12, editor }),
+      deps(stub([item("an-incident", "pagerduty")])),
+    );
+    expect(section.rows.map((r) => r.label)).toEqual(["an-incident"]);
+  });
+
+  test("says the file has no neighbours when every hit is from the file itself", async () => {
+    const section = await relatedSection(
+      buildSnapshot({ generation: 13, editor }),
+      deps(stub([itemInFile("aThing (function)", "filesystem", "src/a.ts")])),
+    );
+    expect(section.rows).toEqual([]);
+    expect(section.empty).toBe("Nothing else in the local index looks related.");
   });
 });

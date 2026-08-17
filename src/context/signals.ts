@@ -188,22 +188,68 @@ export async function relatedSection(
   if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY, transient: true };
   try {
     const items = await client.searchRanked({ name: query, limit: deps.searchLimit() });
-    const rows: SignalRow[] = items
-      // Self-exclusion: an item is not its own neighbour, and leaving it in
-      // wastes the top slot. The rule is exact-match against the open file's
-      // PATH — not against the query, which is what Find related's `sameName`
-      // compares (trimmed and case-folded). The difference matters when the
-      // query is a selection: a result whose name equals the selected text is
-      // a legitimate neighbour here and is kept, while the open file is
-      // excluded even though it never matches the query.
-      .filter((i) => i.name !== snapshot.path)
-      .map((i) => ({
+    // The file an item came from, when the Gateway recorded one. Typed as
+    // unknown because rawMeta is Record<string, unknown> — an index that
+    // stores something other than a string here must not throw.
+    const fileOf = (i: (typeof items)[number]): string | undefined => {
+      const raw = i.rawMeta?.["file"];
+      return typeof raw === "string" ? raw : undefined;
+    };
+    // rawMeta.file is REPO-root-relative; snapshot.path is WORKSPACE-root-
+    // relative. They coincide when the workspace is the repo root and diverge
+    // otherwise — verified against this repo's own live index, which holds
+    // ".claude/worktrees/ambient-context-panel/src/context/controller.ts"
+    // beside "src/chat-participant/ops-commands.ts". An `===` test excludes the
+    // second and silently keeps the first, which is the staler row and the one
+    // most worth dropping. Comparing the whole relative path as a suffix
+    // handles both and is still specific: "…/src/context/controller.ts" ends
+    // with "/src/context/controller.ts"; "src/other/controller.ts" does not.
+    // Both sides are POSIX-style already — the Gateway stores forward slashes,
+    // toRelativeRef normalises to them — so no slash rewriting is done here.
+    // Inventing one would hide a genuine mismatch rather than fix it.
+    const sameFile = (file: string | undefined, path: string | undefined): boolean => {
+      if (file === undefined || path === undefined) return false;
+      return file === path || file.endsWith(`/${path}`) || path.endsWith(`/${file}`);
+    };
+    const seen = new Set<string>();
+    const rows: SignalRow[] = [];
+    for (const i of items) {
+      const file = fileOf(i);
+      // Self-exclusion, the version that actually fires. An item's `name` is a
+      // SYMBOL name ("runOpsCommand (function)"), never a repo-relative path,
+      // so the old `i.name !== snapshot.path` rule never matched anything and
+      // the panel filled with the open file's own symbols. rawMeta.file is the
+      // field that carries the path. The name comparison stays as a second
+      // rule for services that key an item by its path.
+      if (sameFile(file, snapshot.path)) continue;
+      if (i.name === snapshot.path) continue;
+      // The index can hold several rows for one symbol (a re-index that did not
+      // supersede the old row, a duplicate chunk). Three identical rows waste
+      // the section; one row per (name, file) does not.
+      //
+      // The fallback for an item with no file is its SERVICE, not "". The index
+      // really does return same-named rows with no file — five github_actions
+      // rows for one commit's re-runs, differing only by run id — and
+      // collapsing those is the point. An empty fallback would also collapse a
+      // Jira ticket and a Slack message that happen to share a title, which are
+      // different things the user needs to see separately.
+      //
+      // "\u0000" as the separator, written as an escape and never as a raw
+      // byte: a name containing the separator must not be able to collide with
+      // a different (name, file) pair.
+      const key = `${i.name}\u0000${file ?? i.service}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
         label: i.name,
         ...(i.service.length > 0 ? { detail: i.service } : {}),
         iconId: "file",
-      }));
+      });
+    }
     if (rows.length === 0) {
-      return { ...base, rows, empty: "Nothing related in the local index." };
+      // Says what is true after the exclusion above: the index may well hold
+      // this file, just nothing ELSE that ranks against it.
+      return { ...base, rows, empty: "Nothing else in the local index looks related." };
     }
     return { ...base, rows };
   } catch (e: unknown) {
