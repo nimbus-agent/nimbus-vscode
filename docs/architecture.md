@@ -156,8 +156,14 @@ to VS Code's *built-in* git extension instead of `vscode` itself.
 
 [`git-types.ts`](../src/scm/git-types.ts) defines the narrow structural
 interface the rest of `src/scm/` programs against — `GitApiLike` /
-`GitRepositoryLike`, four verbs (`changedFiles`, `fileDiff`, `untrackedPaths`,
-`log`) plus the SCM input box. `repo-select.ts`, `diff.ts`,
+`GitRepositoryLike`: `changedFiles` and `fileDiff` (subprocess reads, scoped
+`staged`/`all`, used by the SCM trio), `untrackedPaths`, `log`, `branch`, and
+`onDidChange`, plus the SCM input box. Two more verbs, `changedPathsNow` and
+`stagedPathsNow`, read the git extension's already-materialised working-tree
+and index state instead of shelling out — added for the ambient context
+panel's `git` signal (`src/context/signals.ts`), which reads on every
+debounce tick; the panel unions both, since either alone made its
+changed-file count fall as a file was staged. `repo-select.ts`, `diff.ts`,
 `commit-message.ts`, `review.ts`, and `generate.ts` are pure functions over
 those types — repository selection, diff ordering/budgeting/truncation,
 commit-message prompting/sanitizing, review coverage, and test/docstring

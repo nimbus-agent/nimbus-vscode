@@ -160,6 +160,7 @@ are for.
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
 | **Get Started walkthrough** — first-run walkthrough (install → connect Gateway → try Ask/Search/Quick Ask), on the Welcome page and via `Nimbus: Open Walkthrough` | *VS Code Walkthroughs API — no RPC* |
 | **Diagnostic actions** — up to three Nimbus actions on the lightbulb for an error or warning diagnostic: **Explain this problem** and **Suggest a fix** (reply spliced into a diff against the real file — never an applied edit), both behind the pre-flight gate under a new `"diagnostic"` kind, and **Find prior occurrences** (a local-index search for the same error, reaching no model and so ungated, but still needing the Gateway socket, only as good as what is indexed, and withheld altogether when the message normalizes to too little to search on). Errors and warnings only; where a line carries several diagnostics, exactly one is chosen, so the lightbulb never grows past three entries. Toggle `nimbus.diagnostics.showCodeActions`; not yet exercised in a real editor | `agentInvoke`, `searchRanked` |
+| **Ambient context panel** — a sidebar view (`nimbus.contextView`) that follows the active editor with no click needed and shows four signals: the file's errors and warnings, the branch of the repository containing it with a count of files **not yet committed** (the union of unstaged and staged paths — either alone made the count fall as a file was staged; the row is omitted on a clean tree rather than shown as zero), who last touched the cursor line, and the local index's nearest neighbours of the file or selection (self-excluded by an exact match on the index item's file against the open file's repo-relative path, plus a dedupe, not the old name-based check, which never matched). Also offers the built-in briefs pre-filled with the file and line. Toggle `nimbus.context.enabled` (default on; off leaves the view visible, saying so, rather than going blank). Both Gateway-backed signals reach no model, so neither raises a pre-flight preview; collapsing the view stops collection entirely. A real-editor pass (`docs/superpowers/plans/2026-08-17-context-panel-f5-findings.md`) confirmed the fixes above and found one thing still open: the view's rendered height is still roughly its original ~140 px across three fresh profiles, so History, Related and the offers can still sit below the fold — `initialSize`/`visibility` hints were added to the manifest but measured not to change this; giving the panel its own activity-bar container is the deferred real fix | `agentsWhyPeek`, `searchRanked` |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
 
 ---
@@ -176,9 +177,10 @@ The features that move the extension from good to **great** — the ones that le
 into what Copilot-style tools cannot do (local-first, agent-based, egress-audited)
 or that meet developers where they already work. All still on existing RPCs.
 
-The **native VS Code Chat participant**, the **Dev-workflow trio** and the
-**"Preview what leaves" pre-flight** have shipped — see **Already shipped**
-above; the remaining Phase 2 items below are still open.
+The **native VS Code Chat participant**, the **Dev-workflow trio**, the
+**"Preview what leaves" pre-flight**, and the **ambient context panel** have
+shipped — see **Already shipped** above; the remaining Phase 2 items below are
+still open.
 
 The pre-flight shipped as a **gate**, not the passive viewer this table
 originally described, and it needed **no RPCs** at all — not the `local` +
@@ -189,7 +191,6 @@ is already holding.
 | --- | --- | --- | --- |
 | **Workflow authoring** — create and edit saved workflows from the editor | All of run / monitor / cancel has now **shipped** — see *Already shipped*. What is left is authoring, deferred on evidence rather than effort: `steps_json` is opaque to the Gateway at save time, so a malformed DAG saves cleanly and fails only at run time. An editor for it needs its own validation design before it is worth offering | `workflowSave`, `workflowDelete` | M |
 | **Context-grounded Ask** — `@`-mention / attach files, search results, or index items into a question | Answers cite *your* local knowledge, not the model's guess | `searchRanked` / `queryItems` + `askStream` | M |
-| **Ambient context panel** — offer the agents that fit what is already on screen (file, selection, diff vs `HEAD`, branch) instead of waiting for a prompt; the editor counterpart of the browser ambient panel. **Two slices shipped** (`nimbus.contextView`): diagnostics, branch + changed-file count, catalog-derived offers, and now blame for the cursor line (`agentsWhyPeek`) and the local index's neighbours (`searchRanked`), behind an LRU cache with in-flight coalescing and a per-signal invalidation epoch. Those two calls go to the **local** Gateway automatically on a debounce — no user action — carrying the repo-relative path, the cursor line and any selected text; neither reaches a model, so neither raises a pre-flight preview. Collapsing the view stops collection entirely. Still open: a `nimbus.context.enabled` toggle, and a real-editor pass | The surface with the richest context stops making you retype the context | `searchRanked` / `queryItems` + the `agents*` family | L |
 
 ## Phase 3 — Deepen surfaces & trust
 
