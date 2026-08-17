@@ -160,10 +160,12 @@ interface the rest of `src/scm/` programs against — `GitApiLike` /
 `staged`/`all`, used by the SCM trio), `untrackedPaths`, `log`, `branch`, and
 `onDidChange`, plus the SCM input box. Two more verbs, `changedPathsNow` and
 `stagedPathsNow`, read the git extension's already-materialised working-tree
-and index state instead of shelling out — added for the ambient context
-panel's `git` signal (`src/context/signals.ts`), which reads on every
-debounce tick; the panel unions both, since either alone made its
-changed-file count fall as a file was staged. `repo-select.ts`, `diff.ts`,
+and index state instead of shelling out — called on every debounce tick by
+`gitSummaryFor` in `src/context/real-context-view.ts`, which unions both
+(either alone made the ambient context panel's changed-file count fall as a
+file was staged) before handing the panel's `git` signal
+(`src/context/signals.ts`) an already-computed list to render.
+`repo-select.ts`, `diff.ts`,
 `commit-message.ts`, `review.ts`, and `generate.ts` are pure functions over
 those types — repository selection, diff ordering/budgeting/truncation,
 commit-message prompting/sanitizing, review coverage, and test/docstring
