@@ -43,7 +43,7 @@ export const EGRESS_FILES_SHOWN = 5;
 export const REDACTION_NOTE = "Paths sent as file names only — no directories, no repository path.";
 
 export const RELATIVE_PATH_NOTE =
-  "Paths sent relative to the repository root — no absolute paths, no machine layout.";
+  "Paths sent relative to your project root — no absolute paths, no machine layout.";
 
 export const LEAK_WARNING =
   "WARNING: this payload contains an absolute path from this machine. Nimbus does not add it — it is inside your own content.";
@@ -75,17 +75,20 @@ function footerLines(p: EgressPayload): string[] {
   const lines: string[] = [];
   if (p.files.length > 0) {
     // Which claim is true depends on what the call site actually put in. Quick
-    // Ask and the SCM trio redact to a basename; the briefs send the
-    // repo-relative ref, because that is what the Gateway resolves against.
-    // Asserting the stronger claim over the weaker payload is the one failure
-    // this surface cannot afford.
+    // Ask and two of the SCM trio's commands — Generate Tests, Generate
+    // Docstrings — redact to a basename; Generate Commit Message, Review
+    // Changes, and the briefs send the repo-relative path, because that is
+    // what the Gateway resolves against. Asserting the stronger claim over the
+    // weaker payload is the one failure this surface cannot afford.
     //
     // Three states, not two. An ABSOLUTE name is neither a bare file name nor
     // repository-relative, so it gets no reassurance at all rather than the
-    // weaker of two false claims — LEAK_WARNING below is what should speak
-    // then. No surface is supposed to produce one (Quick Ask and the SCM trio
-    // redact to a basename, the briefs send the repo-relative ref), which is
-    // exactly why the fallback must not quietly assert something nice about it.
+    // weaker of two false claims. It also gets no LEAK_WARNING: leaked() below
+    // inspects p.prompt only, never p.files, so an absolute name sitting in
+    // files is silent, not flagged — still the safe outcome (no false claim),
+    // just not a loud one. No surface is supposed to produce an absolute name
+    // here (see the redaction split above), which is exactly why the fallback
+    // must not quietly assert something nice about it.
     const absolute = (name: string): boolean =>
       name.startsWith("/") || name.startsWith("\\\\") || /^[A-Za-z]:[\\/]/.test(name);
     const names = p.files.map((f) => f.name);
