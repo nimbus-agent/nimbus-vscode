@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-type View = { id: string; name: string; type?: string };
+type View = { id: string; name: string; type?: string; initialSize?: number };
 
 const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
   contributes?: { views?: { nimbus?: View[] } };
@@ -51,6 +51,14 @@ describe("extension manifest: context panel", () => {
       "nimbus.workflowsView",
     ]) {
       expect(ids).toContain(id);
+    }
+  });
+
+  test("weights the context view above the tree views it sits over", () => {
+    const context = views.find((v) => v.id === "nimbus.contextView");
+    expect(context?.initialSize).toBeGreaterThanOrEqual(3);
+    for (const v of views.filter((x) => x.id !== "nimbus.contextView")) {
+      expect(v.initialSize ?? 1).toBeLessThan(context?.initialSize ?? 0);
     }
   });
 });
