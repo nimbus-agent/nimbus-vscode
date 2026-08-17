@@ -27,6 +27,14 @@ export interface GitRepositoryLike {
    * debounce tick while the user types. Repo-relative, like ChangedFile.path.
    */
   changedPathsNow(): readonly string[];
+  /**
+   * The INDEX-vs-HEAD paths the git extension has already materialised — what a
+   * commit would contain. Same discipline as changedPathsNow: state in hand, no
+   * subprocess, repo-relative. The context panel unions the two, because
+   * `changedPathsNow` alone is unstaged-only, so staging a file made the panel's
+   * "changed files" count FALL while `git status` still showed the change.
+   */
+  stagedPathsNow(): readonly string[];
   fileDiff(scope: DiffScope, path: string): Promise<string>;
   // Counted and named in the review header; contents are never sent.
   untrackedPaths(): Promise<readonly string[]>;

@@ -26,6 +26,7 @@ interface RawRepository {
     HEAD?: { name?: string };
     untrackedChanges?: RawChange[];
     workingTreeChanges?: RawChange[];
+    indexChanges?: RawChange[];
     onDidChange(listener: () => void): { dispose(): void };
   };
   diffIndexWithHEAD(): Promise<RawChange[]>;
@@ -62,6 +63,10 @@ function adaptRepository(raw: RawRepository): GitRepositoryLike {
     // but no diff subprocess, because the context panel asks on every tick.
     changedPathsNow: () =>
       (raw.state.workingTreeChanges ?? []).map((c) => relativeOrBasename(root, c.uri.fsPath)),
+    // Same state, same relativiser, same no-subprocess discipline — but the
+    // INDEX-vs-HEAD side, which changedPathsNow does not cover.
+    stagedPathsNow: () =>
+      (raw.state.indexChanges ?? []).map((c) => relativeOrBasename(root, c.uri.fsPath)),
     fileDiff: async (scope, path) =>
       scope === "staged" ? raw.diffIndexWithHEAD(path) : raw.diffWithHEAD(path),
     untrackedPaths: async () => {

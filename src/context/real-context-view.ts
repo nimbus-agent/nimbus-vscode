@@ -66,7 +66,13 @@ export function registerContextView(deps: {
       // tick while the user works, and changedFiles shells out to `git diff`.
       // The git extension has already materialised its working-tree state, so
       // this is a read of data in hand — the same state untrackedPaths reads.
-      return { branch: repo.branch(), changedPaths: repo.changedPathsNow() };
+      //
+      // Working tree UNION index. changedPathsNow is unstaged-only and, under
+      // the default git.untrackedChanges: "mixed", includes untracked files;
+      // stagedPathsNow is index-vs-HEAD. Either alone makes the count fall as
+      // the user stages, which is the opposite of what "changed files" means.
+      const changedPaths = [...new Set([...repo.changedPathsNow(), ...repo.stagedPathsNow()])];
+      return { branch: repo.branch(), changedPaths };
     } catch (e: unknown) {
       // A failed read must not cost the branch row, which is already in hand.
       deps.log.warn(`context panel could not read changed files: ${errMsg(e)}`);

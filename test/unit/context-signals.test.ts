@@ -99,6 +99,25 @@ describe("gitSection", () => {
       "No git repository here.",
     );
   });
+
+  test("counts a path once when it is both staged and modified", async () => {
+    const section = await gitSection(
+      buildSnapshot({
+        generation: 1,
+        git: { branch: "main", changedPaths: ["src/a.ts", "src/b.ts"] },
+      }),
+      noDeps,
+    );
+    expect(section.rows[1]?.label).toBe("2 changed files");
+  });
+
+  test("omits the count row entirely when nothing has changed", async () => {
+    const section = await gitSection(
+      buildSnapshot({ generation: 2, git: { branch: "main", changedPaths: [] } }),
+      noDeps,
+    );
+    expect(section.rows.map((r) => r.label)).toEqual(["main"]);
+  });
 });
 
 describe("SIGNAL_CATALOG", () => {

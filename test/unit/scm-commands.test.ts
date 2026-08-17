@@ -41,6 +41,8 @@ function fakeRepo(opts: FakeRepoOpts = {}): GitRepositoryLike {
     // The state-backed read the context panel uses; the SCM trio still goes
     // through changedFiles, so this only has to be shaped right.
     changedPathsNow: () => files.map((f) => f.path),
+    // The SCM trio never reads this; only the context panel's union does.
+    stagedPathsNow: () => [],
     fileDiff: async (_scope: DiffScope, path: string) => diffs[path] ?? "",
     untrackedPaths: async () => opts.untracked ?? [],
     log: async () => opts.log ?? ["feat: earlier change"],
