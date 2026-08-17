@@ -91,6 +91,27 @@ describe("summarizeEgress", () => {
     expect(s).not.toContain(REDACTION_NOTE);
     expect(s).not.toContain(RELATIVE_PATH_NOTE);
   });
+  test("claims nothing at all for a POSIX absolute path", () => {
+    const s = summarizeEgress(
+      payload({ files: [{ name: "/home/asaf/logging.ts", note: "whole file" }] }),
+    );
+    expect(s).not.toContain(REDACTION_NOTE);
+    expect(s).not.toContain(RELATIVE_PATH_NOTE);
+  });
+  test("claims nothing at all for a backslash drive-letter path", () => {
+    const s = summarizeEgress(
+      payload({ files: [{ name: "C:\\Users\\asaf\\logging.ts", note: "whole file" }] }),
+    );
+    expect(s).not.toContain(REDACTION_NOTE);
+    expect(s).not.toContain(RELATIVE_PATH_NOTE);
+  });
+  test("claims nothing at all for a UNC path", () => {
+    const s = summarizeEgress(
+      payload({ files: [{ name: "\\\\server\\share\\logging.ts", note: "whole file" }] }),
+    );
+    expect(s).not.toContain(REDACTION_NOTE);
+    expect(s).not.toContain(RELATIVE_PATH_NOTE);
+  });
 });
 
 describe("renderFullEgress", () => {
@@ -102,6 +123,13 @@ describe("renderFullEgress", () => {
   });
   test("ends with the verbatim prompt", () => {
     expect(renderFullEgress(payload({ prompt: "EXACT BYTES" }))).toContain("EXACT BYTES");
+  });
+  test("carries the relative-path note, not the redaction note, for a directory-carrying payload", () => {
+    const full = renderFullEgress(
+      payload({ files: [{ name: "src/logging.ts", note: "whole file" }] }),
+    );
+    expect(full).toContain(RELATIVE_PATH_NOTE);
+    expect(full).not.toContain(REDACTION_NOTE);
   });
 });
 
