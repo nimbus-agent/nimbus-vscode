@@ -103,14 +103,14 @@ export async function gitSection(
   if (git === undefined) return { ...base, rows: [], empty: "No git repository here." };
   const rows: SignalRow[] = [{ label: git.branch ?? "Detached HEAD", iconId: "git-branch" }];
   // Only when the collector actually looked AND has something to report. An
-  // unread changedPaths renders no row: "0 changed files" beside a correct
-  // branch name is a statement the panel has not earned. A read that found
-  // nothing renders no row either — the branch row already shows the section
-  // looked, and a zero is noise on the majority of ticks.
+  // unread changedPaths renders no row: "0 uncommitted files" beside a
+  // correct branch name is a statement the panel has not earned. A read that
+  // found nothing renders no row either — the branch row already shows the
+  // section looked, and a zero is noise on the majority of ticks.
   const changed = git.changedPaths;
   if (changed !== undefined && changed.length > 0) {
     rows.push({
-      label: `${changed.length} changed ${changed.length === 1 ? "file" : "files"}`,
+      label: `${changed.length} uncommitted ${changed.length === 1 ? "file" : "files"}`,
       iconId: "diff",
     });
   }

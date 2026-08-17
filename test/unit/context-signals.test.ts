@@ -61,17 +61,17 @@ describe("gitSection", () => {
     });
     expect((await gitSection(snap, noDeps)).rows.map((r) => r.label)).toEqual([
       "feat/x",
-      "2 changed files",
+      "2 uncommitted files",
     ]);
   });
 
-  test("uses the singular for one changed file", async () => {
+  test("uses the singular for one uncommitted file", async () => {
     const snap = buildSnapshot({
       generation: 5,
       editor,
       git: { branch: "main", changedPaths: ["src/a.ts"] },
     });
-    expect((await gitSection(snap, noDeps)).rows[1]?.label).toBe("1 changed file");
+    expect((await gitSection(snap, noDeps)).rows[1]?.label).toBe("1 uncommitted file");
   });
 
   test("omits the count row entirely when no one looked at the changed files", async () => {
@@ -82,7 +82,7 @@ describe("gitSection", () => {
     });
     const rows = (await gitSection(snap, noDeps)).rows;
     expect(rows.map((r) => r.label)).toEqual(["main"]);
-    expect(rows.some((r) => r.label.includes("changed"))).toBe(false);
+    expect(rows.some((r) => r.label.includes("uncommitted"))).toBe(false);
   });
 
   test("reports a detached HEAD rather than pretending there is a branch", async () => {
@@ -111,7 +111,7 @@ describe("gitSection", () => {
       }),
       noDeps,
     );
-    expect(section.rows[1]?.label).toBe("2 changed files");
+    expect(section.rows[1]?.label).toBe("2 uncommitted files");
   });
 
   test("omits the count row entirely when nothing has changed", async () => {
