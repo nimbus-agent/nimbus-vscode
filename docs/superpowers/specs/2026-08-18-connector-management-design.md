@@ -10,10 +10,25 @@ Every Gateway-backed surface this extension ships is only as good as the local
 index: Search, *Find related*, *Find prior occurrences*, the Index view, the
 context panel's Related section, and every brief that cites indexed items.
 
-Nothing in the extension says whether that index is being fed. A connector in
-`error` or `backoff` degrades all of them **silently** — results get thinner,
-neighbours get staler, and the surfaces keep answering as if nothing happened.
-The only way to see it, or fix it, is to leave the editor for the CLI.
+The extension is not *silent* about this today — that framing, used in the
+brainstorming that led here, was wrong and reading the code corrected it. A
+timer in `extension.ts` already polls `connectorListStatus` and feeds
+`summarizeConnectorHealth` (`src/status-bar/connector-health.ts`) into the
+status bar, which renders `2 degraded: github, slack` in its text and tooltip.
+That poll is load-bearing for another reason too: its `catch` calls
+`connection.noteTransportFailure`, making it the transport-failure detection
+path that runs even when the egress badge is switched off.
+
+What is missing is everything after the count. The status bar says *that* two
+connectors are unhealthy; nothing says **which error**, **since when**, **how
+often it has failed**, or **what to do about it** — and there is no way to act
+at all. Pausing a runaway connector, re-authenticating an expired token,
+forcing a sync, re-indexing at a deeper level, or removing a source all mean
+leaving the editor for the CLI.
+
+So the gap this closes is detail and remedy, not detection. That also fixes
+where the new work belongs: a surface that *explains and acts*, reusing the
+health signal that already exists rather than computing a second one.
 
 The pinned client types the whole `connector*` suite. The gap is a surface, not
 a capability.
@@ -82,6 +97,7 @@ pure core, with `vscode` reached only through `vscode-shim.ts`.
 
 | File | Purpose | Touches the shim |
 | --- | --- | --- |
+| `health.ts` | `summarizeConnectorHealth`, **moved** from `src/status-bar/`. It now has three consumers (status bar, this view, the context panel), so it belongs with the connector code rather than inside one of them. Body unchanged. | no |
 | `catalog.ts` | `AUTH_CATALOG`: `serviceId` → ordered `AuthField[]`, plus display names and the generic fallback descriptor. Pure data. | no |
 | `rows.ts` | `ConnectorSyncStatus[]` → `SidebarItem[]`; status→icon, description, tooltip, `contextValue`, sort order. Telemetry and health-history rows too. | no |
 | `outcome.ts` | The `ConnectorOutcome` union and the wording for each variant. Pure. | no |
@@ -95,7 +111,7 @@ never captured — the reconnect-stranding fix from #103 applies here too, and a
 connector command is precisely the kind of long-lived surface that would strand
 a captured client across a Gateway restart.
 
-Five of the six files are pure and unit-testable with no `vscode` stub.
+Six of the seven files are pure and unit-testable with no `vscode` stub.
 
 ## The view
 
@@ -153,7 +169,19 @@ user cannot act on.
 
 ### Liveness
 
-No background polling. The view refreshes on:
+**No second timer.** A connector poll already runs — `pollConnectorHealth` in
+`extension.ts`, on `settings.statusBarPollMs()` — and it already fetches the
+full `ConnectorSyncStatus[]`, summarising it for the status bar and throwing
+the rest away. This surface hangs off that existing poll instead of starting
+its own: the poll keeps the last statuses it read, and a change in the
+*degraded summary* refreshes the view. Adding a second interval over the same
+RPC would double the traffic to say the same thing.
+
+The view still fetches on open and on explicit refresh, because a tree that
+renders whatever the last poll happened to see is stale by up to one poll
+interval at the moment you look at it.
+
+Beyond that, the view refreshes on:
 
 1. **`subscribeConnectorConfigChanged`** — the Gateway emits one after every
    `setConfig` / `pause` / `resume` / `setInterval`. Treat it as an
@@ -167,13 +195,16 @@ No background polling. The view refreshes on:
 
 **Notifications are debounced before they invalidate anything.** The Gateway
 emits one `configChanged` per mutation, so a multi-field `setConfig` — or a
-script pausing every connector in a loop — arrives as a burst. Both consumers
-(this view and the context panel's Sources signal) take the notification
-through `createDebouncer(250, …)`, the same seam `src/context/debounce.ts`
-already provides for editor events, so a burst costs one refresh rather than
-one per notification. The controller's existing in-flight coalescing does not
-cover this on its own: it merges concurrent collections, but a burst that lands
-*after* each refresh completes would otherwise refetch every time.
+script pausing every connector in a loop — arrives as a burst. The view takes
+the notification through `createDebouncer(250, …)`, the seam
+`src/context/debounce.ts` already provides for editor events, so a burst costs
+one `connectorListStatus` rather than one per notification. Debouncing matters
+here specifically because each refresh is an RPC; the controller's in-flight
+coalescing does not help, since it merges *concurrent* collections and a burst
+landing after each refresh completes would refetch every time.
+
+The context panel needs none of this: its Sources row reads an in-memory
+summary, so a burst costs a re-render, not a round trip.
 
 ## Write operations
 
@@ -363,6 +394,15 @@ The row's command opens the Connectors view. `signals.ts` is already data-driven
 ("adding a fifth signal is one entry rather than an edit in four files"), so
 this is one catalog-shaped entry plus a collector.
 
+**It makes no Gateway call.** The collector reads the summary the existing
+status-bar poll already produced, injected as a `() => ConnectorHealthSummary`
+getter. So `ContextClientLike` gains **no** third method, the panel's RPC count
+per tick is unchanged, and the "unhealthy" rule cannot drift from the status
+bar's, because it is `summarizeConnectorHealth` — the same function, not a
+second copy of the same predicate. Its existing rule (`enabled &&
+(error || backoff)`) is already exactly the one this design wants: a `paused`
+or disabled connector is a state the user chose and raises no row.
+
 Two things it changes:
 
 **1. Sections must be able to render nothing.** `renderSections` today emits a
@@ -375,23 +415,25 @@ clean tree. `SignalSection` gains an optional `suppressWhenEmpty?: true`, and
 it is testable purely and no controller state changes.
 
 **2. It is the panel's first global signal.** Every existing signal varies with
-the file; this one does not. Its cache key is global — the shape `git` already
-uses — and it is invalidated by the `connectorConfigChanged` subscription and by
-any mutation, with a TTL floor so a debounce tick cannot turn into an RPC per
-keystroke. Collection still stops entirely when the view is hidden or
-`nimbus.context.enabled` is off.
+the file; this one does not. It is a **local** collector in the controller's
+sense — the same class as `problems` and `git`, riding the first render with no
+round trip — because the value it reads is already in memory. No cache key, no
+TTL, no in-flight coalescing needed. Collection still stops entirely when the
+view is hidden or `nimbus.context.enabled` is off.
 
-`ContextClientLike` gains a third method, `connectorListStatus`. Still
-model-free; the choke-point test stays green.
+Nothing in `src/context/` names a `connector*` RPC, so the choke-point test is
+untouched and the panel's Gateway surface stays exactly the two model-free
+calls it has today.
 
 ## Edits outside `src/connectors/`
 
 | File | Edit |
 | --- | --- |
 | `src/vscode-shim.ts` | `showInputBox` gains `password?: boolean` and `ignoreFocusOut?: boolean`. **The shim declares neither today** — without this the masked prompt is not expressible. |
-| `src/context/signals.ts` | `SignalId` gains `"connectors"`; `SECTION_TITLES` gains `Sources`; `ContextClientLike` gains `connectorListStatus`; the collector. |
+| `src/status-bar/connector-health.ts` | **Moved** to `src/connectors/health.ts`, body unchanged; `src/extension.ts` and `test/unit/connector-health.test.ts` update their import path. Three consumers now, so it stops living inside one of them. |
+| `src/context/signals.ts` | `SignalId` gains `"connectors"`; `SECTION_TITLES` gains `Sources`; `SignalDeps` gains a `connectorHealth: () => ConnectorHealthSummary` getter; the collector. No new client method. |
 | `src/context/webview/render.ts` | `suppressWhenEmpty` filtering. |
-| `src/extension.ts` | Register the view, the nine commands, and the config-changed subscription; bind it beside the HITL subscription so a reconnect re-binds it. |
+| `src/extension.ts` | Register the view, the nine commands, and the config-changed subscription (bound beside the HITL subscription so a reconnect re-binds it); keep the last statuses from the existing `pollConnectorHealth` and refresh the view when the degraded summary changes; pass the summary getter to the context panel. |
 | `package.json` | One view, nine commands, `view/title` refresh, `view/item/context` menus keyed on the three `contextValue`s. |
 | `docs/` | `docs/connectors.md` (what the surface does, the catalog's drift risk, why built-in onboarding is absent); `docs/architecture.md` and `CLAUDE.md` gain the surface; `docs/ROADMAP.md` moves both rows to *Already shipped*. |
 
@@ -432,7 +474,11 @@ Unit (`test/unit/`), all pure except where noted:
   preview fails it too.
 - **context panel** — `suppressWhenEmpty` renders nothing for a zero-row
   section and still renders `empty` text for sections without the flag; the
-  Sources collector emits rows only for unhealthy connectors.
+  Sources collector emits rows only for unhealthy connectors, and makes no
+  Gateway call (asserted against a client stub that throws if touched).
+- **`health.ts`** — the existing `connector-health.test.ts` keeps passing at
+  its new import path, unmodified otherwise. If that file needs an assertion
+  changed, the move was not a move.
 - **`commands.ts`** — over stubbed shim deps: remove confirms before calling,
   a cancelled confirmation calls nothing, the HITL progress is created
   non-cancellable, and `withProgress` is invoked with the reporter first.
