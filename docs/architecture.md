@@ -76,7 +76,7 @@ real code paths without a running editor. Keep `src/` and `test/` self-contained
 | Area | Responsibility |
 | --- | --- |
 | `src/extension.ts` | Activation entry: registers commands, wires the connection manager, status bar, and HITL router. |
-| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free. Workflows is the one view with lazily-loaded children (`createDataView`'s optional `loadChildren`), because eager children would cost one `workflow.listRuns` round trip per saved workflow on every open. |
+| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free. `tree-view.ts`'s `createDataView` is also what `src/connectors/connectors-view.ts` builds on, for the eighth container view, Connectors — Workflows and Connectors are the two views with lazily-loaded children (`loadChildren`), because eager children would cost one round trip per row on every open. |
 | `src/workflows/` | The run surface: pure `run.ts` (pre-flight manifest, outcome wording, run report) plus `commands.ts`, which holds the injected seams. The run is gated under the `"workflow"` kind; `workflowCancel` is deliberately **not** gated, since it stops egress rather than causing any. |
 | `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). |
 | `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. |
@@ -86,7 +86,8 @@ real code paths without a running editor. Keep `src/` and `test/` self-contained
 | `src/quick-ask-presets.ts` | Resolves the configurable quick-ask preset actions (Explain / Fix / Review / Docstring / Write tests), plus the infra-file ops presets (Blast radius / Ownership / Recent changes) prepended to them. |
 | `src/connection/` | Connection manager, the troubleshooter, and optional `nimbus start` auto-start. |
 | `src/hitl/` | Human-in-the-loop consent: router + modal / toast / details surfaces. |
-| `src/status-bar/` | Connector-health status bar item and the egress badge. |
+| `src/status-bar/` | The egress badge, plus the status-bar item that renders `summarizeConnectorHealth` (now in `src/connectors/health.ts`, below). |
+| `src/connectors/` | The Connectors view (`nimbus.connectorsView`): pure `health.ts` (`summarizeConnectorHealth`, moved here from `src/status-bar/` once it gained a third consumer — the status bar, this view, and the context panel's Sources row all read it), `catalog.ts` (the credential-field catalog, sourced from the pinned client's JSDoc and documented as apt to drift in `docs/connectors.md`), `rows.ts` (status → icon/description/tooltip/`contextValue`, severity-then-id sort), `outcome.ts` (the `ConnectorOutcome` union — the adapter normalising four different RPC failure shapes, two of which mean *denied* rather than *broken*), `interval.ts` (human interval strings ↔ milliseconds) — plus `connector-client.ts` (the `ConnectorClientLike` seam and the outcome adapter) and `connectors-view.ts` (the `createDataView` wrapper with on-expand `loadChildren` for telemetry and health history, the same pattern `src/sidebar/`'s Workflows view established). `commands.ts` is the one file here holding injected `vscode`-shaped deps (`window`, the ops seam), mirroring `src/scm/commands.ts`. None of the twelve `connector*` RPCs takes a prompt or returns a completion, so this surface reaches no model and sits outside the pre-flight gate exactly as `searchRanked` does — see `docs/connectors.md`. |
 | `src/logging.ts` | Output-channel logger. **Never** `console` in `src/` (Biome's `noConsole`). |
 | `src/settings.ts` | Typed accessors over `nimbus.*` configuration. |
 | `src/scm/` | Dev-workflow trio (Generate Commit Message, Review Changes, Generate Tests, Generate Docstrings): pure diff/commit-message/review/generate modules behind a `GitApiLike` seam, plus `commands.ts` and `real-git.ts` (see below). |
@@ -213,14 +214,21 @@ let other chat extensions and agents call Nimbus as a tool; a
 Message` (staged diff → SCM input box), `Review Changes` (all local changes →
 findings tab), and `Generate Tests` / `Generate Docstrings` (selection → test
 buffer / docstring diff), output always a suggestion; a Nimbus sidebar with
-Audit, Sessions, Index, Agents, a **Workflows** view (saved workflows, each
+Audit, Sessions, Index, Agents, Connectors, a **Workflows** view (saved workflows, each
 one's recent runs loaded on expand) with **Run** / **Dry-Run** commands that
 stream per-step output and can be cancelled — at the next step boundary, so the
 in-flight step always finishes — and an **Egress** ledger viewer (with
 Verify-ledger and Prove-window commands) plus an **egress status-bar badge**; a
 **connection troubleshooter** (state-aware modal, no RPC); a **Get Started
 walkthrough** (first-run onboarding via the VS Code Walkthroughs API, no RPC);
-plus connection + HITL plumbing and **Restricted Mode** support
+a **Connectors** view (`nimbus.connectorsView`, `src/connectors/`, see
+*Module map* above and [connectors.md](./connectors.md)) — one row per
+registered connector sorted unhealthy-first, sync telemetry and health-state
+history loaded on expand, and nine commands (sync, full re-sync, pause,
+resume, configure, re-index, authenticate, add MCP connector, remove)
+normalised through one adapter into `applied` / `denied` / `failed`, so a
+consent denial is never reported as a failure; plus connection + HITL
+plumbing and **Restricted Mode** support
 (`capabilities.untrustedWorkspaces` = `limited` with `extensionKind: ["ui"]` — in
 an untrusted workspace the workspace-level `nimbus.socketPath` and
 `nimbus.autoStartGateway` settings are ignored, so a workspace cannot redirect
@@ -231,10 +239,13 @@ deferred by choice: no published `@nimbus-dev/client` exposes those RPCs (checke
 through the pinned client — see `package.json`), and the IPC-only non-negotiable
 forbids reaching past the typed client.
 
-The **connector** surface is no longer blocked either — the pinned client exposes
-the full `connector*` suite and `subscribeConnectorConfigChanged` — it is simply
-unbuilt. The **workflow** family, by contrast, is built for monitor + run +
-cancel (`src/workflows/`, above); only authoring (`workflowSave` /
-`workflowDelete`) is outstanding, deferred on purpose because `steps_json` is
-opaque at save time, so a malformed DAG saves cleanly and fails only at run time.
-See [ROADMAP.md](./ROADMAP.md).
+The **connector** surface is no longer blocked, and is now built — see
+**Connectors** above and [connectors.md](./connectors.md). What it still
+cannot do is onboard a *built-in* connector (no RPC registers one;
+`connectorAddMcp` only registers an MCP source) or show a registered MCP
+connector's command line (`commandLine` is input-only in the current client —
+Phase 4 in the roadmap). The **workflow** family, by contrast, is built for
+monitor + run + cancel (`src/workflows/`, above); only authoring
+(`workflowSave` / `workflowDelete`) is outstanding, deferred on purpose
+because `steps_json` is opaque at save time, so a malformed DAG saves cleanly
+and fails only at run time. See [ROADMAP.md](./ROADMAP.md).

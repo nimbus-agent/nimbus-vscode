@@ -7,6 +7,7 @@ the top-level [README](../README.md); for the contributor quickstart see
 | Doc | For | Covers |
 | --- | --- | --- |
 | [architecture.md](./architecture.md) | Contributors | The IPC-only seam, the esbuild bundling model and why it's load-bearing, the Webview boundary, and the `vscode-shim` test seam. |
+| [connectors.md](./connectors.md) | Users & contributors | The Connectors view — rows, telemetry, health history, the nine mutations and their concurrency guards, the credential catalog's drift risk, and why built-in connector onboarding is absent. |
 | [development.md](./development.md) | Contributors | Clone → build → run in an Extension Development Host (F5), watch mode, debugging, and how the test suite stubs `vscode`. |
 | [settings.md](./settings.md) | Users & contributors | Every `nimbus.*` setting, its default, and when to change it. |
 | [releasing.md](./releasing.md) | Maintainers | The tag-driven publish flow, required secrets, and how to recover a failed release. |
