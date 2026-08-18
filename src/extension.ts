@@ -91,7 +91,7 @@ import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
 import { createWorkflowsView } from "./sidebar/workflows-view.js";
-import { summarizeConnectorHealth } from "./status-bar/connector-health.js";
+import { summarizeConnectorHealth } from "./connectors/health.js";
 import {
   createEgressStatusBarController,
   type EgressBadgeInputs,

@@ -1,7 +1,7 @@
 import type { ConnectorSyncStatus } from "@nimbus-dev/client";
 import { describe, expect, test } from "vitest";
 
-import { summarizeConnectorHealth } from "../../src/status-bar/connector-health.js";
+import { summarizeConnectorHealth } from "../../src/connectors/health.js";
 
 function status(over: Partial<ConnectorSyncStatus>): ConnectorSyncStatus {
   return {
