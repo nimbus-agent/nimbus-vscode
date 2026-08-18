@@ -52,6 +52,34 @@ describe("the four wire shapes", () => {
   test("a non-Error rejection still yields a message", () => {
     expect(fromThrown("boom")).toEqual({ kind: "failed", message: "boom" });
   });
+
+  test("a generic permission error is a failure, not a denial", () => {
+    expect(fromThrown(new Error("EACCES: permission denied"))).toEqual({
+      kind: "failed",
+      message: "EACCES: permission denied",
+    });
+  });
+
+  test("a proxy rejection without consent context is a failure", () => {
+    expect(fromThrown(new Error("upstream request rejected by proxy"))).toEqual({
+      kind: "failed",
+      message: "upstream request rejected by proxy",
+    });
+  });
+
+  test("a consent expiry is denied even without other context", () => {
+    expect(fromThrown(new Error("consent request expired"))).toEqual({
+      kind: "denied",
+      reason: "consent request expired",
+    });
+  });
+
+  test("an explicit 'not approved' phrase is denied", () => {
+    expect(fromThrown(new Error("the change was not approved"))).toEqual({
+      kind: "denied",
+      reason: "the change was not approved",
+    });
+  });
 });
 
 describe("describeOutcome", () => {

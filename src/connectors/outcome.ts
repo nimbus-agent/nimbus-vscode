@@ -15,10 +15,13 @@ export type ConnectorOutcome =
 
 // Whether a REJECTED promise is a consent denial rather than a fault. Only the
 // full-depth reindex path can produce one, and the client gives us no code to
-// key on, so this is a heuristic over the message — deliberately narrow, and
-// biased to "failed": mislabelling a genuine error as a denial would tell the
-// user a decision was made that nobody made.
-const DENIAL = /\b(denied|rejected|not approved|consent (?:expired|timed out))\b/i;
+// key on, so this is a heuristic over the message — deliberately conservative,
+// biased to "failed": mislabelling a genuine error as a denial would invent a
+// user decision; a real denial misread as a failure still carries the Gateway's
+// reason verbatim. Bare "denied" or "rejected" match only with consent-domain
+// context (consent/HITL/approval/owner), or accept standalone "not approved".
+// Calibrated against observed Gateway denial messages during the F5 pass.
+const DENIAL = /\bnot approved\b|(?=.*\b(?:denied|rejected|expired|timed out)\b)(?=.*\b(?:consent|HITL|approval|owner)\b)/i;
 
 export function fromOk(r: { ok: boolean }, detail?: string): ConnectorOutcome {
   if (!r.ok) return { kind: "failed", message: "The Gateway did not apply the change." };
