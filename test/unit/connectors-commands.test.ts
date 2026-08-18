@@ -32,6 +32,7 @@ function harness(over: { ops?: Partial<ConnectorOps>; window?: Record<string, un
       },
     ]),
     pause: vi.fn(async () => ({ kind: "applied" }) as const),
+    resume: vi.fn(async () => ({ kind: "applied" }) as const),
     sync: vi.fn(async () => ({ kind: "applied", detail: "sync started" }) as const),
     fullSync: vi.fn(async () => ({ kind: "applied" }) as const),
     setConfig: vi.fn(async () => ({ kind: "applied", detail: "interval 15m" }) as const),
@@ -71,6 +72,23 @@ function harness(over: { ops?: Partial<ConnectorOps>; window?: Record<string, un
   return { commands, ops, window, refresh, logged };
 }
 
+test("registers exactly the nine documented command ids", () => {
+  const h = harness();
+  expect(Object.keys(h.commands).sort()).toEqual(
+    [
+      "nimbus.addMcpConnector",
+      "nimbus.authenticateConnector",
+      "nimbus.configureConnector",
+      "nimbus.fullResyncConnector",
+      "nimbus.pauseConnector",
+      "nimbus.reindexConnector",
+      "nimbus.removeConnector",
+      "nimbus.resumeConnector",
+      "nimbus.syncConnector",
+    ].sort(),
+  );
+});
+
 describe("remove", () => {
   test("confirms modally, naming the item count, before calling", async () => {
     const h = harness();
@@ -87,12 +105,14 @@ describe("remove", () => {
     expect(h.ops.remove).not.toHaveBeenCalled();
   });
 
-  test("the consent wait is non-cancellable, and gets the reporter first", async () => {
+  test("the consent wait is non-cancellable, and the task takes (progress, token)", async () => {
     const h = harness();
     await h.commands["nimbus.removeConnector"]!(node());
     const [options, task] = h.window.withProgress.mock.calls[0] ?? [];
     expect(options).toMatchObject({ cancellable: false });
-    expect(typeof task).toBe("function");
+    // Two parameters: the reporter, then the cancellation token — the order
+    // the real vscode.window.withProgress always calls with.
+    expect((task as (...args: unknown[]) => unknown).length).toBe(2);
   });
 
   test("a denial is reported as a decision, not as an error", async () => {
@@ -104,6 +124,81 @@ describe("remove", () => {
     expect(h.window.showInformationMessage.mock.calls[0]?.[0]).toBe(
       "Removing github was not approved: consent expired",
     );
+  });
+});
+
+describe("resume", () => {
+  test("on a paused row, calls ops.resume with the service id and reports the outcome", async () => {
+    const h = harness();
+    const pausedNode = {
+      label: "github",
+      contextValue: CONNECTOR_CONTEXT.paused,
+      payload: { serviceId: "github", itemCount: 1204 },
+    };
+    await h.commands["nimbus.resumeConnector"]!(pausedNode);
+    expect(h.ops.resume).toHaveBeenCalledWith("github");
+    expect(h.window.showInformationMessage.mock.calls[0]?.[0]).toBe("Resuming github: done");
+  });
+});
+
+describe("fullResync", () => {
+  test("confirms modally, mentioning the sync cursor, before calling", async () => {
+    const h = harness({ window: { showWarningMessage: vi.fn(async () => "Full re-sync") } });
+    await h.commands["nimbus.fullResyncConnector"]!(node());
+    const [message, options] = h.window.showWarningMessage.mock.calls[0] ?? [];
+    expect(message).toContain("clears its sync cursor");
+    expect(options).toMatchObject({ modal: true });
+    expect(h.ops.fullSync).toHaveBeenCalledWith("github");
+  });
+
+  test("a declined confirmation calls nothing", async () => {
+    const h = harness({ window: { showWarningMessage: vi.fn(async () => undefined) } });
+    await h.commands["nimbus.fullResyncConnector"]!(node());
+    expect(h.ops.fullSync).not.toHaveBeenCalled();
+  });
+});
+
+describe("reindex", () => {
+  test("metadata_only calls ops.reindex directly, without the consent wrapper", async () => {
+    const h = harness({
+      window: { showQuickPick: vi.fn(async () => ({ label: "metadata_only" })) },
+    });
+    await h.commands["nimbus.reindexConnector"]!(node());
+    expect(h.ops.reindex).toHaveBeenCalledWith("github", "metadata_only");
+    expect(h.window.withProgress).not.toHaveBeenCalled();
+    expect(h.window.showWarningMessage).not.toHaveBeenCalled();
+  });
+
+  test("full confirms modally and goes through the non-cancellable consent wrapper", async () => {
+    const h = harness({
+      window: {
+        showQuickPick: vi.fn(async () => ({ label: "full" })),
+        showWarningMessage: vi.fn(async () => "Re-index"),
+      },
+    });
+    await h.commands["nimbus.reindexConnector"]!(node());
+    expect(h.window.showWarningMessage).toHaveBeenCalled();
+    const [options] = h.window.withProgress.mock.calls[0] ?? [];
+    expect(options).toMatchObject({ cancellable: false });
+    expect(h.ops.reindex).toHaveBeenCalledWith("github", "full");
+  });
+});
+
+describe("addMcp", () => {
+  test("validates the connector id, then calls ops.addMcp through the consent wrapper", async () => {
+    const answers = ["mcp_acme", "npx -y @acme/mcp-server"];
+    const h = harness({
+      window: { showInputBox: vi.fn(async (..._args: unknown[]) => answers.shift()) },
+    });
+    await h.commands["nimbus.addMcpConnector"]!(undefined);
+    const idOpts = h.window.showInputBox.mock.calls[0]?.[0] as {
+      validateInput: (v: string) => string | undefined;
+    };
+    expect(idOpts.validateInput("nope")).toEqual(expect.any(String));
+    expect(idOpts.validateInput("mcp_acme")).toBeUndefined();
+    expect(h.ops.addMcp).toHaveBeenCalledWith("mcp_acme", "npx -y @acme/mcp-server");
+    const [options] = h.window.withProgress.mock.calls[0] ?? [];
+    expect(options).toMatchObject({ cancellable: false });
   });
 });
 
@@ -122,6 +217,16 @@ describe("credentials", () => {
     await h.commands["nimbus.authenticateConnector"]!(node());
     expect(h.ops.auth).toHaveBeenCalledWith("github", { personalAccessToken: SENTINEL });
     expect(h.logged.join("\n")).not.toContain(SENTINEL);
+    // Nor any user-facing surface — today that holds only by construction
+    // (nothing interpolates a field value into a title or message), and a
+    // future progress title built from a field would be exactly the
+    // regression this guards against.
+    const surfaces = [
+      ...h.window.showInformationMessage.mock.calls,
+      ...h.window.showErrorMessage.mock.calls,
+      ...h.window.withProgress.mock.calls,
+    ];
+    expect(JSON.stringify(surfaces)).not.toContain(SENTINEL);
   });
 
   test("cancelling any prompt sends nothing", async () => {
@@ -158,6 +263,7 @@ describe("interval", () => {
       }
     ).validateInput;
     expect(validate("30s")).toBe("The Gateway enforces a minimum of 60s.");
+    expect(h.ops.setConfig).not.toHaveBeenCalled();
   });
 });
 

@@ -85,8 +85,11 @@ export function createConnectorCommands(
     } catch (e) {
       // ConnectorOps normalises its own failures, so this is unreachable in
       // production — but a command handler that can reject is worse than a
-      // branch that never fires.
+      // branch that never fires. Refresh here too: `report()` always does,
+      // and leaving the view stale after a throw would be an asymmetry with
+      // no justification.
       void deps.window.showErrorMessage(`${verb} ${serviceId} failed: ${errMsg(e)}`);
+      deps.refresh();
     } finally {
       // Released on every path: a guard that leaked on failure would wedge the
       // command until the window reloaded.
