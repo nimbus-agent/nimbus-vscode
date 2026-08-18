@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.18.0...v0.19.0) (2026-08-18)
+
+
+### Features
+
+* **context:** add nimbus.context.enabled and fix four real-editor findings ([#113](https://github.com/nimbus-agent/nimbus-vscode/issues/113)) ([a13823e](https://github.com/nimbus-agent/nimbus-vscode/commit/a13823e6ff0e581f07ac7a3c884862b0b2032127))
+
 ## [0.18.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.17.2...v0.18.0) (2026-08-17)
 
 
