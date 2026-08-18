@@ -41,7 +41,7 @@ export function registerContextView(deps: {
   contextEnabled: () => boolean;
   /** The mutable degraded-connector summary the status-bar poll maintains. */
   connectorHealth: () => ConnectorHealthSummary;
-}): vscode.Disposable {
+}): vscode.Disposable & { recollect: () => void } {
   let view: vscode.WebviewView | undefined;
 
   const controller = createController({
@@ -287,7 +287,7 @@ export function registerContextView(deps: {
     })
     .catch((e: unknown) => deps.log.warn(`context panel git init failed: ${errMsg(e)}`));
 
-  return vscode.Disposable.from(
+  const disposable = vscode.Disposable.from(
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
     vscode.window.onDidChangeActiveTextEditor(() => onEditor.trigger()),
     vscode.window.onDidChangeTextEditorSelection(() => onSelection.trigger()),
@@ -312,6 +312,14 @@ export function registerContextView(deps: {
       },
     },
   );
+
+  // Exposed so a caller outside this module — extension.ts's connector-health
+  // poll — can ask the panel to recollect when something it did not itself
+  // observe changes (a connector going degraded or recovering). Reuses the
+  // exact same debounced/gated path every other trigger in this file already
+  // goes through: `recollect()` still no-ops while hidden, disabled, or
+  // disposed, exactly as it does for the events wired above.
+  return Object.assign(disposable, { recollect });
 }
 
 function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {

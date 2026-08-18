@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
-import { commands, env, Uri, workspace as vscodeWorkspace } from "vscode";
+import { commands, env, Uri, window as vscodeWindow, workspace as vscodeWorkspace } from "vscode";
 
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
@@ -2361,6 +2361,65 @@ describe("activateWithDeps", () => {
     await flush();
     expect(connectorListStatus).toHaveBeenCalled();
     expect(f.statusItem.text).not.toContain("degraded");
+  });
+
+  test("a connector health change recollects the context panel, not just the Connectors view", async () => {
+    // Captures the WebviewViewProvider real-context-view.ts hands to
+    // vscode.window.registerWebviewViewProvider — real-context-view.ts talks
+    // to the raw "vscode" module directly, not deps.window, so this is the
+    // only seam that can resolve the view the way VS Code itself would.
+    const registerSpy = vi.spyOn(vscodeWindow, "registerWebviewViewProvider");
+    const posted: unknown[] = [];
+    const fakeWebviewView = {
+      visible: true,
+      webview: {
+        options: undefined as unknown,
+        html: "",
+        cspSource: "vscode-resource:",
+        asWebviewUri: (u: unknown) => ({ toString: () => `https://webview/${String(u)}` }),
+        onDidReceiveMessage: (_h: (raw: unknown) => void) => ({ dispose: () => undefined }),
+        postMessage: vi.fn(async (msg: unknown) => {
+          posted.push(msg);
+          return true;
+        }),
+      },
+      onDidChangeVisibility: (_h: () => void) => ({ dispose: () => undefined }),
+      onDidDispose: (_h: () => void) => ({ dispose: () => undefined }),
+    };
+
+    const connectorListStatus = vi.fn(async () => [
+      {
+        serviceId: "github",
+        status: "error" as const,
+        lastSyncAt: null,
+        nextSyncAt: null,
+        intervalMs: 60000,
+        itemCount: 0,
+        lastError: "401",
+        consecutiveFailures: 3,
+        depth: "summary" as const,
+        enabled: true,
+      },
+    ]);
+    const f = makeFixture({
+      openClient: makeFakeClient({ connectorListStatus } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+
+    const call = registerSpy.mock.calls.find(([viewId]) => viewId === "nimbus.contextView");
+    const provider = call?.[1] as { resolveWebviewView: (v: unknown) => void };
+    provider.resolveWebviewView(fakeWebviewView);
+    expect(posted).toHaveLength(0); // resolving the view alone must not collect
+
+    await waitForConnect();
+    await flush();
+
+    expect(connectorListStatus).toHaveBeenCalled();
+    // The health-change branch called the recollect handle, which ran a real
+    // collection and posted its render — proof the handle is wired, not just
+    // that connectorsView.refresh() fired.
+    expect(fakeWebviewView.webview.postMessage).toHaveBeenCalled();
+    expect(posted.some((m) => (m as { type?: string }).type === "render")).toBe(true);
   });
 
   test("nimbus.openWalkthrough opens the Get Started walkthrough", async () => {

@@ -34,7 +34,7 @@ import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshoot
 import { createConnectorCommands } from "./connectors/commands.js";
 import { createConnectorOps } from "./connectors/connector-client.js";
 import { createConnectorsView } from "./connectors/connectors-view.js";
-import { summarizeConnectorHealth } from "./connectors/health.js";
+import { connectorStatusFingerprint, summarizeConnectorHealth } from "./connectors/health.js";
 import { createDebouncer } from "./context/debounce.js";
 import { registerContextView } from "./context/real-context-view.js";
 import { DIAGNOSTIC_COMMANDS, diagnosticActionsFor } from "./diagnostics/actions.js";
@@ -256,6 +256,14 @@ export function activateWithDeps(
   // that point. Depends only on connection/nimbus, both already bound above.
   const connectorOps = createConnectorOps(() => nimbus());
   const connectorsView = createConnectorsView({ connection, ops: connectorOps });
+  // Same TDZ reasoning as connectorsView above: registerContextView() itself
+  // is called much further down (it needs deps — gitApi, settings — that are
+  // only constructed later), but pollConnectorHealth's closure needs a
+  // binding it can reference from here. A `let`, not a `const` filled in
+  // later, so there is no window where reading it throws rather than reading
+  // `undefined` — pollConnectorHealth's `?.` treats "not registered yet" the
+  // same as "there is nothing to recollect".
+  let contextView: (vscode.Disposable & { recollect: () => void }) | undefined;
 
   const autoStart =
     deps.autoStarter ??
@@ -316,6 +324,14 @@ export function activateWithDeps(
 
   let pendingHitlCount = 0;
   let connectorHealth: { count: number; names: string[] } = { count: 0, names: [] };
+  // A fingerprint of the WHOLE status list, not just the degraded subset
+  // connectorHealth carries — a finished sync, a changed itemCount, or an
+  // ok→syncing→ok transition all move this even though none of them changes
+  // the degraded summary, and the Connectors view (unlike the status bar
+  // badge) renders all of that. Reset to "" whenever the poll cannot reach
+  // the Gateway, so the next successful poll after a reconnect always counts
+  // as a change even if it happens to answer with the exact same statuses.
+  let connectorStatusFp = "";
   let connectorPollSeq = 0;
   const statusInputs = (s: ConnectionState): StatusBarInputs => ({
     connection: s,
@@ -334,21 +350,27 @@ export function activateWithDeps(
     const client = nimbus();
     if (lastRenderedConnection.kind !== "connected" || client === undefined) {
       connectorHealth = { count: 0, names: [] };
+      connectorStatusFp = "";
       return;
     }
     try {
       const statuses = await client.connectorListStatus();
       if (mine !== connectorPollSeq) return; // a newer poll superseded this one
-      const previous = connectorHealth;
       connectorHealth = summarizeConnectorHealth(statuses);
-      if (
-        previous.count !== connectorHealth.count ||
-        previous.names.join(",") !== connectorHealth.names.join(",")
-      ) {
+      const fingerprint = connectorStatusFingerprint(statuses);
+      if (fingerprint !== connectorStatusFp) {
+        connectorStatusFp = fingerprint;
         connectorsView.refresh();
+        // The context panel's Sources row reads this same connectorHealth
+        // through its own getter — nothing tells it to repaint on its own,
+        // so without this it would keep showing a connector as broken (or
+        // never show it at all) long after the poll above already knew
+        // better. recollect() still no-ops while hidden/disabled/disposed.
+        contextView?.recollect();
       }
     } catch (e) {
       if (mine !== connectorPollSeq) return;
+      connectorStatusFp = "";
       log.warn(`connectorListStatus poll failed: ${errMsg(e)}`);
       // See the egress poll above — this one still runs when the egress badge
       // is switched off, so it is the detection path that always exists.
@@ -724,27 +746,26 @@ export function activateWithDeps(
       { dispose: () => view.dispose() },
     );
   }
-  ctx.subscriptions.push(
-    registerContextView({
-      log,
-      git: gitApi,
-      // The panel's two calls reach no model, so they take the RAW client —
-      // routing them through the egress gate would be wrong, and the
-      // choke-point test allows both by name.
-      client: () => {
-        const client = nimbus();
-        if (client === undefined) return undefined;
-        return {
-          agentsWhyPeek: (p) => client.agentsWhyPeek(p),
-          searchRanked: (params) => client.searchRanked(params),
-        };
-      },
-      connection,
-      searchLimit: () => settings.searchLimit(),
-      contextEnabled: () => settings.contextEnabled(),
-      connectorHealth: () => connectorHealth,
-    }),
-  );
+  contextView = registerContextView({
+    log,
+    git: gitApi,
+    // The panel's two calls reach no model, so they take the RAW client —
+    // routing them through the egress gate would be wrong, and the
+    // choke-point test allows both by name.
+    client: () => {
+      const client = nimbus();
+      if (client === undefined) return undefined;
+      return {
+        agentsWhyPeek: (p) => client.agentsWhyPeek(p),
+        searchRanked: (params) => client.searchRanked(params),
+      };
+    },
+    connection,
+    searchLimit: () => settings.searchLimit(),
+    contextEnabled: () => settings.contextEnabled(),
+    connectorHealth: () => connectorHealth,
+  });
+  ctx.subscriptions.push(contextView);
 
   const openReadonlyJson = deps.openReadonlyJson ?? createReadonlyJsonOpener(ctx);
   const openSource = deps.openSource ?? createSourceOpener();
