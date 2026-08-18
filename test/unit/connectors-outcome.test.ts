@@ -10,7 +10,10 @@ import {
 
 describe("the four wire shapes", () => {
   test("ok:true is applied", () => {
-    expect(fromOk({ ok: true }, "sync started")).toEqual({ kind: "applied", detail: "sync started" });
+    expect(fromOk({ ok: true }, "sync started")).toEqual({
+      kind: "applied",
+      detail: "sync started",
+    });
   });
 
   test("ok:false is a failure, not a denial", () => {
@@ -29,8 +32,9 @@ describe("the four wire shapes", () => {
 
   test("a resolved approval is applied", () => {
     expect(
-      fromGated({ ok: true, itemsDeleted: 1204, vaultKeysRemoved: ["github/pat"] }, (r) =>
-        `${r.itemsDeleted} items deleted`,
+      fromGated(
+        { ok: true, itemsDeleted: 1204, vaultKeysRemoved: ["github/pat"] },
+        (r) => `${r.itemsDeleted} items deleted`,
       ),
     ).toEqual({ kind: "applied", detail: "1204 items deleted" });
   });
@@ -92,9 +96,9 @@ describe("describeOutcome", () => {
   });
 
   test("an applied outcome names what changed", () => {
-    expect(describeOutcome("Removing", "github", { kind: "applied", detail: "1204 items deleted" })).toBe(
-      "Removing github: done — 1204 items deleted",
-    );
+    expect(
+      describeOutcome("Removing", "github", { kind: "applied", detail: "1204 items deleted" }),
+    ).toBe("Removing github: done — 1204 items deleted");
   });
 
   test("an applied outcome with no detail still reads cleanly", () => {
@@ -102,8 +106,8 @@ describe("describeOutcome", () => {
   });
 
   test("a failure says so", () => {
-    expect(describeOutcome("Syncing", "github", { kind: "failed", message: "socket hang up" })).toBe(
-      "Syncing github failed: socket hang up",
-    );
+    expect(
+      describeOutcome("Syncing", "github", { kind: "failed", message: "socket hang up" }),
+    ).toBe("Syncing github failed: socket hang up");
   });
 });

@@ -31,6 +31,7 @@ import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js"
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
+import { summarizeConnectorHealth } from "./connectors/health.js";
 import { registerContextView } from "./context/real-context-view.js";
 import { DIAGNOSTIC_COMMANDS, diagnosticActionsFor } from "./diagnostics/actions.js";
 import { createDiagnosticCommands } from "./diagnostics/commands.js";
@@ -91,7 +92,6 @@ import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
 import { applyThemeIcons, type SidebarView } from "./sidebar/tree-view.js";
 import { createWorkflowsView } from "./sidebar/workflows-view.js";
-import { summarizeConnectorHealth } from "./connectors/health.js";
 import {
   createEgressStatusBarController,
   type EgressBadgeInputs,

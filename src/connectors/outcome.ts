@@ -21,7 +21,8 @@ export type ConnectorOutcome =
 // reason verbatim. Bare "denied" or "rejected" match only with consent-domain
 // context (consent/HITL/approval/owner), or accept standalone "not approved".
 // Calibrated against observed Gateway denial messages during the F5 pass.
-const DENIAL = /\bnot approved\b|(?=.*\b(?:denied|rejected|expired|timed out)\b)(?=.*\b(?:consent|HITL|approval|owner)\b)/i;
+const DENIAL =
+  /\bnot approved\b|(?=.*\b(?:denied|rejected|expired|timed out)\b)(?=.*\b(?:consent|HITL|approval|owner)\b)/i;
 
 export function fromOk(r: { ok: boolean }, detail?: string): ConnectorOutcome {
   if (!r.ok) return { kind: "failed", message: "The Gateway did not apply the change." };

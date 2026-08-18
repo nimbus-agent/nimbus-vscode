@@ -68,7 +68,8 @@ function tooltipFor(s: ConnectorSyncStatus, now: number): string {
 }
 
 export function connectorToItem(s: ConnectorSyncStatus, now: number): SidebarItem {
-  const synced = s.lastSyncAt === null ? "never synced" : `synced ${formatRelativeTime(now, s.lastSyncAt)}`;
+  const synced =
+    s.lastSyncAt === null ? "never synced" : `synced ${formatRelativeTime(now, s.lastSyncAt)}`;
   return {
     label: s.serviceId,
     description: `${s.itemCount.toLocaleString("en-US")} items · ${synced}`,
@@ -89,7 +90,9 @@ export function connectorRows(
 ): SidebarItem[] {
   return statuses
     .slice()
-    .sort((a, b) => SEVERITY[a.status] - SEVERITY[b.status] || a.serviceId.localeCompare(b.serviceId))
+    .sort(
+      (a, b) => SEVERITY[a.status] - SEVERITY[b.status] || a.serviceId.localeCompare(b.serviceId),
+    )
     .map((s) => connectorToItem(s, now));
 }
 
