@@ -1,0 +1,401 @@
+# Connector management & index health — design
+
+Status: approved in brainstorming 2026-08-18, not implemented.
+Roadmap rows: Phase 3, *Connector management* (effort L) and *Index write ops*
+(effort M) — both unblocked by the pinned `@nimbus-dev/client` (`^0.17.0`).
+
+## The problem
+
+Every Gateway-backed surface this extension ships is only as good as the local
+index: Search, *Find related*, *Find prior occurrences*, the Index view, the
+context panel's Related section, and every brief that cites indexed items.
+
+Nothing in the extension says whether that index is being fed. A connector in
+`error` or `backoff` degrades all of them **silently** — results get thinner,
+neighbours get staler, and the surfaces keep answering as if nothing happened.
+The only way to see it, or fix it, is to leave the editor for the CLI.
+
+The pinned client types the whole `connector*` suite. The gap is a surface, not
+a capability.
+
+## Scope
+
+**In:** a `nimbus.connectorsView` tree view with per-connector health, sync
+telemetry and health history; the safe mutations (pause, resume, sync,
+set interval/depth/enabled, re-index); the two HITL-gated ones (add MCP
+connector, remove); credential entry via `connectorAuth`; and a conditional
+**Sources** row in the ambient context panel when a connector is unhealthy.
+
+**Out, because no RPC exists:** onboarding a *built-in* connector. The client
+exposes `connectorAddMcp` and nothing else that registers a connector, and
+`connectorListStatus` returns only **registered** connectors. The extension can
+authenticate and configure what the Gateway already knows about, and register
+MCP sources; standing up a new Jira or GitHub connector stays a CLI job until a
+`connector.add` RPC ships. The view says this rather than implying otherwise.
+
+**Out by choice:** editing a registered MCP connector's command line (add and
+remove only), health sparklines or charts, and any automatic mutation. Nothing
+here syncs, re-indexes or pauses without the user asking.
+
+## Non-negotiable posture
+
+**No new outbound path.** The `EgressKind` count stays at eight. Nothing in
+`src/connectors/` reaches a model: none of the twelve `connector*` RPCs takes a
+prompt or returns a completion, so — exactly like `searchRanked` and
+`agentsWhyPeek` — they sit outside the pre-flight gate.
+`test/unit/egress-choke-point.test.ts` must stay green **without modification**:
+`src/connectors/` never names `agentInvoke`, `askStream` or a gated `agents*`
+call, and `src/connectors/` is never added to that test's `ALLOWED` list.
+
+As in `src/context/`, comments in new files must not spell a dotted `agents*`
+call followed by a paren — the discovery test scans comments. Write `agents*` in
+prose.
+
+**Secrets never rest here.** `connectorAuth` is the first call in this extension
+that handles a user credential. The extension is a conduit, not a store:
+
+- values are read from a masked input box, passed to the local Gateway, and
+  dropped when the command returns;
+- nothing is written to `SecretStorage`, settings, workspace state, or a file;
+- nothing is logged — not the value, not its length, not a redacted preview —
+  and auth payloads never appear in `Show Last Outbound Payload`, which is a
+  gate artefact and this call is not gated;
+- a unit test asserts no field value collected by the auth flow can reach the
+  output channel.
+
+The Gateway's Vault owns the secret. That is the whole point of writing it
+through `connectorAuth` rather than into a setting.
+
+## Architecture
+
+`src/connectors/`, following the shape of `src/diagnostics/` and `src/scm/`: a
+pure core, with `vscode` reached only through `vscode-shim.ts`.
+
+| File | Purpose | Touches the shim |
+| --- | --- | --- |
+| `catalog.ts` | `AUTH_CATALOG`: `serviceId` → ordered `AuthField[]`, plus display names and the generic fallback descriptor. Pure data. | no |
+| `rows.ts` | `ConnectorSyncStatus[]` → `SidebarItem[]`; status→icon, description, tooltip, `contextValue`, sort order. Telemetry and health-history rows too. | no |
+| `outcome.ts` | The `ConnectorOutcome` union and the wording for each variant. Pure. | no |
+| `connector-client.ts` | The adapter over a narrow structural `ConnectorClientLike` seam: every mutation normalised to a `ConnectorOutcome`. No `vscode`. | no |
+| `connectors-view.ts` | `createDataView` wrapper plus `loadChildren` for on-expand detail. | no |
+| `commands.ts` | Confirmations, input boxes, quick picks, progress, refresh — over injected deps, mirroring `src/scm/commands.ts`. | yes (typed shim interfaces only) |
+
+Wired in `extension.ts`, the composition root, exactly as the other six sidebar
+views are. The client is resolved **per call** (`getClient: () => nimbus()`),
+never captured — the reconnect-stranding fix from #103 applies here too, and a
+connector command is precisely the kind of long-lived surface that would strand
+a captured client across a Gateway restart.
+
+Five of the six files are pure and unit-testable with no `vscode` stub.
+
+## The view
+
+`nimbus.connectorsView`, an **eighth** view in the `nimbus` container (Context,
+Audit, Egress, Agents, Index, Sessions, Workflows are the seven), placed after
+`nimbus.indexView` — "what is indexed" then "where it comes from".
+
+### Rows
+
+One row per connector from `connectorListStatus()`, sorted by **status severity
+then `serviceId`**: a health surface puts the broken one on top, and a total
+order keeps the rendering deterministic and testable.
+
+| Field | Rendering |
+| --- | --- |
+| `status` | icon — `error` → `error`, `backoff` → `warning`, `paused` → `debug-pause`, `syncing` → `sync`, `ok` → `pass` |
+| `enabled: false` | overrides the icon with `circle-slash`; the row reads *disabled* regardless of `status` |
+| `itemCount`, `lastSyncAt` | description: `1,204 items · synced 3m ago`, via the existing `formatRelativeTime(now, ts)` |
+| `lastSyncAt: null` | description: `never synced` — not `synced 56 years ago` |
+| `lastError`, `consecutiveFailures`, `intervalMs`, `depth`, `nextSyncAt` | tooltip |
+| `status` + `enabled` | `contextValue`: `nimbus.connector.active` / `.paused` / `.disabled`, so Pause and Resume never both appear |
+
+Empty result: a single `No connectors registered` row, plus an *Add MCP
+connector* row — the one kind of source the extension can actually register.
+
+### On expand
+
+`loadChildren`, the pattern the Workflows view established, for the same reason:
+detail costs a round trip per row, and eager children would spend one RPC per
+connector on every open.
+
+- **Recent syncs** — `connectorStatus({serviceId, includeStats: true})`, up to
+  the 15 telemetry rows the Gateway returns: started-at, duration, items
+  upserted/deleted, and `errorMsg` when present.
+- **Health history** — `connectorHealthHistory({service, limit})`, rendered as
+  `from → to · reason`.
+
+**`connectorHealthHistory` accepts built-in connector ids only** — the client
+states this explicitly, and a user MCP id is rejected. For a `serviceId`
+matching `mcp_*` the call is **skipped, not attempted**: the expand renders the
+telemetry group and omits the history group rather than showing an error the
+user cannot act on.
+
+### Liveness
+
+No background polling. The view refreshes on:
+
+1. **`subscribeConnectorConfigChanged`** — the Gateway emits one after every
+   `setConfig` / `pause` / `resume` / `setInterval`. Treat it as an
+   **invalidation signal, not a row patch**: its payload carries `service`,
+   `intervalMs`, `depth` and `enabled`, but none of `status`, `itemCount` or
+   `lastSyncAt`, which is most of what a row shows. Refresh, don't reconcile.
+2. **any mutation this extension issues** — including `sync`, `reindex`,
+   `auth`, `addMcp` and `remove`, none of which emit that notification.
+3. **the connection state changing** — already free from `createDataView`.
+4. **an explicit `view/title` refresh command.**
+
+## Write operations
+
+Nine commands, every one routed through `connector-client.ts`:
+
+| Command | RPC | Confirmation |
+| --- | --- | --- |
+| Sync now | `connectorSync({serviceId})` | none |
+| Full re-sync | `connectorSync({serviceId, full: true})` | modal — it clears the cursor |
+| Pause / Resume | `connectorPause` / `connectorResume` | none |
+| Configure | `connectorSetConfig` (interval, depth, enabled in one call) | none |
+| Re-index | `connectorReindex({service, depth})` | modal at `depth: "full"` only |
+| Authenticate | `connectorAuth` | none (the input boxes are the confirmation) |
+| Add MCP connector | `connectorAddMcp` | none — HITL consent is the confirmation |
+| Remove | `connectorRemove` | modal, naming the item count |
+
+### One outcome type, four wire shapes
+
+This is the reason the adapter exists. The suite reports failure in four
+different ways, and two of them mean *denied* rather than *broken*:
+
+| Wire shape | Calls | Normalised to |
+| --- | --- | --- |
+| resolves `{ok: false}` | pause, resume, setInterval, setConfig, sync | `failed` |
+| resolves `{status: "rejected", reason}` (**never throws**) | addMcp, remove | `denied` |
+| **rejects** on denial | reindex at `depth: "full"` | `denied`, distinguished from a genuine error by inspecting the rejection |
+| rejects | any of them, on a real error | `failed` |
+
+```ts
+type ConnectorOutcome =
+  | { kind: "applied"; detail?: string }
+  | { kind: "denied"; reason: string }
+  | { kind: "failed"; message: string };
+```
+
+`denied` is worded as a decision, never as a breakage — *"Removing github was
+not approved."* A denial is the consent system working. Collapsing it into an
+error message is the specific bug this table exists to prevent — and with three
+separate calls able to be denied, in two different shapes, a per-command
+implementation only has to get one of them wrong.
+
+`connectorSetConfig` resolves a result whose fields read `null` for anything not
+requested — *not* "the value was cleared". The adapter reports only what it
+asked to change.
+
+### The two blocking calls
+
+`connectorAddMcp` and `connectorRemove` are HITL-gated (I2): the promise does
+not settle until the owner answers the consent request the Gateway raises.
+
+No new consent machinery is needed. `subscribeHitl` is already bound globally
+and `createHitlRouter` is generic over `HitlRequest`, so the prompt surfaces
+through the existing toast/modal path on its own. The command's own job is
+narrower:
+
+- show a **non-cancellable** `withProgress` notification — *"Waiting for your
+  consent…"*. The RPC has no cancel; the workflow surface already set the rule
+  that this extension does not offer a stop that does not stop.
+- call `withProgress(options, (progress, token) => …)` with the **reporter
+  first** — the argument order that broke every workflow run in #100, and the
+  reason the shim carries a comment about it.
+- render the resolved outcome, remembering that a denial **resolves**.
+
+Removal confirms modally and names what goes:
+
+> Remove `github`? This deletes its 1,204 indexed items and clears its stored
+> credentials.
+
+The item count comes from the row's `itemCount`. If it is unavailable the
+sentence drops the number rather than guessing at one.
+
+## Credentials
+
+`AUTH_CATALOG` maps a `serviceId` to an ordered list of fields:
+
+```ts
+type AuthField = {
+  name: string;            // the wire field, e.g. "personalAccessToken"
+  label: string;           // "GitHub personal access token"
+  secret: boolean;         // masked input, never logged
+  required: boolean;
+  placeholder?: string;
+};
+```
+
+**Sourcing.** `ConnectorAuthParams` is `{serviceId} & Record<string, unknown>`
+and the client deliberately declines to type the rest, pointing at the
+Gateway's `ipc/connector-rpc-handlers/auth.ts`. We cannot read that file — the
+non-negotiable forbids reaching past the client — so catalog entries are seeded
+**only from field names the pinned client's own JSDoc states**: PAT-style
+`personalAccessToken`/`token`, OAuth `scopes`/`port`, `atlassianEmail` and
+`apiBaseUrl` for Jira/Confluence, `awsAccessKeyId`, `azureTenantId`,
+`gcpCredentialsJsonPath`. Sourced, not guessed.
+
+**Drift is real and is handled, not hidden.** A Gateway that renames a field or
+adds a provider will out-run this catalog. Two mitigations:
+
+1. An unknown `serviceId` falls back to a **generic flow**: one credential
+   prompt, then a repeating *Add another field* step (field name, value, is it
+   secret). Anything the Gateway wants can still be sent.
+2. A rejected call reports the Gateway's own message verbatim, which is what
+   names the missing or misspelled field.
+
+The drift risk is recorded in a new `docs/connectors.md`, not buried in a
+source comment.
+
+**OAuth providers** carry a catalog entry with no required fields: the command
+calls `connectorAuth({serviceId})` and tells the user the Gateway will open a
+browser and listen on a local port. The extension neither opens nor brokers it.
+
+**Input handling.** Each field is one `showInputBox`, `secret` fields with
+`password: true` and every field with `ignoreFocusOut: true` — losing a
+half-entered credential to a stray click is a bad enough experience to be worth
+the option. Cancelling any prompt abandons the whole flow; nothing partial is
+sent.
+
+## The Sources row in the context panel
+
+A fifth `SignalId`, `"connectors"`, titled **Sources**, shown **only when at
+least one connector is in `error` or `backoff`**. A connector that is `paused`
+or `enabled: false` is a state the user chose, so it raises no row here — it is
+visible in the Connectors view, which is where a deliberate choice belongs:
+
+> **Sources** — `github` sync failing · last ok 3d ago
+
+The row's command opens the Connectors view. `signals.ts` is already data-driven
+("adding a fifth signal is one entry rather than an edit in four files"), so
+this is one catalog-shaped entry plus a collector.
+
+Two things it changes:
+
+**1. Sections must be able to render nothing.** `renderSections` today emits a
+`<section>` for every section, falling back to `section.empty` (or
+`"Nothing to show."`) when there are no rows. A healthy setup must show *no
+Sources heading at all* — an always-present "All sources healthy" line is noise
+on the majority of ticks, the same judgement that already omits the git row on a
+clean tree. `SignalSection` gains an optional `suppressWhenEmpty?: true`, and
+`renderSections` filters those sections when `rows` is empty. Renderer-side, so
+it is testable purely and no controller state changes.
+
+**2. It is the panel's first global signal.** Every existing signal varies with
+the file; this one does not. Its cache key is global — the shape `git` already
+uses — and it is invalidated by the `connectorConfigChanged` subscription and by
+any mutation, with a TTL floor so a debounce tick cannot turn into an RPC per
+keystroke. Collection still stops entirely when the view is hidden or
+`nimbus.context.enabled` is off.
+
+`ContextClientLike` gains a third method, `connectorListStatus`. Still
+model-free; the choke-point test stays green.
+
+## Edits outside `src/connectors/`
+
+| File | Edit |
+| --- | --- |
+| `src/vscode-shim.ts` | `showInputBox` gains `password?: boolean` and `ignoreFocusOut?: boolean`. **The shim declares neither today** — without this the masked prompt is not expressible. |
+| `src/context/signals.ts` | `SignalId` gains `"connectors"`; `SECTION_TITLES` gains `Sources`; `ContextClientLike` gains `connectorListStatus`; the collector. |
+| `src/context/webview/render.ts` | `suppressWhenEmpty` filtering. |
+| `src/extension.ts` | Register the view, the nine commands, and the config-changed subscription; bind it beside the HITL subscription so a reconnect re-binds it. |
+| `package.json` | One view, nine commands, `view/title` refresh, `view/item/context` menus keyed on the three `contextValue`s. |
+| `docs/` | `docs/connectors.md` (what the surface does, the catalog's drift risk, why built-in onboarding is absent); `docs/architecture.md` and `CLAUDE.md` gain the surface; `docs/ROADMAP.md` moves both rows to *Already shipped*. |
+
+No new setting. `nimbus.context.enabled` already governs the Sources row, and a
+second toggle for one conditional row is a setting nobody would find. This keeps
+`check-settings-docs` untouched.
+
+No new bundle, no new media file: the view is a tree, so `check-vsix-contents`
+and `check-bundle` are unaffected.
+
+## Degraded states
+
+| State | Behaviour |
+| --- | --- |
+| Disconnected | `connectionPlaceholder` handles it, as for every other view — empty tree, so the `viewsWelcome` Start Gateway / Troubleshoot buttons still render |
+| `connectorListStatus` throws | `errorRow("Failed to load connectors", err)` |
+| Zero connectors | `No connectors registered` + *Add MCP connector* |
+| Health history on an `mcp_*` id | group omitted; telemetry still shown |
+| Gateway without the connector RPCs | the call rejects "Method not found"; the error row shows it verbatim rather than asserting the user's Gateway is broken |
+| Consent denied | `denied` wording; the row is refreshed anyway, since the Gateway state is unchanged but the view may be stale for other reasons |
+
+## Testing
+
+Unit (`test/unit/`), all pure except where noted:
+
+- **`outcome.ts`** — every one of the four wire shapes maps to the right
+  variant, and `denied` never renders as an error string. This is the test that
+  earns the adapter.
+- **`rows.ts`** — icon per status, `enabled: false` overriding, `never synced`
+  for a null `lastSyncAt`, severity-then-id sort, the three `contextValue`s.
+- **`catalog.ts`** — known provider yields its fields in order; unknown
+  `serviceId` yields the generic descriptor.
+- **`connector-client.ts`** — `mcp_*` ids skip `connectorHealthHistory`;
+  `setConfig` reports only requested fields.
+- **secret hygiene** — a fake logger sees nothing from an auth flow whose field
+  values are distinctive sentinels. Asserted on the sentinel, so a redacted
+  preview fails it too.
+- **context panel** — `suppressWhenEmpty` renders nothing for a zero-row
+  section and still renders `empty` text for sections without the flag; the
+  Sources collector emits rows only for unhealthy connectors.
+- **`commands.ts`** — over stubbed shim deps: remove confirms before calling,
+  a cancelled confirmation calls nothing, the HITL progress is created
+  non-cancellable, and `withProgress` is invoked with the reporter first.
+
+Guards that must stay green **unmodified**: `egress-choke-point.test.ts`,
+`check-settings-docs`, `check-bundle`, `check-vsix-contents`.
+
+## Verification
+
+The unit suite cannot prove this works — it proves the pure core is right. The
+believable pass is the Extension Development Host one, per the
+`verify-extension` skill, against a live Gateway with **at least one healthy
+connector, one deliberately broken one, and one `mcp_*` connector**, covering:
+
+1. rows, icons and relative times against the CLI's own connector status;
+2. expand → telemetry and health history; expand on the MCP id → no history
+   group, no error;
+3. pause → resume → the config-changed notification refreshing the view;
+4. sync, and full re-sync from its confirmation;
+5. re-index at `metadata_only`, then at `full` — approve once, **deny once**,
+   and confirm the denial reads as a decision and the rejection path is taken;
+6. add MCP connector and remove, each approved once and denied once — the
+   resolve-with-rejection path;
+7. an auth flow against a PAT provider, plus one unknown `serviceId` through
+   the generic flow;
+8. the Sources row appearing in the context panel when a connector breaks and
+   **disappearing entirely** when it recovers;
+9. a Gateway restart mid-surface, to confirm nothing captured a stale client.
+
+Findings are written up as a dated file in `docs/superpowers/plans/`, the way
+the context panel's pass was. **A defect found there is fixed on this branch
+before the PR is claimed done.**
+
+## Delivery
+
+One worktree, `worktree-connector-management`, staged as reviewable commits:
+
+1. `feat(connectors): read-only Connectors view with health and telemetry`
+2. `feat(connectors): safe mutations behind one outcome adapter`
+3. `feat(connectors): credentials, add-MCP and remove, with their consent paths`
+4. `feat(context): show unhealthy sources in the context panel`
+5. `docs: record the connector surface`
+
+Steps 1–3 each land their own tests. Step 4 is the only one touching
+`src/context/`, so a regression there is bisectable to one commit.
+
+## Open questions
+
+1. **Sort stability.** Severity-first sort means a row moves when a connector
+   recovers mid-view. Accepted: a health surface should reorder. Revisit if the
+   F5 pass finds it disorienting.
+2. **Interval entry.** `setConfig` takes milliseconds and the Gateway enforces a
+   60s minimum. The prompt should take a human interval (`15m`, `2h`) and
+   validate against that minimum client-side, so the rejection is not the first
+   feedback. Parsing lives in its own tiny pure module.
+3. **`connectorSetInterval` is redundant** with `setConfig`. The design uses
+   `setConfig` only; the adapter still wraps `setInterval` so the seam covers
+   the suite, but no command calls it. If that proves pointless, drop it.
