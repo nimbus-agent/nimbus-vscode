@@ -1569,6 +1569,20 @@ function node(serviceId = "github", itemCount = 1204) {
 function harness(over: { ops?: Partial<ConnectorOps>; window?: Record<string, unknown> } = {}) {
   const logged: string[] = [];
   const ops = {
+    list: vi.fn(async () => [
+      {
+        serviceId: "github",
+        status: "ok",
+        lastSyncAt: null,
+        nextSyncAt: null,
+        intervalMs: 60_000,
+        itemCount: 1204,
+        lastError: null,
+        consecutiveFailures: 0,
+        depth: "summary",
+        enabled: true,
+      },
+    ]),
     pause: vi.fn(async () => ({ kind: "applied" }) as const),
     sync: vi.fn(async () => ({ kind: "applied", detail: "sync started" }) as const),
     fullSync: vi.fn(async () => ({ kind: "applied" }) as const),
@@ -1726,6 +1740,51 @@ describe("concurrency", () => {
   });
 });
 
+describe("invoked without a row", () => {
+  test("the palette path picks a connector rather than doing nothing", async () => {
+    const h = harness({
+      window: { showQuickPick: vi.fn(async () => ({ serviceId: "github", itemCount: 1204 })) },
+    });
+    await h.commands["nimbus.pauseConnector"](undefined);
+    expect(h.window.showQuickPick).toHaveBeenCalled();
+    expect(h.ops.pause).toHaveBeenCalledWith("github");
+  });
+
+  test("a dismissed picker calls nothing", async () => {
+    const h = harness({ window: { showQuickPick: vi.fn(async () => undefined) } });
+    await h.commands["nimbus.pauseConnector"](undefined);
+    expect(h.ops.pause).not.toHaveBeenCalled();
+  });
+
+  test("with no connectors at all it says so instead of opening an empty picker", async () => {
+    const h = harness({ ops: { list: vi.fn(async () => []) } });
+    await h.commands["nimbus.pauseConnector"](undefined);
+    expect(h.window.showQuickPick).not.toHaveBeenCalled();
+    expect(h.window.showInformationMessage.mock.calls[0][0]).toContain("no connectors registered");
+  });
+
+  test("an unlistable Gateway reports the error rather than a silent no-op", async () => {
+    const h = harness({
+      ops: {
+        list: vi.fn(async () => {
+          throw new Error("Method not found");
+        }),
+      },
+    });
+    await h.commands["nimbus.pauseConnector"](undefined);
+    expect(h.window.showErrorMessage.mock.calls[0][0]).toContain("Method not found");
+    expect(h.ops.pause).not.toHaveBeenCalled();
+  });
+
+  test("a non-object argument falls through to the picker without throwing", async () => {
+    const h = harness({
+      window: { showQuickPick: vi.fn(async () => ({ serviceId: "github", itemCount: 1204 })) },
+    });
+    await h.commands["nimbus.pauseConnector"]("not-a-node");
+    expect(h.ops.pause).toHaveBeenCalledWith("github");
+  });
+});
+
 test("every applied mutation refreshes the view", async () => {
   const h = harness();
   await h.commands["nimbus.pauseConnector"](node());
@@ -1741,7 +1800,7 @@ Expected: FAIL — module not found.
 - [ ] **Step 4: Implement `commands.ts`**
 
 ```ts
-import type { Logger } from "../logging.js";
+import { errMsg, type Logger } from "../logging.js";
 import type { WindowApi } from "../vscode-shim.js";
 import { PROGRESS_LOCATION_NOTIFICATION } from "../vscode-shim.js";
 import { type AuthField, authFieldsFor } from "./catalog.js";
@@ -1757,7 +1816,7 @@ export interface ConnectorCommandDeps {
   log: Logger;
 }
 
-type Node = { payload?: unknown };
+type Target = { serviceId: string; itemCount: number };
 
 export function createConnectorCommands(
   deps: ConnectorCommandDeps,
@@ -1766,8 +1825,44 @@ export function createConnectorCommands(
   // per connector AND per command, so pausing one while another syncs is fine.
   const inFlight = new Set<string>();
 
-  const target = (node?: unknown): { serviceId: string; itemCount: number } | undefined =>
-    connectorPayloadOf((node ?? {}) as { label: string } & Node);
+  /**
+   * The row VS Code passed, or — when there is none — a picker over the
+   * registered connectors. These commands are palette-visible, so `node` is
+   * undefined whenever one is run from the palette, a keybinding, or another
+   * extension's executeCommand. Returning silently there would look broken;
+   * this mirrors what the workflow commands already do with a missing target.
+   */
+  const resolveTarget = async (node?: unknown): Promise<Target | undefined> => {
+    if (typeof node === "object" && node !== null) {
+      const payload = connectorPayloadOf(node as { label: string; payload?: unknown });
+      if (payload !== undefined) return payload;
+    }
+    let statuses;
+    try {
+      statuses = await deps.ops.list();
+    } catch (e) {
+      void deps.window.showErrorMessage(`Nimbus: could not list connectors: ${errMsg(e)}`);
+      return undefined;
+    }
+    if (statuses.length === 0) {
+      // An empty picker looks broken; say what is actually true.
+      void deps.window.showInformationMessage(
+        "Nimbus: no connectors registered. Register one with the Nimbus CLI, or add an MCP connector.",
+      );
+      return undefined;
+    }
+    const chosen = await deps.window.showQuickPick(
+      statuses.map((s) => ({
+        label: s.serviceId,
+        description: `${s.enabled ? s.status : "disabled"} · ${s.itemCount.toLocaleString("en-US")} items`,
+        serviceId: s.serviceId,
+        itemCount: s.itemCount,
+      })),
+      { placeHolder: "Pick a connector", matchOnDescription: true },
+    );
+    if (chosen === undefined) return undefined;
+    return { serviceId: chosen.serviceId, itemCount: chosen.itemCount };
+  };
 
   const report = (verb: string, serviceId: string, outcome: ConnectorOutcome): void => {
     const text = describeOutcome(verb, serviceId, outcome);
@@ -1817,13 +1912,13 @@ export function createConnectorCommands(
 
   return {
     "nimbus.syncConnector": async (node) => {
-      const t = target(node);
+      const t = await resolveTarget(node);
       if (t === undefined) return;
       await run("sync", "Syncing", t.serviceId, () => deps.ops.sync(t.serviceId));
     },
 
     "nimbus.fullResyncConnector": async (node) => {
-      const t = target(node);
+      const t = await resolveTarget(node);
       if (t === undefined) return;
       const answer = await deps.window.showWarningMessage(
         `Full re-sync of ${t.serviceId}? This clears its sync cursor and re-reads everything from the source.`,
@@ -1835,19 +1930,19 @@ export function createConnectorCommands(
     },
 
     "nimbus.pauseConnector": async (node) => {
-      const t = target(node);
+      const t = await resolveTarget(node);
       if (t === undefined) return;
       await run("pause", "Pausing", t.serviceId, () => deps.ops.pause(t.serviceId));
     },
 
     "nimbus.resumeConnector": async (node) => {
-      const t = target(node);
+      const t = await resolveTarget(node);
       if (t === undefined) return;
       await run("resume", "Resuming", t.serviceId, () => deps.ops.resume(t.serviceId));
     },
 
     "nimbus.configureConnector": async (node) => {
-      const t = target(node);
+      const t = await resolveTarget(node);
       if (t === undefined) return;
       const choice = await deps.window.showQuickPick(
         [
@@ -1895,7 +1990,7 @@ export function createConnectorCommands(
     },
 
     "nimbus.reindexConnector": async (node) => {
-      const t = target(node);
+      const t = await resolveTarget(node);
       if (t === undefined) return;
       const depth = await deps.window.showQuickPick(
         [{ label: "metadata_only" }, { label: "summary" }, { label: "full" }],
@@ -1921,7 +2016,7 @@ export function createConnectorCommands(
     },
 
     "nimbus.authenticateConnector": async (node) => {
-      const t = target(node);
+      const t = await resolveTarget(node);
       if (t === undefined) return;
       const fields = authFieldsFor(t.serviceId);
       const collected: Record<string, unknown> = {};
@@ -1968,7 +2063,7 @@ export function createConnectorCommands(
     },
 
     "nimbus.removeConnector": async (node) => {
-      const t = target(node);
+      const t = await resolveTarget(node);
       if (t === undefined) return;
       const count = t.itemCount.toLocaleString("en-US");
       const answer = await deps.window.showWarningMessage(
@@ -2100,11 +2195,12 @@ describe("extension manifest: connectors", () => {
     }
   });
 
-  test("the row commands are hidden from the palette — they need a row", () => {
-    const palette = (manifest.contributes?.menus as { commandPalette?: MenuEntry[] } | undefined)
-      ?.commandPalette ?? [];
-    for (const id of ALL.filter((c) => c !== "nimbus.addMcpConnector")) {
-      expect(palette.find((m) => m.command === id)?.when, id).toBe("false");
+  test("no connector command is hidden from the palette — each prompts when it has no row", () => {
+    const palette =
+      (manifest.contributes?.menus as { commandPalette?: MenuEntry[] } | undefined)
+        ?.commandPalette ?? [];
+    for (const id of ALL) {
+      expect(palette.find((m) => m.command === id)?.when, id).not.toBe("false");
     }
   });
 });
@@ -2168,20 +2264,13 @@ In `contributes.menus["view/item/context"]` — note which `contextValue`s each
 { "command": "nimbus.removeConnector", "when": "view == nimbus.connectorsView && viewItem =~ /nimbus.connector./", "group": "nimbus@6" }
 ```
 
-In `contributes.menus.commandPalette`, hide the row-scoped commands (they need
-a node argument; `nimbus.addMcpConnector` does not, so it stays visible):
-
-```json
-{ "command": "nimbus.syncConnector", "when": "false" },
-{ "command": "nimbus.fullResyncConnector", "when": "false" },
-{ "command": "nimbus.pauseConnector", "when": "false" },
-{ "command": "nimbus.resumeConnector", "when": "false" },
-{ "command": "nimbus.configureConnector", "when": "false" },
-{ "command": "nimbus.reindexConnector", "when": "false" },
-{ "command": "nimbus.authenticateConnector", "when": "false" },
-{ "command": "nimbus.removeConnector", "when": "false" },
-{ "command": "nimbus.refreshConnectors", "when": "false" }
-```
+**Add nothing to `contributes.menus.commandPalette`.** The repo hides a command
+from the palette (`"when": "false"`) only when it *cannot* work without its
+node — `nimbus.openIndexItem`, `nimbus.openAuditEntry`, the diagnostic actions.
+`nimbus.runWorkflow` is not hidden, because it prompts for a target when it has
+none, and Task 8's `resolveTarget` gives these commands the same fallback. So
+they stay palette-visible, which is also the only way to reach them by
+keybinding.
 
 - [ ] **Step 4: Run the manifest test**
 
@@ -2251,7 +2340,9 @@ of mutations costs one refresh:
 ```ts
 import { createDebouncer } from "./context/debounce.js";
 
-  // Debouncer's API is trigger() / dispose() — see src/context/debounce.ts.
+  // Debouncer is { trigger(): void; dispose(): void }, so it already satisfies
+  // DisposableLike ({ dispose(): void }) structurally — push it directly, no
+  // wrapper object needed, and its pending timer is cleared on deactivate.
   const connectorRefresh = createDebouncer(250, () => connectorsView.refresh());
   ctx.subscriptions.push(connectorRefresh);
 ```
@@ -2552,8 +2643,10 @@ behaviour, and matter most:
   the defensive timeout back.
 - **check 11** — the `.syncing` menu guard, and a double-click issuing one RPC.
 
-Write the findings to `docs/superpowers/plans/2026-08-<dd>-connector-f5-findings.md`
-and **fix what it finds on this branch** before calling the work done.
+Write the findings to
+`docs/superpowers/plans/2026-08-18-connector-f5-findings.md` — the date is the
+day the pass actually runs, so rename it if that is not today — and **fix what
+it finds on this branch** before calling the work done.
 
 ---
 
