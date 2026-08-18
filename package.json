@@ -340,7 +340,8 @@
       {
         "command": "nimbus.addMcpConnector",
         "title": "Add MCP Connector",
-        "category": "Nimbus"
+        "category": "Nimbus",
+        "icon": "$(add)"
       },
       {
         "command": "nimbus.removeConnector",
@@ -625,6 +626,11 @@
         },
         {
           "command": "nimbus.refreshConnectors",
+          "when": "view == nimbus.connectorsView",
+          "group": "navigation"
+        },
+        {
+          "command": "nimbus.addMcpConnector",
           "when": "view == nimbus.connectorsView",
           "group": "navigation"
         },

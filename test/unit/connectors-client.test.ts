@@ -132,6 +132,35 @@ describe("mutations", () => {
       personalAccessToken: "ghp_x",
     });
   });
+
+  test("auth omits the detail entirely when no scopes come back, rather than a dangling colon", async () => {
+    const client = stub({
+      connectorAuth: vi.fn(async () => ({
+        ok: true as const,
+        serviceId: "github",
+        scopesGranted: [],
+      })),
+    });
+    const ops = createConnectorOps(() => client);
+    expect(await ops.auth("github", { personalAccessToken: "ghp_x" })).toEqual({
+      kind: "applied",
+    });
+  });
+
+  test("reindex renders the Gateway's mode in plain wording, not its internal vocabulary", async () => {
+    const client = stub({
+      connectorReindex: vi.fn(async () => ({
+        itemsAffected: 12,
+        depth: "full" as const,
+        mode: "shallow" as const,
+      })),
+    });
+    const ops = createConnectorOps(() => client);
+    expect(await ops.reindex("github", "metadata_only")).toEqual({
+      kind: "applied",
+      detail: "12 items · trimmed to a shallower depth",
+    });
+  });
 });
 
 test("the client is resolved per call, never captured", async () => {

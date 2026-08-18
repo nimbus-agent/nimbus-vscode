@@ -68,6 +68,15 @@ const NOT_CONNECTED = "Not connected to the Nimbus Gateway.";
 /** One screenful of history; the Gateway clamps to 1..500. */
 const HISTORY_LIMIT = 15;
 
+// The Gateway's own vocabulary for what a reindex actually did to the index,
+// translated to plain English rather than shown verbatim — "shallow" and
+// "deepen" mean nothing to a user who did not write the indexer.
+const REINDEX_MODE_WORDING: Record<ConnectorReindexResult["mode"], string> = {
+  shallow: "trimmed to a shallower depth",
+  deepen: "indexed more deeply",
+  same: "unchanged",
+};
+
 // connectorHealthHistory takes built-in connector ids only — the client says so,
 // and the Gateway rejects a user MCP id. Skipping beats surfacing an error the
 // user cannot act on.
@@ -125,12 +134,20 @@ export function createConnectorOps(getClient: () => ConnectorClientLike | undefi
     reindex: (serviceId, depth) =>
       mutate(async (c) => {
         const r = await c.connectorReindex({ service: serviceId, depth });
-        return { kind: "applied", detail: `${r.itemsAffected} items · ${r.mode}` };
+        return {
+          kind: "applied",
+          detail: `${r.itemsAffected} items · ${REINDEX_MODE_WORDING[r.mode]}`,
+        };
       }),
     auth: (serviceId, fields) =>
       mutate(async (c) => {
         const r = await c.connectorAuth({ serviceId, ...fields });
-        return { kind: "applied", detail: `scopes: ${r.scopesGranted.join(", ")}` };
+        return {
+          kind: "applied",
+          ...(r.scopesGranted.length === 0
+            ? {}
+            : { detail: `scopes: ${r.scopesGranted.join(", ")}` }),
+        };
       }),
     addMcp: (serviceId, commandLine) =>
       mutate(async (c) =>

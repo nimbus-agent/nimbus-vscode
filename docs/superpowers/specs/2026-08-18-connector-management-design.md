@@ -394,6 +394,12 @@ The row's command opens the Connectors view. `signals.ts` is already data-driven
 ("adding a fifth signal is one entry rather than an edit in four files"), so
 this is one catalog-shaped entry plus a collector.
 
+> **Spec defect, recorded rather than silently dropped:** `SignalRow` has no
+> `command` field, and no row in the context panel is clickable today — "the
+> row's command opens the Connectors view" is not implementable as written.
+> The Sources row ships informational-only until the panel gains clickable
+> rows; nothing here fakes clickability to satisfy this sentence.
+
 **It makes no Gateway call.** The collector reads the summary the existing
 status-bar poll already produced, injected as a `() => ConnectorHealthSummary`
 getter. So `ContextClientLike` gains **no** third method, the panel's RPC count

@@ -60,6 +60,14 @@ describe("extension manifest: connectors", () => {
     expect(entry?.group).toBe("navigation");
   });
 
+  test("Add MCP connector sits in the view's title bar too, with an add icon", () => {
+    const entry = viewTitle.find((m) => m.command === "nimbus.addMcpConnector");
+    expect(entry?.when).toBe(`view == ${VIEW}`);
+    expect(entry?.group).toBe("navigation");
+    const command = commands.find((c) => c.command === "nimbus.addMcpConnector");
+    expect(command?.icon).toBe("$(add)");
+  });
+
   // A `when` clause carries either `viewItem == <value>` or `viewItem =~ /re/`.
   // Substring-matching it is wrong in both directions — "nimbus.connector.syncing"
   // does not occur inside "/nimbus.connector.(active|syncing)/", and a substring

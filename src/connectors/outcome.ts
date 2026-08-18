@@ -20,7 +20,8 @@ export type ConnectorOutcome =
 // user decision; a real denial misread as a failure still carries the Gateway's
 // reason verbatim. Bare "denied" or "rejected" match only with consent-domain
 // context (consent/HITL/approval/owner), or accept standalone "not approved".
-// Calibrated against observed Gateway denial messages during the F5 pass.
+// Not yet calibrated against a real Gateway's denial messages — that is
+// pending, in the F5 pass this surface has not had yet.
 const DENIAL =
   /\bnot approved\b|(?=.*\b(?:denied|rejected|expired|timed out)\b)(?=.*\b(?:consent|HITL|approval|owner)\b)/i;
 
