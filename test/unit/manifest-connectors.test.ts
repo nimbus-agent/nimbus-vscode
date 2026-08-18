@@ -88,6 +88,7 @@ describe("extension manifest: connectors", () => {
       "nimbus.reindexConnector",
     ]) {
       const entry = itemContext.find((m) => m.command === id);
+      expect(entry, id).toBeDefined();
       expect(offeredOn(entry?.when, CONNECTOR_CONTEXT.syncing), id).toBe(false);
     }
   });

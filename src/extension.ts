@@ -249,6 +249,14 @@ export function activateWithDeps(
   // call site needs the full NimbusClient. Narrow it in one place.
   const nimbus = (): NimbusClient | undefined => connection.client() as NimbusClient | undefined;
 
+  // Constructed here, well before pollConnectorHealth is DEFINED below, so
+  // its closure over connectorsView never risks a temporal-dead-zone
+  // ReferenceError — pollStatusBar() runs synchronously during activation,
+  // and only an await inside the poll currently defers the reference past
+  // that point. Depends only on connection/nimbus, both already bound above.
+  const connectorOps = createConnectorOps(() => nimbus());
+  const connectorsView = createConnectorsView({ connection, ops: connectorOps });
+
   const autoStart =
     deps.autoStarter ??
     createAutoStarter({
@@ -685,8 +693,6 @@ export function activateWithDeps(
     }
   };
   const indexView = createIndexView({ connection, loadIndex });
-  const connectorOps = createConnectorOps(() => nimbus());
-  const connectorsView = createConnectorsView({ connection, ops: connectorOps });
   const loadAgents = (): Agent[] => parseAgents(settings.agents());
   const agentsView = createAgentsView({
     connection,
