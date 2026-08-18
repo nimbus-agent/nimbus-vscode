@@ -248,6 +248,59 @@ describe("credentials", () => {
   });
 });
 
+describe("credentials: unknown-provider add-another-field loop", () => {
+  test("an unknown provider can add two extra fields, and all three reach ops.auth by name", async () => {
+    const answers: Array<string | undefined> = [
+      SENTINEL, // GENERIC_FIELD's "token"
+      "awsAccessKeyId",
+      "AKIA_FAKE",
+      "awsSecretAccessKey",
+      "SECRET_FAKE",
+      undefined, // dismiss the name prompt: stop adding fields
+    ];
+    const h = harness({ window: { showInputBox: vi.fn(async () => answers.shift()) } });
+    await h.commands["nimbus.authenticateConnector"]!(node("aws"));
+    expect(h.ops.auth).toHaveBeenCalledWith("aws", {
+      token: SENTINEL,
+      awsAccessKeyId: "AKIA_FAKE",
+      awsSecretAccessKey: "SECRET_FAKE",
+    });
+  });
+
+  test("dismissing the name prompt right away proceeds with what was already collected", async () => {
+    const answers: Array<string | undefined> = [SENTINEL, undefined];
+    const h = harness({ window: { showInputBox: vi.fn(async () => answers.shift()) } });
+    await h.commands["nimbus.authenticateConnector"]!(node("aws"));
+    expect(h.ops.auth).toHaveBeenCalledWith("aws", { token: SENTINEL });
+  });
+
+  test("cancelling a value prompt abandons the whole flow — nothing is sent", async () => {
+    const answers: Array<string | undefined> = [SENTINEL, "awsAccessKeyId", undefined];
+    const h = harness({ window: { showInputBox: vi.fn(async () => answers.shift()) } });
+    await h.commands["nimbus.authenticateConnector"]!(node("aws"));
+    expect(h.ops.auth).not.toHaveBeenCalled();
+  });
+
+  test("a known provider is never offered the loop", async () => {
+    const h = harness();
+    await h.commands["nimbus.authenticateConnector"]!(node("github"));
+    expect(h.window.showInputBox).toHaveBeenCalledTimes(1);
+    expect(h.ops.auth).toHaveBeenCalledWith("github", { personalAccessToken: SENTINEL });
+  });
+
+  test("no value from the extra-field loop ever reaches the log", async () => {
+    const answers: Array<string | undefined> = [
+      SENTINEL,
+      "awsAccessKeyId",
+      "AKIA_FAKE_SECRET",
+      undefined,
+    ];
+    const h = harness({ window: { showInputBox: vi.fn(async () => answers.shift()) } });
+    await h.commands["nimbus.authenticateConnector"]!(node("aws"));
+    expect(h.logged.join("\n")).not.toContain("AKIA_FAKE_SECRET");
+  });
+});
+
 describe("interval", () => {
   test("an interval under the floor never reaches the Gateway", async () => {
     const h = harness({
@@ -289,6 +342,29 @@ describe("concurrency", () => {
     // and the key is released, so the next click works
     await h.commands["nimbus.syncConnector"]!(node());
     expect(h.ops.sync).toHaveBeenCalledTimes(2);
+  });
+
+  test("a second invocation while one is in flight says so, naming the connector and action", async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      ops: {
+        sync: vi.fn(async () => {
+          await gate;
+          return { kind: "applied" } as const;
+        }),
+      },
+    });
+    const first = h.commands["nimbus.syncConnector"]!(node());
+    await h.commands["nimbus.syncConnector"]!(node());
+    expect(h.window.showInformationMessage).toHaveBeenCalledWith(
+      "Syncing github is already in progress.",
+      {},
+    );
+    release();
+    await first;
   });
 
   test("the in-flight key is released even when the op throws", async () => {

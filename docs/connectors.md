@@ -68,11 +68,13 @@ connection-state change, and the `view/title` refresh command.
 
 ## Row commands
 
-Nine commands, all palette-visible, all routed through the one adapter,
-`src/connectors/connector-client.ts`. A command run from the palette — or from
-a keybinding, or another extension's `executeCommand` — carries no row, so
-each one falls back to a `QuickPick` over `connectorListStatus()` rather than
-silently doing nothing.
+Ten commands, all palette-visible; nine of them routed through the one
+adapter, `src/connectors/connector-client.ts` — Refresh Connectors is the
+exception, since it makes no RPC of its own and simply re-reads the last poll
+or re-fetches. A command run from the palette — or from a keybinding, or
+another extension's `executeCommand` — carries no row, so each one falls back
+to a `QuickPick` over `connectorListStatus()` rather than silently doing
+nothing.
 
 | Command | RPC | Confirmation |
 | --- | --- | --- |
@@ -170,8 +172,16 @@ access token), `gcp` (a credentials JSON path), `slack` (a token), and
 `google_drive` (an empty field list — an OAuth provider, where
 `connectorAuth({serviceId})` alone is enough and the Gateway opens a browser
 and listens on a local port). An unrecognised `serviceId` falls back to the
-**generic flow**: one masked credential prompt, with the field named simply
-"Credential."
+**generic flow**: one masked credential prompt named simply "Credential" (wire
+name `token`), followed by an **add-another-field loop** — after that prompt,
+Authenticate keeps asking "Add another field to send?" for a field name, then
+its value (masked), for as long as the user keeps naming fields. Dismissing
+the name prompt (not submitting it blank — that is rejected and re-prompts)
+ends the loop and sends what was collected so far; cancelling a *value* prompt
+abandons the whole flow, the same rule every other field in this command
+follows. This loop is offered only when the catalog has no entry for the
+`serviceId` at all — a known provider's fixed field list is never followed by
+it.
 
 **This catalog will drift, and that is expected, not a bug to eliminate.**
 Its field names come from exactly one source: the pinned `@nimbus-dev/client`
@@ -181,14 +191,18 @@ past the typed client — so the catalog is seeded from what the client's
 comments say and nothing else. When the Gateway adds a provider, renames a
 field, or changes what it requires, this catalog goes stale until someone
 updates it by hand. The generic fallback above is the deliberate escape
-hatch: it can send any field the Gateway wants, under any name, even for a
+hatch: between the initial "Credential" prompt and the add-another-field
+loop, it can send any field the Gateway wants, under any name, even for a
 `serviceId` the catalog has never heard of.
 
 **AWS is deliberately absent from the catalog for exactly this reason.** The
 client's JSDoc names `awsAccessKeyId` but never documents its secret
 counterpart. Rather than invent a field name for the secret half of a
-credential pair, AWS uses the generic flow — a prompt this extension is
-allowed to build, versus a field name this extension is not allowed to guess.
+credential pair, AWS uses the generic flow: the "Credential" prompt fills
+`token`, and the add-another-field loop is where a user supplies
+`awsAccessKeyId`, its secret counterpart, or anything else the Gateway asks
+for by name — a prompt this extension is allowed to build, versus a field
+name this extension is not allowed to guess.
 
 Format validation is deliberately absent too: nothing here checks that
 `apiBaseUrl` parses as a URL, or that `gcpCredentialsJsonPath` exists on disk
@@ -219,7 +233,11 @@ shown only when at least one connector is in `error` or `backoff` — a
 connector the user deliberately paused or disabled raises no row here, since
 that is a state the user chose, and it is already visible in the Connectors
 view. The row names the failing connector and when it last synced
-successfully, and its command opens the Connectors view.
+successfully. It is informational only: `SignalRow` has no `command` field and
+no row in the context panel is clickable yet, so — unlike what an earlier
+draft of the design spec claimed — this row does not open the Connectors view
+by itself; opening it still means using the Connectors view directly until the
+panel gains clickable rows.
 
 This signal makes **no Gateway call of its own**: it reads the
 `ConnectorHealthSummary` the existing status-bar poll already computed,

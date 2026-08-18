@@ -1,7 +1,7 @@
 import { errMsg, type Logger } from "../logging.js";
 import type { WindowApi } from "../vscode-shim.js";
 import { PROGRESS_LOCATION_NOTIFICATION } from "../vscode-shim.js";
-import { type AuthField, authFieldsFor } from "./catalog.js";
+import { type AuthField, authFieldsFor, isKnownProvider } from "./catalog.js";
 import type { ConnectorOps, ReindexDepth } from "./connector-client.js";
 import { parseInterval } from "./interval.js";
 import { type ConnectorOutcome, describeOutcome } from "./outcome.js";
@@ -78,7 +78,10 @@ export function createConnectorCommands(
     op: () => Promise<ConnectorOutcome>,
   ): Promise<void> => {
     const guard = `${serviceId}:${key}`;
-    if (inFlight.has(guard)) return;
+    if (inFlight.has(guard)) {
+      void deps.window.showInformationMessage(`${verb} ${serviceId} is already in progress.`, {});
+      return;
+    }
     inFlight.add(guard);
     try {
       report(verb, serviceId, await op());
@@ -115,6 +118,20 @@ export function createConnectorCommands(
       ...(field.placeholder === undefined ? {} : { placeHolder: field.placeholder }),
       validateInput: (value) =>
         field.required && value.trim() === "" ? "This field is required." : undefined,
+    });
+
+  // The "add another field" escape hatch for a provider the catalog has never
+  // heard of: it can send any field the Gateway wants, under any name, one
+  // name+value pair at a time. Dismissing the NAME prompt (Escape, not an
+  // empty submission — validateInput blocks that) ends the loop and proceeds
+  // with whatever was already collected; cancelling a VALUE prompt abandons
+  // the whole flow, the same rule every other field in this command follows.
+  const promptExtraFieldName = async (): Promise<string | undefined> =>
+    await deps.window.showInputBox({
+      prompt: "Add another field to send? Enter its name, or press Escape to stop.",
+      placeHolder: "e.g. awsAccessKeyId",
+      ignoreFocusOut: true,
+      validateInput: (value) => (value.trim() === "" ? "Field name cannot be empty." : undefined),
     });
 
   return {
@@ -232,6 +249,23 @@ export function createConnectorCommands(
         // Cancelling any prompt abandons the flow: nothing partial is sent.
         if (value === undefined) return;
         collected[field.name] = value.trim();
+      }
+      // The catalog has no entry for this provider, so GENERIC_FIELD's single
+      // "token" is a guess, not a full credential — offer the escape hatch
+      // docs/connectors.md promises: any field, under any name.
+      if (!isKnownProvider(t.serviceId)) {
+        while (true) {
+          const name = await promptExtraFieldName();
+          if (name === undefined) break;
+          const value = await promptField({
+            name: name.trim(),
+            label: `Value for ${name.trim()}`,
+            secret: true,
+            required: true,
+          });
+          if (value === undefined) return;
+          collected[name.trim()] = value.trim();
+        }
       }
       if (fields.length === 0) {
         void deps.window.showInformationMessage(
