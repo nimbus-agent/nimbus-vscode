@@ -24,6 +24,11 @@ describe("parseInterval", () => {
     expect(parseInterval("")).toEqual({ error: "Use a duration like 15m, 2h or 1d." });
     expect(parseInterval("0m")).toEqual({ error: "The Gateway enforces a minimum of 60s." });
   });
+
+  test("accepts the floor exactly: 60s and 1m are both 60_000ms", () => {
+    expect(parseInterval("60s")).toEqual({ ms: 60_000 });
+    expect(parseInterval("1m")).toEqual({ ms: 60_000 });
+  });
 });
 
 describe("formatInterval", () => {
