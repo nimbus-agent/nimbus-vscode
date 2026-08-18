@@ -37,6 +37,9 @@ export interface FakeGateway {
   stop(): Promise<void>;
   requests(): readonly RecordedRequest[];
   queueError(method: string, detail: string): void;
+  /** The author name `agents.whyPeek` answers with — the single source a spec
+   * can assert against, rather than a copy of the WHY_PEEK fixture's literal. */
+  whyPeekAuthor(): string;
   reset(): void;
 }
 
@@ -285,6 +288,13 @@ export function createFakeGateway(): FakeGateway {
 
     requests: () => recorded,
     queueError: (method, detail) => queuedErrors.set(method, detail),
+    whyPeekAuthor: () => {
+      // WHY_PEEK.author is typed string | null (WhyPeek's own shape); the
+      // fixture itself always sets a literal author, so a null here would
+      // mean the fixture changed under this accessor's feet.
+      if (WHY_PEEK.author === null) throw new Error("WHY_PEEK fixture has no author");
+      return WHY_PEEK.author;
+    },
     reset: () => {
       recorded.length = 0;
       queuedErrors.clear();

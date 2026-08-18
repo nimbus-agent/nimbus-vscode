@@ -26,6 +26,7 @@ interface RawRepository {
     HEAD?: { name?: string };
     untrackedChanges?: RawChange[];
     workingTreeChanges?: RawChange[];
+    indexChanges?: RawChange[];
     onDidChange(listener: () => void): { dispose(): void };
   };
   diffIndexWithHEAD(): Promise<RawChange[]>;
@@ -60,8 +61,20 @@ function adaptRepository(raw: RawRepository): GitRepositoryLike {
     changedFiles: listing,
     // The same state `untrackedPaths` below reads, and the same relativiser —
     // but no diff subprocess, because the context panel asks on every tick.
+    // Working tree UNION the dedicated untracked group: under the default
+    // git.untrackedChanges: "mixed" untracked files sit in workingTreeChanges
+    // already, but under "separate"/"hidden" VS Code moves them into
+    // untrackedChanges instead — reading workingTreeChanges alone then misses
+    // them entirely. Mirrors untrackedPaths' own merge below. The caller's
+    // Set dedupe absorbs the "mixed" case where both would double-count.
     changedPathsNow: () =>
-      (raw.state.workingTreeChanges ?? []).map((c) => relativeOrBasename(root, c.uri.fsPath)),
+      [...(raw.state.workingTreeChanges ?? []), ...(raw.state.untrackedChanges ?? [])].map((c) =>
+        relativeOrBasename(root, c.uri.fsPath),
+      ),
+    // Same state, same relativiser, same no-subprocess discipline — but the
+    // INDEX-vs-HEAD side, which changedPathsNow does not cover.
+    stagedPathsNow: () =>
+      (raw.state.indexChanges ?? []).map((c) => relativeOrBasename(root, c.uri.fsPath)),
     fileDiff: async (scope, path) =>
       scope === "staged" ? raw.diffIndexWithHEAD(path) : raw.diffWithHEAD(path),
     untrackedPaths: async () => {

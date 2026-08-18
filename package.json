@@ -831,6 +831,11 @@
           "default": "",
           "description": "Prefills the namespace prompt for the 'Safe to deploy?' brief. agents.preflight requires a namespace and Nimbus never guesses one — a wrong namespace returns a confident answer about the wrong thing, so this only prefills a prompt you still confirm."
         },
+        "nimbus.context.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Keep the Context view collecting. When off, the view stays in the sidebar but stops reading your editor and stops asking the Gateway for blame and related items."
+        },
         "nimbus.diagnostics.showCodeActions": {
           "type": "boolean",
           "default": true,

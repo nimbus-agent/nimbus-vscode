@@ -2,13 +2,30 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-type View = { id: string; name: string; type?: string };
+type View = { id: string; name: string; type?: string; initialSize?: number; visibility?: string };
 
 const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
   contributes?: { views?: { nimbus?: View[] } };
 };
 
 const views = manifest.contributes?.views?.nimbus ?? [];
+
+type Config = { properties?: Record<string, { type?: string; default?: unknown }> };
+const configManifest = manifest as unknown as {
+  contributes?: { configuration?: Config | Config[] };
+};
+
+describe("extension manifest: context setting", () => {
+  test("contributes nimbus.context.enabled, defaulting to on", () => {
+    const raw = configManifest.contributes?.configuration;
+    const blocks = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
+    const property = blocks
+      .flatMap((b) => Object.entries(b.properties ?? {}))
+      .find(([key]) => key === "nimbus.context.enabled")?.[1];
+    expect(property?.type).toBe("boolean");
+    expect(property?.default).toBe(true);
+  });
+});
 
 describe("extension manifest: context panel", () => {
   test("declares the context view in the Nimbus container", () => {
@@ -19,7 +36,7 @@ describe("extension manifest: context panel", () => {
     expect(views.find((v) => v.id === "nimbus.contextView")?.type).toBe("webview");
   });
 
-  test("places it first — an ambient panel below five collapsed trees is invisible", () => {
+  test("places it first — an ambient panel below six collapsed trees is invisible", () => {
     expect(views[0]?.id).toBe("nimbus.contextView");
   });
 

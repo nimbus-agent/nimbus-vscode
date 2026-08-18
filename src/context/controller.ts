@@ -269,15 +269,21 @@ export function createController(deps: ControllerDeps): ContextController {
     const slots: Array<SignalSection | undefined> = deps.signals.map(() => undefined);
     const toRun: SignalSpec[] = [];
     const locals: Array<Promise<void>> = [];
+    // How each signal was served, built from the very branch below that
+    // already decides it — not a second pass over the signals — so the debug
+    // line below can never drift from what collect() actually did.
+    const served: Array<{ id: SignalId; how: "skipped" | "cached" | "local" | "fetch" }> = [];
     deps.signals.forEach((spec, index) => {
       if (spec.needsGateway && !connected) {
         slots[index] = disconnectedSection(spec);
+        served.push({ id: spec.id, how: "skipped" });
         return;
       }
       const key = spec.cacheKey(snapshot);
       const cached = key === undefined ? undefined : cacheFor(spec.id).get(key);
       if (cached !== undefined) {
         slots[index] = cached.section;
+        served.push({ id: spec.id, how: "cached" });
         return;
       }
       if (!spec.needsGateway) {
@@ -291,11 +297,22 @@ export function createController(deps: ControllerDeps): ContextController {
             slots[index] = section;
           }),
         );
+        served.push({ id: spec.id, how: "local" });
         return;
       }
       slots[index] = loadingSection(spec);
       toRun.push(spec);
+      served.push({ id: spec.id, how: "fetch" });
     });
+
+    // One line per collection, at debug. The cadence of this surface —
+    // debounce tiers, cache hits, git churn — is otherwise unobservable,
+    // which made four points of the PR 1 and PR 2 checklists unanswerable in
+    // a real editor. Debug and not info: this fires on every cursor rest.
+    deps.log.debug(
+      `context collect #${mine} ${snapshot.path ?? "(no file)"}:${snapshot.line ?? "-"} ` +
+        `[${served.map((s) => `${s.id}=${s.how}`).join(" ")}]`,
+    );
 
     // Awaited only when there is something to await, so a collection with no
     // local work still posts its render in the same turn it was asked for.

@@ -202,6 +202,20 @@ describe("per-section updates", () => {
   });
 });
 
+describe("pausing", () => {
+  test("a disabled pause explains itself rather than blanking the panel", () => {
+    dispatch("vscode-webview://abc", { type: "paused", reason: "disabled" });
+    expect(document.getElementById("signals")?.innerHTML).toContain("Context panel is off");
+    expect(document.getElementById("offers")?.innerHTML).toBe("");
+  });
+
+  test("a hidden pause paints nothing — the user cannot see it anyway", () => {
+    dispatch("vscode-webview://abc", RENDER_MESSAGE);
+    dispatch("vscode-webview://abc", { type: "paused", reason: "hidden" });
+    expect(document.getElementById("signals")?.innerHTML).toBe("");
+  });
+});
+
 // The producer half of the webview→host boundary, and the only exercise of the
 // data-target JSON round trip that protocol.ts then validates.
 describe("clicking an offer", () => {

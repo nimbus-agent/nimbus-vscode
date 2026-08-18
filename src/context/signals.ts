@@ -102,13 +102,15 @@ export async function gitSection(
   const git = snapshot.git;
   if (git === undefined) return { ...base, rows: [], empty: "No git repository here." };
   const rows: SignalRow[] = [{ label: git.branch ?? "Detached HEAD", iconId: "git-branch" }];
-  // Only when the collector actually looked. An unread changedPaths renders no
-  // row at all: "0 changed files" beside a correct branch name is a statement
-  // the panel has not earned, and it would be wrong for most users.
+  // Only when the collector actually looked AND has something to report. An
+  // unread changedPaths renders no row: "0 uncommitted files" beside a
+  // correct branch name is a statement the panel has not earned. A read that
+  // found nothing renders no row either — the branch row already shows the
+  // section looked, and a zero is noise on the majority of ticks.
   const changed = git.changedPaths;
-  if (changed !== undefined) {
+  if (changed !== undefined && changed.length > 0) {
     rows.push({
-      label: `${changed.length} changed ${changed.length === 1 ? "file" : "files"}`,
+      label: `${changed.length} uncommitted ${changed.length === 1 ? "file" : "files"}`,
       iconId: "diff",
     });
   }
@@ -188,22 +190,65 @@ export async function relatedSection(
   if (client === undefined) return { ...base, rows: [], empty: NEEDS_GATEWAY, transient: true };
   try {
     const items = await client.searchRanked({ name: query, limit: deps.searchLimit() });
-    const rows: SignalRow[] = items
-      // Self-exclusion: an item is not its own neighbour, and leaving it in
-      // wastes the top slot. The rule is exact-match against the open file's
-      // PATH — not against the query, which is what Find related's `sameName`
-      // compares (trimmed and case-folded). The difference matters when the
-      // query is a selection: a result whose name equals the selected text is
-      // a legitimate neighbour here and is kept, while the open file is
-      // excluded even though it never matches the query.
-      .filter((i) => i.name !== snapshot.path)
-      .map((i) => ({
+    // The file an item came from, when the Gateway recorded one. Typed as
+    // unknown because rawMeta is Record<string, unknown> — an index that
+    // stores something other than a string here must not throw.
+    const fileOf = (i: (typeof items)[number]): string | undefined => {
+      const raw = i.rawMeta?.["file"];
+      return typeof raw === "string" ? raw : undefined;
+    };
+    // rawMeta.file is REPO-root-relative; snapshot.path is WORKSPACE-root-
+    // relative. They coincide when the workspace is the repo root and diverge
+    // otherwise (a git worktree, a monorepo package opened as a subfolder).
+    // Comparing both exactly — rather than suffix-matching one against the
+    // other — is the whole fix: a suffix match also matches two genuinely
+    // different files that merely share a directory-boundary-aligned tail
+    // (e.g. "src/index.ts" against "packages/service-b/src/index.ts" in a
+    // monorepo with parallel package layouts), wrongly dropping an unrelated
+    // result. snapshot.repoPath is the file's path under the SAME root
+    // rawMeta.file uses, computed once at snapshot-build time from the
+    // repository that contains the file — see real-context-view.ts.
+    const seen = new Set<string>();
+    const rows: SignalRow[] = [];
+    for (const i of items) {
+      const file = fileOf(i);
+      // Self-exclusion, the version that actually fires. An item's `name` is a
+      // SYMBOL name ("runOpsCommand (function)"), never a repo-relative path,
+      // so the old `i.name !== snapshot.path` rule never matched anything and
+      // the panel filled with the open file's own symbols. rawMeta.file is the
+      // field that carries the path, compared against both projections of the
+      // open file since either can be the one the index used. The name
+      // comparison stays as a second rule for services that key an item by
+      // its path.
+      if (file !== undefined && (file === snapshot.repoPath || file === snapshot.path)) continue;
+      if (i.name === snapshot.path) continue;
+      // The index can hold several rows for one symbol (a re-index that did not
+      // supersede the old row, a duplicate chunk). Three identical rows waste
+      // the section; one row per (name, file) does not.
+      //
+      // The fallback for an item with no file is its SERVICE, not "". The index
+      // really does return same-named rows with no file — five github_actions
+      // rows for one commit's re-runs, differing only by run id — and
+      // collapsing those is the point. An empty fallback would also collapse a
+      // Jira ticket and a Slack message that happen to share a title, which are
+      // different things the user needs to see separately.
+      //
+      // "\u0000" as the separator, written as an escape and never as a raw
+      // byte: a name containing the separator must not be able to collide with
+      // a different (name, file) pair.
+      const key = `${i.name}\u0000${file ?? i.service}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push({
         label: i.name,
         ...(i.service.length > 0 ? { detail: i.service } : {}),
         iconId: "file",
-      }));
+      });
+    }
     if (rows.length === 0) {
-      return { ...base, rows, empty: "Nothing related in the local index." };
+      // Says what is true after the exclusion above: the index may well hold
+      // this file, just nothing ELSE that ranks against it.
+      return { ...base, rows, empty: "Nothing else in the local index looks related." };
     }
     return { ...base, rows };
   } catch (e: unknown) {

@@ -1,6 +1,6 @@
 import type { ContextViewToExtension, ExtensionToContextView } from "../protocol.js";
 import type { SignalSection } from "../signals.js";
-import { renderOffers, renderSignals } from "./render.js";
+import { DISABLED_NOTICE, renderOffers, renderSignals } from "./render.js";
 
 // The browser half of the context panel. It decides nothing: it renders what
 // the host sends and posts back the command a clicked offer names.
@@ -68,7 +68,10 @@ window.addEventListener("message", (event: MessageEvent<ExtensionToContextView>)
   }
   const typed = message as ExtensionToContextView;
   if (typed.type === "paused") {
-    paint("signals", "");
+    // "hidden" paints nothing because nobody is looking; "disabled" has to
+    // explain itself, because the view is on screen and would otherwise read
+    // as a surface that has silently broken.
+    paint("signals", typed.reason === "disabled" ? DISABLED_NOTICE : "");
     paint("offers", "");
     return;
   }

@@ -15,6 +15,7 @@ export interface Settings {
   scmSkipSecretFiles(): boolean;
   scmEgressProofTrailer(): boolean;
   showEgressStatusBarBadge(): boolean;
+  contextEnabled(): boolean;
   showHoverBlame(): boolean;
   defaultNamespace(): string;
   showDiagnosticCodeActions(): boolean;
@@ -36,6 +37,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     scmSkipSecretFiles: () => cfg().get<boolean>("scm.skipSecretFiles", true),
     scmEgressProofTrailer: () => cfg().get<boolean>("scm.egressProofTrailer", false),
     showEgressStatusBarBadge: () => cfg().get<boolean>("egress.showStatusBarBadge", true),
+    contextEnabled: () => cfg().get<boolean>("context.enabled", true),
     showHoverBlame: () => cfg().get<boolean>("briefs.showHoverBlame", true),
     defaultNamespace: () => cfg().get<string>("briefs.defaultNamespace", ""),
     showDiagnosticCodeActions: () => cfg().get<boolean>("diagnostics.showCodeActions", true),
