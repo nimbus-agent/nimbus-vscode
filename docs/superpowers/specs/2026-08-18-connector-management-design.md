@@ -37,6 +37,15 @@ MCP sources; standing up a new Jira or GitHub connector stays a CLI job until a
 remove only), health sparklines or charts, and any automatic mutation. Nothing
 here syncs, re-indexes or pauses without the user asking.
 
+**Out, and worth wanting: showing an MCP connector's command line.** Surfacing
+the command a registered `mcp_*` connector runs would fit this extension's
+posture squarely — you could see what executes beside your editor without
+opening the CLI. It is not deferred on taste: `commandLine` appears in the
+typed client **only as an input to `connectorAddMcp`**. No status, result or
+notification type carries it back, so there is nothing to render. This is a
+Phase 4 row — it needs a client that returns it — not a task someone can pick
+up on this branch.
+
 ## Non-negotiable posture
 
 **No new outbound path.** The `EgressKind` count stays at eight. Nothing in
@@ -107,7 +116,7 @@ order keeps the rendering deterministic and testable.
 | `itemCount`, `lastSyncAt` | description: `1,204 items · synced 3m ago`, via the existing `formatRelativeTime(now, ts)` |
 | `lastSyncAt: null` | description: `never synced` — not `synced 56 years ago` |
 | `lastError`, `consecutiveFailures`, `intervalMs`, `depth`, `nextSyncAt` | tooltip |
-| `status` + `enabled` | `contextValue`: `nimbus.connector.active` / `.paused` / `.disabled`, so Pause and Resume never both appear |
+| `status` + `enabled` | `contextValue`: `nimbus.connector.active` / `.paused` / `.disabled` / `.syncing`, so Pause and Resume never both appear and the sync family is hidden mid-sync (see *Concurrency*) |
 
 Empty result: a single `No connectors registered` row, plus an *Add MCP
 connector* row — the one kind of source the extension can actually register.
@@ -123,6 +132,18 @@ connector on every open.
   upserted/deleted, and `errorMsg` when present.
 - **Health history** — `connectorHealthHistory({service, limit})`, rendered as
   `from → to · reason`.
+
+**Error text from the Gateway is shown verbatim, and never logged.** A
+connector's `lastError` and a telemetry row's `errorMsg` can carry hosts,
+paths, usernames or connection-string fragments, and that is precisely what
+makes them actionable — a redacted "connection failed" leaves the user exactly
+where they started, and the pre-flight gate redacts paths because they *leave
+the machine*, which nothing here does. The information is the user's own,
+about their own connector, displayed to them alone.
+
+The one rule that follows from that: this text is **not** written to the output
+channel. The log is the artefact people paste into issues and screenshots, so
+the copy that could travel is the copy we do not create.
 
 **`connectorHealthHistory` accepts built-in connector ids only** — the client
 states this explicitly, and a user MCP id is rejected. For a `serviceId`
@@ -144,6 +165,16 @@ No background polling. The view refreshes on:
 3. **the connection state changing** — already free from `createDataView`.
 4. **an explicit `view/title` refresh command.**
 
+**Notifications are debounced before they invalidate anything.** The Gateway
+emits one `configChanged` per mutation, so a multi-field `setConfig` — or a
+script pausing every connector in a loop — arrives as a burst. Both consumers
+(this view and the context panel's Sources signal) take the notification
+through `createDebouncer(250, …)`, the same seam `src/context/debounce.ts`
+already provides for editor events, so a burst costs one refresh rather than
+one per notification. The controller's existing in-flight coalescing does not
+cover this on its own: it merges concurrent collections, but a burst that lands
+*after* each refresh completes would otherwise refetch every time.
+
 ## Write operations
 
 Nine commands, every one routed through `connector-client.ts`:
@@ -158,6 +189,31 @@ Nine commands, every one routed through `connector-client.ts`:
 | Authenticate | `connectorAuth` | none (the input boxes are the confirmation) |
 | Add MCP connector | `connectorAddMcp` | none — HITL consent is the confirmation |
 | Remove | `connectorRemove` | modal, naming the item count |
+
+### Concurrency
+
+Two guards, at two different levels, because they catch different mistakes.
+
+**Menu-level, from `contextValue`.** A connector whose last-read `status` is
+`syncing` carries `nimbus.connector.syncing`, and the `when` clauses omit
+**Sync now**, **Full re-sync** and **Re-index** for it — asking for a sync
+during a sync is at best redundant.
+
+**Pause and Remove stay available while syncing, deliberately.** A runaway or
+wedged sync is exactly when a user reaches for Pause, and hiding it would leave
+the one useful action behind the one state that needs it. Remove already
+confirms modally, which is guard enough.
+
+That guard is best-effort by construction: `status` is as fresh as the last
+`connectorListStatus`, so a sync started elsewhere leaves the menu briefly
+wrong. It suppresses the common mistake; it is not a lock, and the spec should
+not pretend otherwise.
+
+**Command-level, in `commands.ts`.** A `Set` of in-flight `serviceId:command`
+keys, so a double-click (or a click on a stale menu) cannot issue the same
+mutation twice. A second invocation while the first is in flight is a no-op,
+not a queued call. This is the guard that actually holds, since it does not
+depend on row freshness.
 
 ### One outcome type, four wire shapes
 
@@ -205,6 +261,24 @@ narrower:
   first** — the argument order that broke every workflow run in #100, and the
   reason the shim carries a comment about it.
 - render the resolved outcome, remembering that a denial **resolves**.
+
+**The extension adds no timeout of its own.** The wait is bounded by the
+Gateway, not by us: `GatedRejection` is documented as the shape a HITL-gated
+`connector.*` call resolves with when it is *"denied / timed-out /
+consent-disconnected"*, and none of the connector methods accepts a `timeoutMs`
+(unlike the `agents*` family, which all do). An ignored consent request
+therefore settles on its own.
+
+A defensive extension-side timer would be actively wrong here: it would close
+the notification and report a timeout while the Gateway call is still live, so
+a consent answered a minute later would take effect against a UI that already
+said it hadn't. The only two states are "still waiting" and "the Gateway
+settled it".
+
+Because all three of those endings arrive as the same shape, the `denied`
+message shows the Gateway's `reason` **verbatim** rather than asserting a
+person declined — a request that expired unanswered and one someone actively
+rejected must not read identically.
 
 Removal confirms modally and names what goes:
 
@@ -258,6 +332,23 @@ browser and listen on a local port. The extension neither opens nor brokers it.
 half-entered credential to a stray click is a bad enough experience to be worth
 the option. Cancelling any prompt abandons the whole flow; nothing partial is
 sent.
+
+**Validation stops at emptiness.** `validateInput` (already on the shim's
+`showInputBox`) rejects a blank or whitespace-only value for a `required: true`
+field, and values are trimmed. That much is the extension's own contract: it
+declared the field required, so it can enforce it without knowing anything
+about the Gateway.
+
+**Format validation is deliberately absent.** We do not check that
+`apiBaseUrl` parses as a URL or that `gcpCredentialsJsonPath` exists on disk.
+The catalog's field *names* are sourced from the client's JSDoc; its field
+*formats* are not documented anywhere we are allowed to read, so a format rule
+would be invention — and an invented rule that is stricter than the Gateway's
+blocks a credential that would have worked, which is worse than the round trip
+it saves. A path is also resolved by the Gateway's process, not ours, so
+`existsSync` here would be checking the wrong filesystem in any remote or
+container setup. The Gateway's own rejection message, shown verbatim, is the
+feedback.
 
 ## The Sources row in the context panel
 
@@ -320,7 +411,8 @@ and `check-bundle` are unaffected.
 | Zero connectors | `No connectors registered` + *Add MCP connector* |
 | Health history on an `mcp_*` id | group omitted; telemetry still shown |
 | Gateway without the connector RPCs | the call rejects "Method not found"; the error row shows it verbatim rather than asserting the user's Gateway is broken |
-| Consent denied | `denied` wording; the row is refreshed anyway, since the Gateway state is unchanged but the view may be stale for other reasons |
+| Consent denied, or the request expired unanswered | both arrive as `GatedRejection`; `denied` wording showing the Gateway's `reason` verbatim, so the two do not read alike. The row is refreshed anyway — Gateway state is unchanged, but the view may be stale for other reasons |
+| Gateway dies while a consent-gated call is blocked | the transport rejects, so the outcome is `failed`, not `denied`: we do not know what the owner would have answered, and reporting a decision nobody made is worse than reporting a lost connection |
 
 ## Testing
 
@@ -344,6 +436,19 @@ Unit (`test/unit/`), all pure except where noted:
 - **`commands.ts`** — over stubbed shim deps: remove confirms before calling,
   a cancelled confirmation calls nothing, the HITL progress is created
   non-cancellable, and `withProgress` is invoked with the reporter first.
+- **concurrency** — a second invocation of the same `serviceId:command` while
+  the first is in flight issues no RPC, and the key is released on both the
+  resolve and the reject path (a guard that leaks on failure would wedge the
+  command until reload); a `syncing` row carries the `.syncing` `contextValue`,
+  and Pause and Remove are still offered on it.
+- **debounce** — a burst of `configChanged` notifications produces one refresh,
+  asserted on a fake clock the way the panel's existing debounce tests are.
+- **credential validation** — a blank required field is rejected before any
+  call; a value with surrounding whitespace is trimmed; no format rule fires on
+  a syntactically odd `apiBaseUrl`.
+- **error text is never logged** — a fake logger sees nothing after a load
+  whose `lastError` and telemetry `errorMsg` carry sentinels, while the rows
+  built from that same load still contain them verbatim.
 
 Guards that must stay green **unmodified**: `egress-choke-point.test.ts`,
 `check-settings-docs`, `check-bundle`, `check-vsix-contents`.
@@ -368,7 +473,14 @@ connector, one deliberately broken one, and one `mcp_*` connector**, covering:
    the generic flow;
 8. the Sources row appearing in the context panel when a connector breaks and
    **disappearing entirely** when it recovers;
-9. a Gateway restart mid-surface, to confirm nothing captured a stale client.
+9. a Gateway restart mid-surface, to confirm nothing captured a stale client;
+10. a consent request **left unanswered** until the Gateway's own timeout — the
+    one claim here that rests on a JSDoc sentence rather than on observed
+    behaviour. It must settle without an extension-side timer, and its `reason`
+    must read differently from an active denial. If it never settles, this
+    design is wrong and a defensive timeout goes back on the table;
+11. **Sync now** on a connector that is already `syncing`, to confirm the menu
+    omits it, and a double-click on **Sync now** elsewhere, to confirm one RPC.
 
 Findings are written up as a dated file in `docs/superpowers/plans/`, the way
 the context panel's pass was. **A defect found there is fixed on this branch
