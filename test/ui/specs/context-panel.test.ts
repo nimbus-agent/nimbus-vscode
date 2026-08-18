@@ -105,11 +105,19 @@ describe("ambient context panel", function () {
   it("shows the blame the Gateway returned for the cursor line", async () => {
     const view = await openContextView();
     const author = fake().whyPeekAuthor();
+    // Captured during the poll and asserted after it: driver.wait already fails
+    // the case on timeout, but a test whose only failure mode is a timeout reads
+    // as assertion-less to a human and to SonarCloud alike.
+    let text = "";
     await VSBrowser.instance.driver.wait(
-      async () => (await textInPanel(view)).includes(author),
+      async () => {
+        text = await textInPanel(view);
+        return text.includes(author);
+      },
       20_000,
       "the panel never rendered the canned blame author",
     );
+    expect(text).to.include(author);
   });
 
   // THE strongest assertion in this file: it proves the offer list rendered,

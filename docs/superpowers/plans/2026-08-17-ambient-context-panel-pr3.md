@@ -24,6 +24,12 @@ typed IPC.
 (F1–F5). Read it before Task 1: it is the record of what the panel actually does
 in a real editor, and several tasks below exist only because of it.
 
+> **Before following any task below:** three of them were overturned during
+> execution and did not ship as written — Task 1's suffix match, Task 2's
+> "changed files" label, and the whole of Task 6. See
+> [**Superseded during execution**](#superseded-during-execution--three-tasks-above-did-not-ship-as-written)
+> at the end of this file.
+
 ## Global Constraints
 
 - TypeScript **strict**, **no `any`** — use `unknown` for external data. Biome
@@ -1149,6 +1155,38 @@ git commit -m "docs: record the PR 3 verification pass"
 ```
 
 ---
+
+## Superseded during execution — three tasks above did not ship as written
+
+The task bodies above are the plan **as written on 2026-08-17**, kept
+intact because they are the argument the branch was reviewed against. Three of
+them were overturned while the work ran, by measurement or by review. What
+shipped differs, and the shipped behaviour is what is correct:
+
+- **Task 1's `sameFile` suffix match did not ship.** A suffix comparison
+  (`file.endsWith("/" + path)`) wrongly excludes any file whose path merely ends
+  with the open file's — `packages/service-b/src/index.ts` against an open
+  `src/index.ts`. `relatedSection` instead compares the index item's
+  `rawMeta.file` against a new `ContextSnapshot.repoPath` — the open file's path
+  under the same root the index uses — **exactly**, with `snapshot.path` as a
+  secondary rule. `test/unit/context-signals-related.test.ts` carries the
+  collision case as a regression test.
+- **Task 2's rendered label is "N uncommitted file(s)", not "N changed files".**
+  The count is the union of working-tree, index and untracked paths; the label
+  was changed so the UI says what the docs say. Task 2's test snippets still show
+  the old string.
+- **Task 6 shipped nothing.** `initialSize` and `visibility: "collapsed"` were
+  added, then isolated on clean `--user-data-dir` launches: with `initialSize`
+  alone, and with neither property, the rendered layout is identical. A fresh
+  profile already opens a webview view placed first in a container at full
+  height. Both hints were inert and were reverted; `contributes.views.nimbus` is
+  byte-identical to `main`. The ~140 px observation that motivated the task came
+  from a profile carrying a layout stored by an earlier version, which no
+  manifest default can rewrite.
+
+The full record, including the three retracted measurements and why `--profile`
+is not a clean slate, is in
+[`2026-08-17-context-panel-f5-findings.md`](./2026-08-17-context-panel-f5-findings.md).
 
 ## Self-Review
 
