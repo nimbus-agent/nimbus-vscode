@@ -1313,6 +1313,9 @@ function ops(over: Partial<ConnectorOps> = {}): ConnectorOps {
     list: vi.fn(async () => [status()]),
     detail: vi.fn(async () => ({ ...status(), telemetry: [] })),
     history: vi.fn(async () => []),
+    // Spread LAST: a helper that drops its override makes every test that
+    // passes one assert nothing at all.
+    ...over,
   } as unknown as ConnectorOps;
 }
 
@@ -1883,6 +1886,11 @@ export function createConnectorCommands(
     inFlight.add(guard);
     try {
       report(verb, serviceId, await op());
+    } catch (e) {
+      // ConnectorOps normalises its own failures, so this is unreachable in
+      // production — but a command handler that can reject is worse than a
+      // branch that never fires.
+      void deps.window.showErrorMessage(`${verb} ${serviceId} failed: ${errMsg(e)}`);
     } finally {
       // Released on every path: a guard that leaked on failure would wedge the
       // command until the window reloaded.
@@ -2173,25 +2181,38 @@ describe("extension manifest: connectors", () => {
     expect(entry?.group).toBe("navigation");
   });
 
+  // A `when` clause carries either `viewItem == <value>` or `viewItem =~ /re/`.
+  // Substring-matching it is wrong in both directions — "nimbus.connector.syncing"
+  // does not occur inside "/nimbus.connector.(active|syncing)/", and a substring
+  // test would also accept "nimbus.connector.syncingXYZ". Evaluate the clause
+  // against the contextValue instead, which is what VS Code itself does.
+  function offeredOn(when: string | undefined, contextValue: string): boolean {
+    const clause = when ?? "";
+    const re = /viewItem =~ \/(.+?)\//.exec(clause);
+    if (re !== null) return new RegExp(re[1]).test(contextValue);
+    return clause.includes(`viewItem == ${contextValue}`);
+  }
+
   test("Pause and Resume never both appear on one row", () => {
     const pause = itemContext.find((m) => m.command === "nimbus.pauseConnector");
     const resume = itemContext.find((m) => m.command === "nimbus.resumeConnector");
-    expect(pause?.when).toContain(CONNECTOR_CONTEXT.active);
-    expect(resume?.when).toContain(CONNECTOR_CONTEXT.paused);
-    expect(pause?.when).not.toContain(CONNECTOR_CONTEXT.paused);
+    expect(offeredOn(pause?.when, CONNECTOR_CONTEXT.active)).toBe(true);
+    expect(offeredOn(pause?.when, CONNECTOR_CONTEXT.paused)).toBe(false);
+    expect(offeredOn(resume?.when, CONNECTOR_CONTEXT.paused)).toBe(true);
+    expect(offeredOn(resume?.when, CONNECTOR_CONTEXT.active)).toBe(false);
   });
 
   test("the sync family is hidden while a connector is syncing", () => {
     for (const id of ["nimbus.syncConnector", "nimbus.fullResyncConnector", "nimbus.reindexConnector"]) {
       const entry = itemContext.find((m) => m.command === id);
-      expect(entry?.when, id).not.toContain(CONNECTOR_CONTEXT.syncing);
+      expect(offeredOn(entry?.when, CONNECTOR_CONTEXT.syncing), id).toBe(false);
     }
   });
 
   test("Pause and Remove stay reachable on a syncing row, on purpose", () => {
     for (const id of ["nimbus.pauseConnector", "nimbus.removeConnector"]) {
       const entry = itemContext.find((m) => m.command === id);
-      expect(entry?.when, id).toContain(CONNECTOR_CONTEXT.syncing);
+      expect(offeredOn(entry?.when, CONNECTOR_CONTEXT.syncing), id).toBe(true);
     }
   });
 
