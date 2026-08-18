@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import * as vscode from "vscode";
 import { toRelativeRef } from "../briefs/params.js";
+import type { ConnectorHealthSummary } from "../connectors/health.js";
 import { errMsg, type Logger } from "../logging.js";
 import type { GitApiLike, GitRepositoryLike } from "../scm/git-types.js";
 import { repoContaining } from "../scm/repo-select.js";
@@ -38,6 +39,8 @@ export function registerContextView(deps: {
   connection: SidebarConnection;
   searchLimit: () => number;
   contextEnabled: () => boolean;
+  /** The mutable degraded-connector summary the status-bar poll maintains. */
+  connectorHealth: () => ConnectorHealthSummary;
 }): vscode.Disposable {
   let view: vscode.WebviewView | undefined;
 
@@ -47,6 +50,7 @@ export function registerContextView(deps: {
       client: deps.client,
       now: () => Date.now(),
       searchLimit: deps.searchLimit,
+      connectorHealth: deps.connectorHealth,
     },
     connection: deps.connection,
     post: (message) => {

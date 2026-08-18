@@ -16,6 +16,7 @@ const noDeps: SignalDeps = {
   client: () => undefined,
   now: () => 0,
   searchLimit: () => 20,
+  connectorHealth: () => ({ count: 0, names: [] }),
 };
 
 describe("problemsSection", () => {
@@ -124,12 +125,18 @@ describe("gitSection", () => {
 });
 
 describe("SIGNAL_CATALOG", () => {
-  test("covers four signals: two local, two Gateway-backed", () => {
-    expect(SIGNAL_CATALOG.map((s) => s.id)).toEqual(["problems", "git", "blame", "related"]);
+  test("covers five signals: three local, two Gateway-backed", () => {
+    expect(SIGNAL_CATALOG.map((s) => s.id)).toEqual([
+      "problems",
+      "git",
+      "blame",
+      "related",
+      "connectors",
+    ]);
     expect(
-      SIGNAL_CATALOG.filter((s) => s.id === "problems" || s.id === "git").every(
-        (s) => s.needsGateway === false,
-      ),
+      SIGNAL_CATALOG.filter(
+        (s) => s.id === "problems" || s.id === "git" || s.id === "connectors",
+      ).every((s) => s.needsGateway === false),
     ).toBe(true);
     expect(
       SIGNAL_CATALOG.filter((s) => s.id === "blame" || s.id === "related").every(

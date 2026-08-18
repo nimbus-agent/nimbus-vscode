@@ -47,6 +47,33 @@ describe("renderSections", () => {
   test("renders no icon markup, because no codicon font ships with the panel", () => {
     expect(renderSections([section])).not.toContain("codicon");
   });
+
+  test("a suppressWhenEmpty section with no rows renders nothing at all", () => {
+    const html = renderSections([
+      { id: "connectors", title: "Sources", rows: [], suppressWhenEmpty: true },
+    ]);
+    expect(html).toBe("");
+  });
+
+  test("a section without the flag still renders its empty text", () => {
+    const html = renderSections([
+      { id: "git", title: "Git", rows: [], empty: "No git repository here." },
+    ]);
+    expect(html).toContain("No git repository here.");
+  });
+
+  test("a suppressWhenEmpty section WITH rows renders normally", () => {
+    const html = renderSections([
+      {
+        id: "connectors",
+        title: "Sources",
+        rows: [{ label: "github", detail: "sync failing" }],
+        suppressWhenEmpty: true,
+      },
+    ]);
+    expect(html).toContain("Sources");
+    expect(html).toContain("github");
+  });
 });
 
 describe("renderSections loading state", () => {
