@@ -39,9 +39,13 @@ only through `src/vscode-shim.ts`.
 - `withProgress(options, task)` calls `task(progress, token)` — **reporter
   first**. Getting this backwards broke every workflow run in PR #100.
 - No new `nimbus.*` setting: `check-settings-docs` must stay green untouched.
-- After every task: `bun run test` and `bun run typecheck` must pass. Before
-  the final commit of the branch also run `bun run lint`, `bun run build`,
-  `bun run check-bundle`, `bun run check-vsix-contents`.
+- After every task: `bun run test`, `bun run typecheck` **and `bun run lint`**
+  must pass. Lint is per-task, not deferred to the end: the code blocks in this
+  plan are not Biome-formatted, so a task that transcribes one verbatim
+  introduces a formatting failure, and four had accumulated before anyone ran
+  it. `bunx biome check --write <files>` fixes them; CI runs lint, so a branch
+  that skips it fails there instead. Before the final commit of the branch also
+  run `bun run build`, `bun run check-bundle`, `bun run check-vsix-contents`.
 - Commit messages are Conventional Commits and end with:
   `Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>`
 
