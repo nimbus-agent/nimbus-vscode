@@ -14,6 +14,18 @@ const PAT = (label: string, name = "personalAccessToken"): AuthField => ({
   required: true,
 });
 
+const ATLASSIAN_FIELDS: readonly AuthField[] = [
+  { name: "atlassianEmail", label: "Atlassian account email", secret: false, required: true },
+  {
+    name: "apiBaseUrl",
+    label: "Atlassian site URL",
+    secret: false,
+    required: true,
+    placeholder: "https://your-team.atlassian.net",
+  },
+  { name: "token", label: "Atlassian API token", secret: true, required: true },
+];
+
 /**
  * Every field name below is taken from the pinned client's JSDoc for
  * ConnectorAuthParams. The Gateway owns the real list and can out-run this one;
@@ -28,32 +40,11 @@ const AUTH_CATALOG: Record<string, readonly AuthField[]> = {
   github: [PAT("GitHub personal access token")],
   gitlab: [PAT("GitLab personal access token")],
   bitbucket: [PAT("Bitbucket app password")],
-  jira: [
-    { name: "atlassianEmail", label: "Atlassian account email", secret: false, required: true },
-    {
-      name: "apiBaseUrl",
-      label: "Atlassian site URL",
-      secret: false,
-      required: true,
-      placeholder: "https://your-team.atlassian.net",
-    },
-    { name: "token", label: "Atlassian API token", secret: true, required: true },
-  ],
-  confluence: [
-    { name: "atlassianEmail", label: "Atlassian account email", secret: false, required: true },
-    {
-      name: "apiBaseUrl",
-      label: "Atlassian site URL",
-      secret: false,
-      required: true,
-      placeholder: "https://your-team.atlassian.net",
-    },
-    { name: "token", label: "Atlassian API token", secret: true, required: true },
-  ],
-  aws: [
-    { name: "awsAccessKeyId", label: "AWS access key id", secret: false, required: true },
-    { name: "awsSecretAccessKey", label: "AWS secret access key", secret: true, required: true },
-  ],
+  jira: ATLASSIAN_FIELDS,
+  confluence: ATLASSIAN_FIELDS,
+  // AWS is deliberately absent: the client's JSDoc names awsAccessKeyId but not its secret
+  // counterpart. This extension may not read the Gateway to discover it, so AWS uses the
+  // generic flow (GENERIC_FIELD plus "add another field" loop) until a client release documents the pair.
   azure: [
     { name: "azureTenantId", label: "Azure tenant id", secret: false, required: true },
     { name: "token", label: "Azure access token", secret: true, required: true },

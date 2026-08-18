@@ -17,11 +17,9 @@ describe("authFieldsFor", () => {
     ]);
   });
 
-  test("AWS masks the secret key and not the id", () => {
-    expect(authFieldsFor("aws").map((f) => [f.name, f.secret])).toEqual([
-      ["awsAccessKeyId", false],
-      ["awsSecretAccessKey", true],
-    ]);
+  test("aws is deliberately absent: its secret field name is not in the client's JSDoc", () => {
+    expect(isKnownProvider("aws")).toBe(false);
+    expect(authFieldsFor("aws")).toEqual([GENERIC_FIELD]);
   });
 
   test("an OAuth provider needs no fields — the Gateway drives the browser", () => {
