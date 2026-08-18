@@ -31,7 +31,11 @@ import { type AutoStarter, createAutoStarter } from "./connection/auto-start.js"
 import { type ConnectionState, createConnectionManager } from "./connection/connection-manager.js";
 import { pingSocket } from "./connection/ping-socket.js";
 import { buildTroubleshooter, type PingOutcome } from "./connection/troubleshooter.js";
+import { createConnectorCommands } from "./connectors/commands.js";
+import { createConnectorOps } from "./connectors/connector-client.js";
+import { createConnectorsView } from "./connectors/connectors-view.js";
 import { summarizeConnectorHealth } from "./connectors/health.js";
+import { createDebouncer } from "./context/debounce.js";
 import { registerContextView } from "./context/real-context-view.js";
 import { DIAGNOSTIC_COMMANDS, diagnosticActionsFor } from "./diagnostics/actions.js";
 import { createDiagnosticCommands } from "./diagnostics/commands.js";
@@ -327,7 +331,14 @@ export function activateWithDeps(
     try {
       const statuses = await client.connectorListStatus();
       if (mine !== connectorPollSeq) return; // a newer poll superseded this one
+      const previous = connectorHealth;
       connectorHealth = summarizeConnectorHealth(statuses);
+      if (
+        previous.count !== connectorHealth.count ||
+        previous.names.join(",") !== connectorHealth.names.join(",")
+      ) {
+        connectorsView.refresh();
+      }
     } catch (e) {
       if (mine !== connectorPollSeq) return;
       log.warn(`connectorListStatus poll failed: ${errMsg(e)}`);
@@ -543,7 +554,14 @@ export function activateWithDeps(
     alwaysModal: () => settings.hitlAlwaysModal(),
   });
 
+  // Debouncer is { trigger(): void; dispose(): void }, so it already satisfies
+  // DisposableLike ({ dispose(): void }) structurally — push it directly, no
+  // wrapper object needed, and its pending timer is cleared on deactivate.
+  const connectorRefresh = createDebouncer(250, () => connectorsView.refresh());
+  ctx.subscriptions.push(connectorRefresh);
+
   let hitlSubscription: DisposableLike | undefined;
+  let connectorConfigSubscription: DisposableLike | undefined;
   const stateSub = connection.onState((s) => {
     renderStatusBar(s);
     void deps.commands.executeCommand("setContext", "nimbus.connected", s.kind === "connected");
@@ -560,6 +578,16 @@ export function activateWithDeps(
         hitlSubscription = c.subscribeHitl((req) => {
           void hitlRouter.handle(req);
         });
+        if (connectorConfigSubscription !== undefined) {
+          try {
+            connectorConfigSubscription.dispose();
+          } catch {
+            /* ignore */
+          }
+        }
+        connectorConfigSubscription = c.subscribeConnectorConfigChanged(() =>
+          connectorRefresh.trigger(),
+        );
       }
       log.info(`Nimbus connected to Gateway at ${s.socketPath}`);
       return;
@@ -587,6 +615,11 @@ export function activateWithDeps(
     {
       dispose: () => {
         if (hitlSubscription !== undefined) hitlSubscription.dispose();
+      },
+    },
+    {
+      dispose: () => {
+        if (connectorConfigSubscription !== undefined) connectorConfigSubscription.dispose();
       },
     },
   );
@@ -652,6 +685,8 @@ export function activateWithDeps(
     }
   };
   const indexView = createIndexView({ connection, loadIndex });
+  const connectorOps = createConnectorOps(() => nimbus());
+  const connectorsView = createConnectorsView({ connection, ops: connectorOps });
   const loadAgents = (): Agent[] => parseAgents(settings.agents());
   const agentsView = createAgentsView({
     connection,
@@ -670,6 +705,7 @@ export function activateWithDeps(
     ["nimbus.egressView", egressView],
     ["nimbus.agentsView", agentsView],
     ["nimbus.indexView", indexView],
+    ["nimbus.connectorsView", connectorsView],
     ["nimbus.sessionsView", sessionsView],
     ["nimbus.workflowsView", workflowsView],
   ];
@@ -824,6 +860,24 @@ export function activateWithDeps(
   const register = (id: string, handler: (...args: unknown[]) => unknown): void => {
     ctx.subscriptions.push(deps.commands.registerCommand(id, handler));
   };
+
+  // Every connector RPC reaches no model (sync/config/auth/reindex control
+  // plumbing, not agent invocation), so this surface sits outside the egress
+  // gate exactly as the sidebar's other read-only views do.
+  const connectorCommands = createConnectorCommands({
+    window: deps.window,
+    ops: connectorOps,
+    refresh: () => connectorsView.refresh(),
+    log,
+  });
+  for (const [id, handler] of Object.entries(connectorCommands)) {
+    ctx.subscriptions.push(
+      deps.commands.registerCommand(id, (node?: unknown) => void handler(node)),
+    );
+  }
+  ctx.subscriptions.push(
+    deps.commands.registerCommand("nimbus.refreshConnectors", () => connectorsView.refresh()),
+  );
 
   register("nimbus.ask", async () => {
     const input = await deps.window.showInputBox({ prompt: "Ask Nimbus" });

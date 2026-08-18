@@ -46,6 +46,7 @@ function makeFakeClient(overrides: Partial<ClientLike> = {}): () => Promise<Clie
   const base: ClientLike = {
     close: async () => undefined,
     subscribeHitl: () => ({ dispose: () => undefined }),
+    subscribeConnectorConfigChanged: () => ({ dispose: () => undefined }),
     askStream: () => ({}),
     cancelStream: async () => ({ ok: true }),
     getSessionTranscript: async () => ({ sessionId: "", turns: [], hasMore: false }),
@@ -78,6 +79,9 @@ class FakeClassClient {
     return Promise.resolve();
   }
   subscribeHitl(): { dispose(): void } {
+    return { dispose: () => undefined };
+  }
+  subscribeConnectorConfigChanged(): { dispose(): void } {
     return { dispose: () => undefined };
   }
   connectorListStatus(): Promise<unknown[]> {
@@ -725,7 +729,7 @@ describe("activateWithDeps", () => {
     openTextDocument.mockRestore();
   });
 
-  test("registers the six sidebar tree views in the nimbus container", async () => {
+  test("registers the seven sidebar tree views in the nimbus container", async () => {
     const f = makeFixture({});
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
@@ -736,6 +740,7 @@ describe("activateWithDeps", () => {
       "nimbus.egressView",
       "nimbus.agentsView",
       "nimbus.indexView",
+      "nimbus.connectorsView",
       "nimbus.sessionsView",
       "nimbus.workflowsView",
     ]);
