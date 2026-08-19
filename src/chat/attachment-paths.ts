@@ -11,7 +11,13 @@ import { resolve as resolvePath, sep } from "node:path";
  * reports a perfectly readable file as "unreadable · not sent".
  *
  * With no folder open (`root` undefined), a path passes through unchanged: a
- * loose file is still attachable, it just has no root to be relative to.
+ * loose file is still attachable, it just has no root to be relative to. This
+ * is a deliberate widening from the stand-in reader these helpers replaced,
+ * which returned `undefined` (nothing attachable) with no workspace open —
+ * here a relative `repoRelative` instead resolves against the host process's
+ * cwd, and `isWithinRoot` has nothing to check it against. The brief's own
+ * wording allows this ("With no folder open, paths pass through unchanged");
+ * flagging it here as an intentional widening, not an oversight.
  */
 
 export function toAbsolute(root: string | undefined, repoRelative: string): string {
@@ -19,7 +25,17 @@ export function toAbsolute(root: string | undefined, repoRelative: string): stri
 }
 
 export function toRepoRelative(root: string | undefined, fsPath: string): string {
-  if (root === undefined || !fsPath.startsWith(root)) return fsPath;
+  // A bare `startsWith(root)` would slice mid-segment on a PREFIX SIBLING —
+  // "C:/repository/x.ts" starts with "C:/repo" as a string but is not inside
+  // it, and slicing there yields the nonsense "sitory/x.ts". Require a real
+  // path boundary: fsPath must equal root exactly, or continue with a
+  // separator, before root is stripped.
+  if (
+    root === undefined ||
+    !(fsPath === root || fsPath.startsWith(`${root}/`) || fsPath.startsWith(`${root}\\`))
+  ) {
+    return fsPath;
+  }
   return fsPath
     .slice(root.length)
     .replace(/^[\\/]+/, "")

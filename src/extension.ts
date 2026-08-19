@@ -14,7 +14,7 @@ import { createNamespaceStore } from "./briefs/namespace-store.js";
 import { toRelativeRef, whyParams } from "./briefs/params.js";
 import { createPeekHover } from "./briefs/peek-hover.js";
 import { registerWhyPeekHover } from "./briefs/real-hover.js";
-import { isWithinRoot, toAbsolute } from "./chat/attachment-paths.js";
+import { createAttachmentCache } from "./chat/attachment-cache.js";
 import {
   type ChatClientLike,
   type ChatController,
@@ -407,29 +407,15 @@ export function activateWithDeps(
   // controller renders provisional chips the moment attach() is called, and an
   // unprimed cache would render a perfectly good file as "unreadable · not
   // sent". The spec's own wording ("about 4 KB, measured when attached")
-  // requires a real measurement at attach time.
-  const attachmentCache = new Map<string, string>();
-  const readAttachment = (path: string): string | undefined => attachmentCache.get(path);
-
-  /**
-   * Reads one path into the cache. Silent on failure — the assembler reports
-   * it. A path that resolves outside the workspace root is treated the same
-   * as one that fails to open: cleared from the cache, never read.
-   */
-  const cacheFile = async (path: string): Promise<void> => {
-    const root = workspaceRoot();
-    const absolute = toAbsolute(root, path);
-    if (!isWithinRoot(root, absolute)) {
-      attachmentCache.delete(path);
-      return;
-    }
-    try {
-      const doc = await deps.workspace.openTextDocument(absolute);
-      attachmentCache.set(path, doc.getText());
-    } catch {
-      attachmentCache.delete(path);
-    }
-  };
+  // requires a real measurement at attach time. The cache logic itself lives
+  // in attachment-cache.ts, pure and unit-tested with an injected
+  // openTextDocument — nothing here but the vscode-facing wiring.
+  const attachmentCache = createAttachmentCache({
+    workspaceRoot,
+    openTextDocument: (fsPath) => deps.workspace.openTextDocument(fsPath),
+  });
+  const readAttachment = attachmentCache.read;
+  const cacheFile = attachmentCache.cacheFile;
 
   /**
    * Re-reads every currently attached FILE before a turn goes out, so a file
