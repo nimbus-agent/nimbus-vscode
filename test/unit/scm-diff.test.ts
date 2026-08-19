@@ -45,6 +45,26 @@ describe("path classification", () => {
       expect(isSecretPath(p)).toBe(false);
     }
   });
+
+  // Regression coverage for a real bug: on Windows, a secret file living
+  // OUTSIDE the workspace root (or attached with no workspace open at all)
+  // reaches this check via `toRepoRelative`'s pass-through, unnormalized —
+  // backslashes and all. Every pattern above anchors position on a forward
+  // slash, so a bare `isSecretPath` missed all three of these before the fix.
+  // Verified against the pre-fix code (`SECRET_PATTERNS.some((re) =>
+  // re.test(path))`, no normalization, no basename fallback): all three
+  // return false there, i.e. the secret sails through unrefused.
+  test("flags a secret file behind a backslash absolute path (Windows, outside the workspace)", () => {
+    expect(isSecretPath("C:\\Users\\me\\keys\\.env")).toBe(true);
+  });
+
+  test("flags a secret file behind a forward-slash absolute path (outside the workspace)", () => {
+    expect(isSecretPath("/Users/me/keys/.env")).toBe(true);
+  });
+
+  test("flags a secret file inside the workspace, repo-relative", () => {
+    expect(isSecretPath("keys/.env")).toBe(true);
+  });
   test("flags lockfiles and generated artifacts as deprioritized", () => {
     for (const p of [
       "package-lock.json",
