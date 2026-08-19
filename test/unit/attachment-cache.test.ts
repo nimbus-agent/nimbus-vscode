@@ -82,6 +82,49 @@ describe("createAttachmentCache", () => {
     expect(cache.read("a.ts")).toBeUndefined();
   });
 
+  // Regression coverage for the primeAttachments bug this contract exists to
+  // avoid: the OLD primeAttachments called `clear()` once, up front, then
+  // awaited `cacheFile()` per attached file, one at a time. Two overlapping
+  // primeAttachments runs (e.g. Send mashed twice, or a second Ask fired
+  // before the first finished priming) race that single shared `clear()`
+  // against a `cacheFile()` call the OTHER run already resolved and moved
+  // past — wiping an entry nothing will ever re-fill, so a perfectly
+  // readable file resolves as "unreadable · not sent". `cacheFile` alone
+  // never has this problem: it only ever sets or deletes the ONE path it was
+  // called for, never sweeps the map — which is exactly why primeAttachments
+  // was fixed to stop calling `clear()` at all.
+  test("clear() racing a concurrent cacheFile() wipes what that call already resolved", async () => {
+    let resolveSlow: ((doc: OpenTextDocumentLike) => void) | undefined;
+    const openTextDocument = vi.fn(
+      (fsPath: string): Promise<OpenTextDocumentLike> =>
+        fsPath === "/repo/slow.ts"
+          ? new Promise((resolve) => {
+              resolveSlow = resolve;
+            })
+          : Promise.resolve({ getText: () => "fast contents", uri: { fsPath } }),
+    );
+    const cache = createAttachmentCache({ workspaceRoot: () => "/repo", openTextDocument });
+
+    // One prime run's per-file read has already resolved and cached...
+    await cache.cacheFile("fast.ts");
+    expect(cache.read("fast.ts")).toBe("fast contents");
+
+    // ...while another run's read for a DIFFERENT file is still in flight —
+    // and, as the old code did unconditionally at the top of every prime,
+    // something calls clear().
+    const slow = cache.cacheFile("slow.ts");
+    cache.clear();
+
+    // The already-cached, perfectly readable file is gone — nothing in
+    // `cacheFile("slow.ts")`'s own in-flight call will ever restore it.
+    expect(cache.read("fast.ts")).toBeUndefined();
+
+    resolveSlow?.({ getText: () => "slow contents", uri: { fsPath: "/repo/slow.ts" } });
+    await slow;
+    expect(cache.read("slow.ts")).toBe("slow contents");
+    expect(cache.read("fast.ts")).toBeUndefined();
+  });
+
   test("with no workspace root, a relative path is still read (nothing to contain it against)", async () => {
     const openTextDocument = vi.fn(
       async (fsPath: string): Promise<OpenTextDocumentLike> => ({
