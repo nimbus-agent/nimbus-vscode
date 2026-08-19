@@ -294,6 +294,59 @@
         "command": "nimbus.diagnosticPriorOccurrences",
         "title": "Find prior occurrences",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.refreshConnectors",
+        "title": "Refresh Connectors",
+        "category": "Nimbus",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "nimbus.syncConnector",
+        "title": "Sync Now",
+        "category": "Nimbus",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "nimbus.fullResyncConnector",
+        "title": "Full Re-sync",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.pauseConnector",
+        "title": "Pause Connector",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.resumeConnector",
+        "title": "Resume Connector",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.configureConnector",
+        "title": "Configure Connector",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.reindexConnector",
+        "title": "Re-index Connector",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.authenticateConnector",
+        "title": "Authenticate Connector",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.addMcpConnector",
+        "title": "Add MCP Connector",
+        "category": "Nimbus",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nimbus.removeConnector",
+        "title": "Remove Connector",
+        "category": "Nimbus"
       }
     ],
     "chatParticipants": [
@@ -436,6 +489,10 @@
           "name": "Index"
         },
         {
+          "id": "nimbus.connectorsView",
+          "name": "Connectors"
+        },
+        {
           "id": "nimbus.sessionsView",
           "name": "Sessions"
         },
@@ -464,6 +521,11 @@
       {
         "view": "nimbus.indexView",
         "contents": "The Nimbus Gateway is not connected.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)\nOnce connected, your newest indexed items (PRs, CI runs, issues, docs) appear here.",
+        "when": "!nimbus.connected"
+      },
+      {
+        "view": "nimbus.connectorsView",
+        "contents": "Connect to the Nimbus Gateway to manage your sources.\n[Start Gateway](command:nimbus.startGateway)\n[Troubleshoot](command:nimbus.troubleshootConnection)",
         "when": "!nimbus.connected"
       },
       {
@@ -563,6 +625,16 @@
           "group": "navigation"
         },
         {
+          "command": "nimbus.refreshConnectors",
+          "when": "view == nimbus.connectorsView",
+          "group": "navigation"
+        },
+        {
+          "command": "nimbus.addMcpConnector",
+          "when": "view == nimbus.connectorsView",
+          "group": "navigation"
+        },
+        {
           "command": "nimbus.verifyEgress",
           "when": "view == nimbus.egressView",
           "group": "1_egress"
@@ -593,6 +665,46 @@
           "command": "nimbus.dryRunWorkflow",
           "when": "view == nimbus.workflowsView && viewItem == nimbus.workflow",
           "group": "nimbus@1"
+        },
+        {
+          "command": "nimbus.syncConnector",
+          "when": "view == nimbus.connectorsView && viewItem =~ /nimbus.connector.(active|paused)/",
+          "group": "inline"
+        },
+        {
+          "command": "nimbus.fullResyncConnector",
+          "when": "view == nimbus.connectorsView && viewItem =~ /nimbus.connector.(active|paused)/",
+          "group": "nimbus@1"
+        },
+        {
+          "command": "nimbus.reindexConnector",
+          "when": "view == nimbus.connectorsView && viewItem =~ /nimbus.connector.(active|paused|disabled)/",
+          "group": "nimbus@2"
+        },
+        {
+          "command": "nimbus.pauseConnector",
+          "when": "view == nimbus.connectorsView && viewItem =~ /nimbus.connector.(active|syncing)/",
+          "group": "nimbus@3"
+        },
+        {
+          "command": "nimbus.resumeConnector",
+          "when": "view == nimbus.connectorsView && viewItem == nimbus.connector.paused",
+          "group": "nimbus@3"
+        },
+        {
+          "command": "nimbus.configureConnector",
+          "when": "view == nimbus.connectorsView && viewItem =~ /nimbus.connector./",
+          "group": "nimbus@4"
+        },
+        {
+          "command": "nimbus.authenticateConnector",
+          "when": "view == nimbus.connectorsView && viewItem =~ /nimbus.connector./",
+          "group": "nimbus@5"
+        },
+        {
+          "command": "nimbus.removeConnector",
+          "when": "view == nimbus.connectorsView && viewItem =~ /nimbus.connector./",
+          "group": "nimbus@6"
         }
       ],
       "editor/context": [

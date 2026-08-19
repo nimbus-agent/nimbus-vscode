@@ -31,7 +31,12 @@ const itemInFile = (name: string, service: string, file: string): Item =>
   }) as unknown as Item;
 
 function deps(client: ContextClientLike | undefined, limit = 5): SignalDeps {
-  return { client: () => client, now: () => 0, searchLimit: () => limit };
+  return {
+    client: () => client,
+    now: () => 0,
+    searchLimit: () => limit,
+    connectorHealth: () => ({ count: 0, names: [] }),
+  };
 }
 
 const stub = (

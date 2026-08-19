@@ -29,7 +29,12 @@ const PEEK = {
 };
 
 function deps(client: ContextClientLike | undefined): SignalDeps {
-  return { client: () => client, now: () => 60_000, searchLimit: () => 20 };
+  return {
+    client: () => client,
+    now: () => 60_000,
+    searchLimit: () => 20,
+    connectorHealth: () => ({ count: 0, names: [] }),
+  };
 }
 
 const stub = (peek: unknown): ContextClientLike => ({

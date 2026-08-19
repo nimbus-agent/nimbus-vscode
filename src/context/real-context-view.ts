@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import * as vscode from "vscode";
 import { toRelativeRef } from "../briefs/params.js";
+import type { ConnectorHealthSummary } from "../connectors/health.js";
 import { errMsg, type Logger } from "../logging.js";
 import type { GitApiLike, GitRepositoryLike } from "../scm/git-types.js";
 import { repoContaining } from "../scm/repo-select.js";
@@ -38,7 +39,9 @@ export function registerContextView(deps: {
   connection: SidebarConnection;
   searchLimit: () => number;
   contextEnabled: () => boolean;
-}): vscode.Disposable {
+  /** The mutable degraded-connector summary the status-bar poll maintains. */
+  connectorHealth: () => ConnectorHealthSummary;
+}): vscode.Disposable & { recollect: () => void } {
   let view: vscode.WebviewView | undefined;
 
   const controller = createController({
@@ -47,6 +50,7 @@ export function registerContextView(deps: {
       client: deps.client,
       now: () => Date.now(),
       searchLimit: deps.searchLimit,
+      connectorHealth: deps.connectorHealth,
     },
     connection: deps.connection,
     post: (message) => {
@@ -283,7 +287,7 @@ export function registerContextView(deps: {
     })
     .catch((e: unknown) => deps.log.warn(`context panel git init failed: ${errMsg(e)}`));
 
-  return vscode.Disposable.from(
+  const disposable = vscode.Disposable.from(
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
     vscode.window.onDidChangeActiveTextEditor(() => onEditor.trigger()),
     vscode.window.onDidChangeTextEditorSelection(() => onSelection.trigger()),
@@ -308,6 +312,14 @@ export function registerContextView(deps: {
       },
     },
   );
+
+  // Exposed so a caller outside this module — extension.ts's connector-health
+  // poll — can ask the panel to recollect when something it did not itself
+  // observe changes (a connector going degraded or recovering). Reuses the
+  // exact same debounced/gated path every other trigger in this file already
+  // goes through: `recollect()` still no-ops while hidden, disabled, or
+  // disposed, exactly as it does for the events wired above.
+  return Object.assign(disposable, { recollect });
 }
 
 function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {

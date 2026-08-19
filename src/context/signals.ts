@@ -2,14 +2,16 @@ import type { RankedSearchItem, WhyPeek } from "@nimbus-dev/client";
 
 import { whyParams } from "../briefs/params.js";
 import { peekFields } from "../briefs/peek.js";
+import type { ConnectorHealthSummary } from "../connectors/health.js";
 import { errMsg } from "../logging.js";
 import type { ContextSnapshot } from "./snapshot.js";
 
 // The signals the panel reads, as DATA — the same shape BRIEF_CATALOG uses, so
-// adding a fifth signal is one entry rather than an edit in four files. Four
-// signals here: two local reads (problems, git) and two Gateway-backed (blame, related).
+// adding a fifth signal is one entry rather than an edit in four files. Five
+// signals here: three local reads (problems, git, connectors) and two
+// Gateway-backed (blame, related).
 
-export type SignalId = "problems" | "git" | "blame" | "related";
+export type SignalId = "problems" | "git" | "blame" | "related" | "connectors";
 
 // The heading a section carries, keyed by id. Read by every collector below
 // AND by the controller's own loading/disconnected/error placeholders, so a
@@ -20,6 +22,7 @@ export const SECTION_TITLES: Record<SignalId, string> = {
   git: "Git",
   blame: "History",
   related: "Related",
+  connectors: "Sources",
 };
 
 // Likewise for the message shown when a Gateway-backed signal has no client
@@ -44,6 +47,11 @@ export interface SignalDeps {
   readonly client: () => ContextClientLike | undefined;
   readonly now: () => number;
   readonly searchLimit: () => number;
+  /**
+   * The degraded-connector summary the status-bar poll already computed. Read,
+   * not fetched: this signal costs no round trip, which is why it is `local`.
+   */
+  readonly connectorHealth: () => ConnectorHealthSummary;
 }
 
 export interface SignalRow {
@@ -67,6 +75,12 @@ export interface SignalSection {
    * into that key forever, since the collectors resolve rather than reject.
    */
   readonly transient?: boolean;
+  /**
+   * Render nothing at all — no heading, no empty line — when `rows` is empty.
+   * A healthy setup should not carry a "Sources: all fine" row on every tick,
+   * the same judgement that omits the git row on a clean tree.
+   */
+  readonly suppressWhenEmpty?: true;
 }
 
 // Errors and warnings only. Information and Hint are excluded for the same
@@ -262,6 +276,22 @@ export async function relatedSection(
   }
 }
 
+// Degraded connectors, read from the summary the status-bar poll already
+// computed — see SignalDeps.connectorHealth. Makes no Gateway call of its
+// own, which is why it is registered as a local signal below.
+export async function connectorsSection(
+  _snapshot: ContextSnapshot,
+  deps: SignalDeps,
+): Promise<SignalSection> {
+  const { names } = deps.connectorHealth();
+  return {
+    id: "connectors",
+    title: SECTION_TITLES.connectors,
+    suppressWhenEmpty: true,
+    rows: names.map((name) => ({ label: name, detail: "sync failing", iconId: "warning" })),
+  };
+}
+
 // No title here on purpose: both the collector's own section and the
 // controller's loading/disconnected/error placeholders read the same
 // SECTION_TITLES entry above, so a title on the spec would be a third copy
@@ -305,4 +335,5 @@ export const SIGNAL_CATALOG: readonly SignalSpec[] = [
     // it on.
     cacheKey: (s) => (s.path === undefined ? undefined : `${s.path}:${s.selection ?? ""}`),
   },
+  { id: "connectors", needsGateway: false, collect: connectorsSection, cacheKey: () => undefined },
 ];

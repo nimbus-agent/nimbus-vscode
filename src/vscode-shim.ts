@@ -136,6 +136,10 @@ export interface WindowApi {
     prompt?: string;
     value?: string;
     placeHolder?: string;
+    /** Masks the input. Set for every credential field; never logged. */
+    password?: boolean;
+    /** Keeps a half-entered credential alive when focus wanders. */
+    ignoreFocusOut?: boolean;
     validateInput?: (value: string) => string | undefined;
   }): Thenable<string | undefined>;
   showQuickPick<T extends QuickPickItemLike>(

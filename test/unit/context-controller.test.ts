@@ -62,7 +62,12 @@ function harness(opts: {
   };
   const controller = createController({
     signals: [spec],
-    signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+    signalDeps: {
+      client: () => undefined,
+      now: () => 0,
+      searchLimit: () => 20,
+      connectorHealth: () => ({ count: 0, names: [] }),
+    },
     connection: {
       current: () => currentState,
       onState: (l) => {
@@ -180,7 +185,12 @@ describe("createController", () => {
           cacheKey: () => "k",
         },
       ],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({ dispose: () => undefined }),
@@ -351,7 +361,12 @@ describe("createController", () => {
     };
     const controller = createController({
       signals: [spec],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({ dispose: () => undefined }),
@@ -379,7 +394,12 @@ describe("createController", () => {
     };
     const controller = createController({
       signals: [spec],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({ dispose: () => undefined }),
@@ -400,7 +420,12 @@ describe("createController", () => {
     let subDisposed = false;
     const controller = createController({
       signals: [],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({
@@ -459,7 +484,12 @@ describe("createController", () => {
     };
     const controller = createController({
       signals: [localSpec, gatewaySpec],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({ dispose: () => undefined }),
@@ -497,7 +527,12 @@ describe("createController", () => {
     };
     const controller = createController({
       signals: [blameSpec, relatedSpec],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({ dispose: () => undefined }),
@@ -537,7 +572,12 @@ describe("createController", () => {
       };
       const controller = createController({
         signals: [blameSpec, relatedSpec],
-        signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+        signalDeps: {
+          client: () => undefined,
+          now: () => 0,
+          searchLimit: () => 20,
+          connectorHealth: () => ({ count: 0, names: [] }),
+        },
         connection: {
           current: () => ({ kind: "connected" }) as ConnectionState,
           onState: () => ({ dispose: () => undefined }),
@@ -627,7 +667,12 @@ describe("createController", () => {
     };
     const controller = createController({
       signals: [localSpec, gatewaySpec],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({ dispose: () => undefined }),
@@ -661,7 +706,12 @@ describe("createController", () => {
           cacheKey: () => undefined,
         },
       ],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({ dispose: () => undefined }),
@@ -698,7 +748,12 @@ describe("createController", () => {
     };
     const controller = createController({
       signals: [blameSpec, relatedSpec],
-      signalDeps: { client: () => undefined, now: () => 0, searchLimit: () => 20 },
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
       connection: {
         current: () => ({ kind: "connected" }) as ConnectionState,
         onState: () => ({ dispose: () => undefined }),

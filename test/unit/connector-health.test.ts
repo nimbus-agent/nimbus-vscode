@@ -1,7 +1,10 @@
 import type { ConnectorSyncStatus } from "@nimbus-dev/client";
 import { describe, expect, test } from "vitest";
 
-import { summarizeConnectorHealth } from "../../src/status-bar/connector-health.js";
+import {
+  connectorStatusFingerprint,
+  summarizeConnectorHealth,
+} from "../../src/connectors/health.js";
 
 function status(over: Partial<ConnectorSyncStatus>): ConnectorSyncStatus {
   return {
@@ -44,5 +47,24 @@ describe("summarizeConnectorHealth", () => {
 
   test("empty input yields the zero summary", () => {
     expect(summarizeConnectorHealth([])).toEqual({ count: 0, names: [] });
+  });
+});
+
+describe("connectorStatusFingerprint", () => {
+  test("the same input produces the same fingerprint", () => {
+    const list = [status({ serviceId: "github", itemCount: 3 }), status({ serviceId: "slack" })];
+    expect(connectorStatusFingerprint(list)).toBe(connectorStatusFingerprint(list));
+  });
+
+  test("a changed itemCount changes the fingerprint", () => {
+    const before = connectorStatusFingerprint([status({ itemCount: 3 })]);
+    const after = connectorStatusFingerprint([status({ itemCount: 4 })]);
+    expect(before).not.toBe(after);
+  });
+
+  test("the order of the input array does not matter", () => {
+    const a = status({ serviceId: "github" });
+    const b = status({ serviceId: "slack", status: "error" });
+    expect(connectorStatusFingerprint([a, b])).toBe(connectorStatusFingerprint([b, a]));
   });
 });

@@ -40,19 +40,25 @@ function renderRow(label: string, detail: string | undefined): string {
 }
 
 export function renderSections(sections: readonly SignalSection[]): string {
-  return sections
-    .map((section) => {
-      const body =
-        section.rows.length > 0
-          ? `<ul class="rows">${section.rows.map((r) => renderRow(r.label, r.detail)).join("")}</ul>`
-          : `<p class="empty">${escapeHtml(
-              section.loading === true ? "Loading…" : (section.empty ?? "Nothing to show."),
-            )}</p>`;
-      return `<section class="signal" data-signal="${escapeHtml(section.id)}"><h2>${escapeHtml(
-        section.title,
-      )}</h2>${body}</section>`;
-    })
-    .join("");
+  return (
+    sections
+      // A suppressed section with nothing to say renders nothing — not a heading
+      // over an empty state. Filtered here rather than in the controller so the
+      // rule is one pure line with no state behind it.
+      .filter((section) => !(section.suppressWhenEmpty === true && section.rows.length === 0))
+      .map((section) => {
+        const body =
+          section.rows.length > 0
+            ? `<ul class="rows">${section.rows.map((r) => renderRow(r.label, r.detail)).join("")}</ul>`
+            : `<p class="empty">${escapeHtml(
+                section.loading === true ? "Loading…" : (section.empty ?? "Nothing to show."),
+              )}</p>`;
+        return `<section class="signal" data-signal="${escapeHtml(section.id)}"><h2>${escapeHtml(
+          section.title,
+        )}</h2>${body}</section>`;
+      })
+      .join("")
+  );
 }
 
 export function renderOffers(offers: readonly Offer[]): string {
