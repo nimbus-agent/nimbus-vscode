@@ -1842,16 +1842,25 @@ export function createSourceOpener(): (item: { url?: string }) => Promise<void> 
 }
 
 // Minimal stand-in for the attachment file reader: resolves a repo-relative
-// path against the first workspace folder and reads it synchronously,
-// returning undefined on any failure (no folder, missing file, non-UTF8,
-// permission error, ...). Task 3 replaces this with a cached, multi-root-aware
-// reader; this exists only so ChatControllerDeps.readFile has a real
-// implementation in the meantime.
+// path against the first workspace folder, preferring an already-open
+// document's live buffer over the on-disk bytes — otherwise attaching the
+// file you are actively editing would silently send the last-saved version
+// while the chip claims it is current — and falling back to a synchronous
+// disk read. Task 3 replaces this with a cached, multi-root-aware reader;
+// this exists only so ChatControllerDeps.readFile has a real implementation
+// in the meantime. Two known limitations left to that task: only the FIRST
+// workspace folder is considered in a multi-root workspace, and there is no
+// containment check, so a path escaping the root (e.g. "../../etc/passwd")
+// is not rejected here — no untrusted path source reaches this today, but
+// the real reader should not rely on that staying true.
 function readWorkspaceFileSync(path: string): string | undefined {
   const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (root === undefined) return undefined;
+  const absolute = join(root, path);
+  const open = vscode.workspace.textDocuments.find((doc) => doc.uri.fsPath === absolute);
+  if (open !== undefined) return open.getText();
   try {
-    return readFileSync(join(root, path), "utf8");
+    return readFileSync(absolute, "utf8");
   } catch {
     return undefined;
   }

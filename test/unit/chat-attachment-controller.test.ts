@@ -35,7 +35,14 @@ function harness(files: Record<string, string> = {}) {
     panel: {
       postMessage: async (m: ExtensionToWebview) => {
         posted.push(m);
-        order.push(m.type);
+        // Tag "attachments" posts with their provisional/resolved state so an
+        // ordering assertion can target the RESOLVED post specifically rather
+        // than any post of that type — see the ordering test below.
+        order.push(
+          m.type === "attachments"
+            ? `attachments:${m.provisional ? "provisional" : "resolved"}`
+            : m.type,
+        );
       },
     } as never,
     sessionStore: { get: () => undefined, set: () => {}, clear: () => {} } as never,
@@ -99,13 +106,24 @@ describe("sending", () => {
     );
     expect(resolvedAt).toBeGreaterThanOrEqual(0);
     const askAt = h.order.indexOf("askStream");
-    const postsBeforeAsk = h.order.slice(0, askAt).filter((t) => t === "attachments").length;
+    const postsBeforeAsk = h.order
+      .slice(0, askAt)
+      .filter((t) => t.startsWith("attachments:")).length;
     expect(askAt).toBeGreaterThanOrEqual(0);
     // The resolved post is among those that happened before the request left.
     expect(postsBeforeAsk).toBeGreaterThanOrEqual(1);
     expect(
       h.posted.slice(0, postsBeforeAsk).some((m) => m.type === "attachments" && !m.provisional),
     ).toBe(true);
+    // The direct assertion: the RESOLVED post's tagged slot in `order` precedes
+    // askStream's. `postsBeforeAsk` above counts by type only and is used as an
+    // index into the heterogeneous `posted` array — the attach-time post (never
+    // reset there) happens to make the offsets cancel out, so that assertion
+    // alone would pass even if turnAttachments were posted before the resolved
+    // post, or if the resolved post came after. This one cannot.
+    const resolvedOrderAt = h.order.indexOf("attachments:resolved");
+    expect(resolvedOrderAt).toBeGreaterThanOrEqual(0);
+    expect(resolvedOrderAt).toBeLessThan(h.order.indexOf("askStream"));
   });
 
   test("the composer returns to provisional after the send, so the next turn is not overstated", async () => {

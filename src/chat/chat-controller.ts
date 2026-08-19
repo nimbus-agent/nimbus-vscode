@@ -1,7 +1,12 @@
 import type { AskStreamHandle, AskStreamOptions, StreamEvent } from "@nimbus-dev/client";
 
 import { errMsg, type Logger } from "../logging.js";
-import { type Attachment, buildAttachedContext } from "./attachments.js";
+import {
+  type AttachedContext,
+  type Attachment,
+  buildAttachedContext,
+  type ResolvedAttachment,
+} from "./attachments.js";
 import type { ChatPanel } from "./chat-panel.js";
 import type { ExtensionToWebview } from "./chat-protocol.js";
 import type { SessionStore } from "./session-store.js";
@@ -86,29 +91,59 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
     void deps.panel.postMessage(m);
   };
 
-  const postAttachments = (provisional: boolean): void => {
+  // The one place a ResolvedAttachment becomes a wire chip, shared by the
+  // "attachments" (with id) and "turnAttachments" (without) posts below, so
+  // there is exactly one mapping to keep in sync with AttachmentOutcome.
+  const wireChipFields = (
+    c: ResolvedAttachment,
+  ): {
+    label: string;
+    detail: string;
+    state: ResolvedAttachment["outcome"]["state"];
+    chars: number;
+  } => ({
+    label: c.label,
+    detail: c.detail,
+    state: c.outcome.state,
+    chars: c.outcome.state === "refused" ? 0 : c.outcome.chars,
+  });
+
+  // Posts an "attachments" message from an ALREADY-BUILT AttachedContext, so a
+  // caller that just resolved `built` for the prompt can reuse that exact
+  // traversal for the preview instead of triggering a second, possibly
+  // divergent read of the same files. `entries` must be the same
+  // attached-map snapshot `built` was built from (same order), since the id
+  // lookup below zips by identity against it.
+  const postAttachmentsFrom = (
+    built: AttachedContext,
+    entries: ReadonlyArray<readonly [string, Attachment]>,
+    provisional: boolean,
+  ): void => {
     // Zip by IDENTITY, not by index. Index alignment holds only while
     // buildAttachedContext returns exactly one chip per input in order — true
     // today, and a silent mis-mapping tomorrow if it ever filters. A chip whose
     // id belongs to a different attachment means the remove button deletes the
     // wrong one, which is the kind of bug nobody suspects the zip for.
-    const entries = [...attached.entries()];
-    const built = buildAttachedContext(
-      entries.map(([, a]) => a),
-      deps.readFile,
-    );
     post({
       type: "attachments",
       provisional,
       totalChars: built.totalChars,
       chips: built.chips.map((c) => ({
         id: entries.find(([, a]) => a === c.attachment)?.[0] ?? "",
-        label: c.label,
-        detail: c.detail,
-        state: c.outcome.state,
-        chars: c.outcome.state === "refused" ? 0 : c.outcome.chars,
+        ...wireChipFields(c),
       })),
     });
+  };
+
+  // Attach/detach have no already-built context to reuse: build one from the
+  // live attachment set and post it.
+  const postAttachments = (provisional: boolean): void => {
+    const entries = [...attached.entries()];
+    const built = buildAttachedContext(
+      entries.map(([, a]) => a),
+      deps.readFile,
+    );
+    postAttachmentsFrom(built, entries, provisional);
   };
 
   const hydrate = async (sessionId: string, limit: number): Promise<void> => {
@@ -190,17 +225,23 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       // what the user is actually looking at. The manifest is posted BEFORE the
       // request goes out: the composer is this surface's pre-flight preview, so
       // it must show the resolved bytes rather than a stale estimate.
-      const built = buildAttachedContext([...attached.values()], deps.readFile);
+      //
+      // ONE traversal for the prompt, the resolved-chip post, the permanent
+      // turn record, and the provisional-chip post below — reusing `built`
+      // and `entries` throughout (nothing attaches/detaches synchronously in
+      // between) is what keeps the chips from drifting from the bytes that
+      // actually leave: a second call to buildAttachedContext here could
+      // re-read a file that changed between the two reads.
+      const entries = [...attached.entries()];
+      const built = buildAttachedContext(
+        entries.map(([, a]) => a),
+        deps.readFile,
+      );
       if (built.chips.length > 0) {
-        postAttachments(false);
+        postAttachmentsFrom(built, entries, false);
         post({
           type: "turnAttachments",
-          chips: built.chips.map((c) => ({
-            label: c.label,
-            detail: c.detail,
-            state: c.outcome.state,
-            chars: c.outcome.state === "refused" ? 0 : c.outcome.chars,
-          })),
+          chips: built.chips.map(wireChipFields),
         });
       }
       const prompt = built.blocks.length > 0 ? `${built.blocks}\n${input}` : input;
@@ -209,7 +250,7 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       // into the follow-up, where they will be re-read, so anything shown now
       // is an estimate again. Posting this here rather than on stream-end keeps
       // it in the same tick as the send, so the chips never visibly flicker.
-      if (built.chips.length > 0) postAttachments(true);
+      if (built.chips.length > 0) postAttachmentsFrom(built, entries, true);
       const opts = buildAskStreamOptions(deps.sessionStore, deps.agent);
       let handle: AskStreamHandle;
       try {
