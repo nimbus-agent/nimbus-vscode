@@ -15,7 +15,14 @@ export interface AttachmentCache {
    * that as "unreadable · not sent", never throws.
    */
   read(path: string): string | undefined;
-  /** Drops every cached file. `primeAttachments` calls this before re-reading. */
+  /**
+   * Drops every cached file. Nothing in `src/` calls this: `primeAttachments`
+   * used to, and clearing mid-await made a file attached during that window
+   * resolve as "unreadable · not sent" though it read perfectly well.
+   * `cacheFile` overwrites or deletes per path, which is all the freshness a
+   * send needs. Kept for tests and for a future caller that genuinely wants
+   * the whole cache gone.
+   */
   clear(): void;
   /**
    * Reads one repo-relative path into the cache. A path that resolves outside

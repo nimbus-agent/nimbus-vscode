@@ -176,9 +176,9 @@ describe("buildAttachedContext", () => {
   // all. Regression coverage at the assembler level (not just isSecretPath
   // directly): all three must come back refused as "secret", never reach the
   // reader. Verified against the pre-fix `isSecretPath` (no separator
-  // normalization, no basename check): the backslash and forward-slash
-  // absolute cases both fail there — the reader gets asked and the block
-  // would carry the key.
+  // normalization, no basename check): the BACKSLASH case fails there — the
+  // reader gets asked and the block would carry the key. The forward-slash
+  // case already passed; it stays as the fence around the one that did not.
   test("a secret file behind a Windows backslash absolute path outside the workspace is refused", () => {
     const r = reader({ "C:\\Users\\me\\keys\\.env": "TOKEN=abc\n" });
     const built = buildAttachedContext([file("C:\\Users\\me\\keys\\.env")], r.read);
