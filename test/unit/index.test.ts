@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 
 import {
   buildAskPrompt,
+  buildIndexMetadataBlock,
   groupByService,
   type IndexItem,
   iconForItemType,
@@ -191,5 +192,38 @@ describe("buildAskPrompt", () => {
     expect(prompt).not.toContain("- URL:");
     expect(prompt).toContain("- Type: unknown");
     expect(prompt).toContain("- Service: unknown");
+  });
+});
+
+describe("buildIndexMetadataBlock", () => {
+  test("includes name/service/type and url when present, with no instruction", () => {
+    const block = buildIndexMetadataBlock({
+      id: "i",
+      name: "Q3 Deck",
+      service: "gdrive",
+      itemType: "file",
+      url: "https://x",
+    });
+    expect(block).toContain("Name: Q3 Deck");
+    expect(block).toContain("Service: gdrive");
+    expect(block).toContain("Type: file");
+    expect(block).toContain("URL: https://x");
+  });
+
+  test("omits the URL line and shows unknown type/service when absent", () => {
+    const block = buildIndexMetadataBlock({ id: "i", name: "x", service: "" });
+    expect(block).not.toContain("URL:");
+    expect(block).toContain("Type: unknown");
+    expect(block).toContain("Service: unknown");
+  });
+
+  // The entire point of this helper versus buildAskPrompt: it carries no
+  // instruction. It is prepended AHEAD of the user's own typed question by
+  // the attachment assembler, and the spec requires the user's text to read
+  // last, as the instruction — an imperative here would upstage it.
+  test("carries no imperative — unlike buildAskPrompt, which is written to seed a fresh turn on its own", () => {
+    const item: IndexItem = { id: "i", name: "Q3 Deck", service: "gdrive" };
+    expect(buildIndexMetadataBlock(item)).not.toContain("Tell me about");
+    expect(buildAskPrompt(item)).toContain("Tell me about this indexed item:");
   });
 });
