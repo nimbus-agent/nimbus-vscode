@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.20.0...v0.21.0) (2026-08-19)
+
+
+### Features
+
+* **chat:** attach files, selections and index items to an Ask turn ([#117](https://github.com/nimbus-agent/nimbus-vscode/issues/117)) ([77eb883](https://github.com/nimbus-agent/nimbus-vscode/commit/77eb883ce82a95dd87595ad3a6e5cc3e8d10aa7c))
+
 ## [0.20.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.19.0...v0.20.0) (2026-08-19)
 
 
