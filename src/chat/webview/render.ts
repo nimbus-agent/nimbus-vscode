@@ -157,8 +157,15 @@ export function renderChips(
   if (chips.length === 0) return "";
   const items = chips.map((c) => renderChipLi(c.id, c)).join("");
   const suffix = provisional ? " estimated" : "";
-  return `<ul class="chips">${items}</ul>
-<div class="chip-total">${totalChars} chars attached${suffix}</div>`;
+  // Sanitised as well as escaped, and both on purpose. Every interpolation in
+  // renderChipLi already goes through escapeHtml, but that is a hand-rolled
+  // sanitiser: a future edit adding one unescaped `${}` would reopen an XSS
+  // sink, and a chip label is a file path, which a repository controls. This
+  // is the same DOMPurify pass renderMarkdown already applies before its HTML
+  // reaches innerHTML — CodeQL flagged the chip sink precisely because it was
+  // the one string in this file that skipped it.
+  return DOMPurify.sanitize(`<ul class="chips">${items}</ul>
+<div class="chip-total">${escapeHtml(String(totalChars))} chars attached${suffix}</div>`);
 }
 
 export interface TurnChipView {
@@ -175,7 +182,9 @@ export interface TurnChipView {
 export function renderTurnChips(chips: readonly TurnChipView[]): string {
   if (chips.length === 0) return "";
   const items = chips.map((c, i) => renderChipLi(`t${i}`, c)).join("");
-  return `<ul class="chips turn-chips">${items}</ul>`;
+  // Same reasoning as renderChips: this string also reaches innerHTML, and it
+  // carries the same repository-controlled labels.
+  return DOMPurify.sanitize(`<ul class="chips turn-chips">${items}</ul>`);
 }
 
 function formatTimestamp(ms: number): string {
