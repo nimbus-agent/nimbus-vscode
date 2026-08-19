@@ -91,6 +91,37 @@ describe("buildAttachedContext", () => {
     expect(built.totalChars).toBe(built.blocks.length);
   });
 
+  // An absolute path outside the workspace (or attached with none open)
+  // passes through `toRepoRelative` unchanged. Every other outbound surface
+  // in this extension redacts an unresolvable path to its basename first —
+  // the chip label and the block header must too, or the OS username and
+  // directory layout leak into a payload Ask sends with no modal preview.
+  test("a file attachment outside the workspace shows and sends only its basename, not the full host path", () => {
+    const r = reader({ "C:\\Users\\me\\notes\\todo.md": "buy milk\n" });
+    const built = buildAttachedContext([file("C:\\Users\\me\\notes\\todo.md")], r.read);
+    expect(built.chips[0]?.label).toBe("todo.md");
+    expect(built.blocks).toContain("--- file: todo.md ---");
+    expect(built.blocks).not.toContain("C:\\Users\\me");
+    expect(built.blocks).not.toContain("me\\notes");
+  });
+
+  test("a selection attachment outside the workspace shows and sends only its basename", () => {
+    const built = buildAttachedContext(
+      [selection("/Users/me/notes/todo.md", "buy milk\n")],
+      reader({}).read,
+    );
+    expect(built.chips[0]?.label).toBe("todo.md");
+    expect(built.blocks).toContain("--- selection: todo.md (lines 12-30) ---");
+    expect(built.blocks).not.toContain("/Users/me");
+  });
+
+  test("a repo-relative path is shown and sent unchanged", () => {
+    const r = reader({ "src/a.ts": "x\n" });
+    const built = buildAttachedContext([file("src/a.ts")], r.read);
+    expect(built.chips[0]?.label).toBe("src/a.ts");
+    expect(built.blocks).toContain("--- file: src/a.ts ---");
+  });
+
   test("THE INVARIANT: every chip's character count equals its block body, exactly", () => {
     const r = reader({
       "src/a.ts": "aaa\n",
@@ -138,6 +169,35 @@ describe("buildAttachedContext", () => {
   test("a selection from a secret file is refused too — the rule is the path, not the kind", () => {
     const built = buildAttachedContext([selection(".env", "TOKEN=abc\n")], reader({}).read);
     expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "secret" });
+  });
+
+  // A path outside the workspace root passes through `toRepoRelative`
+  // unchanged — backslashes and all on Windows, or with no workspace open at
+  // all. Regression coverage at the assembler level (not just isSecretPath
+  // directly): all three must come back refused as "secret", never reach the
+  // reader. Verified against the pre-fix `isSecretPath` (no separator
+  // normalization, no basename check): the backslash and forward-slash
+  // absolute cases both fail there — the reader gets asked and the block
+  // would carry the key.
+  test("a secret file behind a Windows backslash absolute path outside the workspace is refused", () => {
+    const r = reader({ "C:\\Users\\me\\keys\\.env": "TOKEN=abc\n" });
+    const built = buildAttachedContext([file("C:\\Users\\me\\keys\\.env")], r.read);
+    expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "secret" });
+    expect(r.asked).toEqual([]);
+  });
+
+  test("a secret file behind a forward-slash absolute path outside the workspace is refused", () => {
+    const r = reader({ "/Users/me/keys/.env": "TOKEN=abc\n" });
+    const built = buildAttachedContext([file("/Users/me/keys/.env")], r.read);
+    expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "secret" });
+    expect(r.asked).toEqual([]);
+  });
+
+  test("a secret file inside the workspace, repo-relative, is refused", () => {
+    const r = reader({ "keys/.env": "TOKEN=abc\n" });
+    const built = buildAttachedContext([file("keys/.env")], r.read);
+    expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "secret" });
+    expect(r.asked).toEqual([]);
   });
 
   test("binary content is refused, and secret beats binary", () => {

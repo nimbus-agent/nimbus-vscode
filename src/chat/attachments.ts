@@ -65,8 +65,33 @@ export function clampToLineBoundary(text: string, budget: number): string {
   return cut < 0 ? "" : text.slice(0, cut + 1);
 }
 
+// A path `toRepoRelative` could not make relative to any workspace root —
+// living outside it, or attached with no workspace open at all — passes
+// through unchanged: an absolute filesystem path (a Windows drive letter, a
+// POSIX root, or a UNC share), never a repo-relative one. Every OTHER
+// outbound surface in this extension redacts a path like that to repo-relative
+// or basename before it is shown or sent (see redactPath); the chip and the
+// block header must match, or the OS username and directory layout leak into
+// a payload that Ask records without a modal preview to catch it.
+function isAbsolutePath(path: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("/") || path.startsWith("\\\\");
+}
+
+function basename(path: string): string {
+  const normalized = path.replaceAll("\\", "/");
+  const idx = normalized.lastIndexOf("/");
+  return idx < 0 ? normalized : normalized.slice(idx + 1);
+}
+
+// What a `file`/`selection` attachment shows: the repo-relative path as-is,
+// or just the basename when it is an absolute path the workspace root could
+// not account for.
+function displayPath(path: string): string {
+  return isAbsolutePath(path) ? basename(path) : path;
+}
+
 function labelOf(a: Attachment): string {
-  return a.kind === "index" ? a.name : a.path;
+  return a.kind === "index" ? a.name : displayPath(a.path);
 }
 
 function refuse(a: Attachment, reason: RefusalReason, detail: string): ResolvedAttachment {
@@ -76,9 +101,9 @@ function refuse(a: Attachment, reason: RefusalReason, detail: string): ResolvedA
 function headerFor(a: Attachment): string {
   switch (a.kind) {
     case "file":
-      return `--- file: ${a.path} ---`;
+      return `--- file: ${displayPath(a.path)} ---`;
     case "selection":
-      return `--- selection: ${a.path} (lines ${a.startLine}-${a.endLine}) ---`;
+      return `--- selection: ${displayPath(a.path)} (lines ${a.startLine}-${a.endLine}) ---`;
     case "index":
       return `--- index item: ${a.service}/${a.name} ---`;
   }
