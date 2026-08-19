@@ -105,7 +105,15 @@ export interface TextEditorLike {
   };
   // `active` is the cursor end of the selection — zero-based, straight from
   // vscode.Selection. agentsWhy({ref, line}) needs it; nothing else does yet.
-  selection: { isEmpty: boolean; active: { line: number } };
+  // `start`/`end` are the ordered range endpoints — zero-based too — that the
+  // attach-selection command needs to stamp a selection Attachment's
+  // startLine/endLine (`active` alone is just the cursor end, not the range).
+  selection: {
+    isEmpty: boolean;
+    active: { line: number };
+    start: { line: number };
+    end: { line: number };
+  };
 }
 
 export interface MessageOptionsLike {

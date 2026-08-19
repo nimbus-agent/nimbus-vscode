@@ -347,6 +347,22 @@
         "command": "nimbus.removeConnector",
         "title": "Remove Connector",
         "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.attachContext",
+        "title": "Attach Context to Ask",
+        "category": "Nimbus",
+        "icon": "$(add)"
+      },
+      {
+        "command": "nimbus.attachSelectionToAsk",
+        "title": "Attach Selection to Ask",
+        "category": "Nimbus"
+      },
+      {
+        "command": "nimbus.attachIndexItemToAsk",
+        "title": "Attach to Ask",
+        "category": "Nimbus"
       }
     ],
     "chatParticipants": [
@@ -657,6 +673,11 @@
           "group": "navigation"
         },
         {
+          "command": "nimbus.attachIndexItemToAsk",
+          "when": "view == nimbus.indexView && viewItem == nimbusIndexItem",
+          "group": "nimbus@1"
+        },
+        {
           "command": "nimbus.runWorkflow",
           "when": "view == nimbus.workflowsView && viewItem == nimbus.workflow",
           "group": "inline"
@@ -752,6 +773,11 @@
           "command": "nimbus.brief.conflicts",
           "when": "editorTextFocus",
           "group": "nimbus@9"
+        },
+        {
+          "command": "nimbus.attachSelectionToAsk",
+          "when": "editorHasSelection",
+          "group": "nimbus@10"
         }
       ],
       "scm/title": [

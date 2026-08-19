@@ -15,6 +15,8 @@ import { toRelativeRef, whyParams } from "./briefs/params.js";
 import { createPeekHover } from "./briefs/peek-hover.js";
 import { registerWhyPeekHover } from "./briefs/real-hover.js";
 import { createAttachmentCache } from "./chat/attachment-cache.js";
+import { toRepoRelative } from "./chat/attachment-paths.js";
+import type { Attachment } from "./chat/attachments.js";
 import {
   type ChatClientLike,
   type ChatController,
@@ -73,6 +75,7 @@ import {
 } from "./quick-ask.js";
 import { filePresetsFor, type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
 import { createScmCommands } from "./scm/commands.js";
+import { isSecretPath } from "./scm/diff.js";
 import type { GitApiLike } from "./scm/git-types.js";
 import { createRealGitApi } from "./scm/real-git.js";
 import {
@@ -520,6 +523,87 @@ export function activateWithDeps(
     return chatController;
   };
 
+  // Index attachments carry no path, so `buildAttachedContext`'s secret check
+  // (which only ever looks at `a.path`) never runs on them — an indexed item
+  // whose name looks like a secret would otherwise be sent unscreened. This is
+  // the one place index Attachments are created, so this is the one place that
+  // can catch it: refuse with a message BEFORE the attachment ever reaches the
+  // controller, rather than attaching it and hoping the assembler notices (it
+  // cannot). File and selection attachments stay covered by the assembler's
+  // own path-based check.
+  const attachIndexItem = (
+    ctl: ChatController,
+    a: Extract<Attachment, { kind: "index" }>,
+  ): void => {
+    if (isSecretPath(a.name)) {
+      void deps.window.showWarningMessage(
+        `Nimbus: "${a.name}" looks like it may hold a secret and was not attached.`,
+      );
+      return;
+    }
+    ctl.attach(a);
+  };
+
+  // The picker blends two sources into one Quick Pick — indexed workspace files
+  // (via findFiles) and hits from the local index (via searchRanked) — each row
+  // carrying its own icon so the two are never confused. A file pick is primed
+  // into the attachment cache BEFORE it is attached: attach() posts a
+  // provisional chip synchronously, and an unprimed cache would render a
+  // perfectly readable file as "unreadable · not sent" on that first render.
+  const attachPicker = async (): Promise<void> => {
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    // A literal exclude glob, not `undefined`: passing `undefined` here falls
+    // back to the user's `files.exclude` setting, whose out-of-the-box default
+    // covers only VCS metadata (.git, .svn, .hg) and NOT node_modules — so a
+    // typical repo's node_modules would dominate the picker's window before it
+    // is ever capped. `max` bounds the result COUNT, not what fills it; the
+    // exclude is what keeps that count meaningful in a large repository.
+    const files = await deps.workspace.findFiles("**/*", "**/node_modules/**", 200);
+    const root = workspaceRoot();
+    const fileItems = files.map((f) => {
+      const path = toRepoRelative(root, f.fsPath);
+      return {
+        label: `$(file) ${path}`,
+        attachment: { kind: "file", path } as Attachment,
+      };
+    });
+    let indexItems: typeof fileItems = [];
+    const client = nimbus();
+    if (client !== undefined) {
+      try {
+        const hits = await client.searchRanked({ limit: settings.searchLimit() });
+        indexItems = hits.map((h) => ({
+          label: `$(database) ${h.name}`,
+          attachment: {
+            kind: "index",
+            // Verified against the pinned client: RankedSearchItem carries
+            // `indexPrimaryKey` and an OPTIONAL `semanticSnippet` — there is no
+            // `snippet` field. `name`/`service` come from NimbusItem, which is
+            // what src/sidebar/index.ts already reads.
+            itemId: h.indexPrimaryKey,
+            name: h.name,
+            service: h.service,
+            snippet: h.semanticSnippet ?? "",
+          } as Attachment,
+        }));
+      } catch (e) {
+        log.warn(`attach picker: index unavailable: ${errMsg(e)}`);
+      }
+    }
+    const chosen = await deps.window.showQuickPick([...fileItems, ...indexItems], {
+      placeHolder: "Attach a file or an indexed item to your question",
+      matchOnDescription: true,
+    });
+    if (chosen === undefined) return;
+    if (chosen.attachment.kind === "file") {
+      await cacheFile(chosen.attachment.path);
+      ctl.attach(chosen.attachment);
+    } else if (chosen.attachment.kind === "index") {
+      attachIndexItem(ctl, chosen.attachment);
+    }
+  };
+
   const onReady = (): void => {
     void chatController?.rehydrateIfNeeded(settings.transcriptHistoryLimit());
   };
@@ -575,6 +659,12 @@ export function activateWithDeps(
     openLogs: () => out.show(true),
     startGateway: () => deps.commands.executeCommand("nimbus.startGateway"),
     openExternal: onOpenExternal,
+    openAttachPicker: () => attachPicker(),
+    detachContext: (msg) => {
+      const id = m_str(msg, "id");
+      if (id.length === 0) return;
+      chatController?.detach(id);
+    },
   };
 
   const handleWebviewMessage = async (
@@ -1114,6 +1204,57 @@ export function activateWithDeps(
     const exclude = (r: RankedResult): boolean =>
       (item.url !== undefined && r.url === item.url) || byName(r);
     runSearch(item.name, { placeholder: `Related to "${item.name}"…`, exclude });
+  });
+
+  register("nimbus.attachContext", () => attachPicker());
+
+  register("nimbus.attachSelectionToAsk", () => {
+    const editor = deps.window.activeTextEditor;
+    if (editor === undefined || editor.selection.isEmpty) {
+      void deps.window.showErrorMessage("Nimbus: select text first.");
+      return;
+    }
+    // Captured NOW: a stored range drifts under edits, and the assembler wants
+    // the text as it looked at attach time, not a pointer that can go stale.
+    const text = editor.document.getText(editor.selection);
+    if (text.trim().length === 0) return;
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    ctl.attach({
+      kind: "selection",
+      path: toRepoRelative(workspaceRoot(), editor.document.fileName),
+      // One-based, matching every other line number this codebase sends
+      // outward (see briefs/params.ts's whyParams and diagnostics/context.ts).
+      startLine: editor.selection.start.line + 1,
+      endLine: editor.selection.end.line + 1,
+      text,
+    });
+  });
+
+  register("nimbus.attachIndexItemToAsk", (...args) => {
+    // A view/item/context command receives the tree NODE element, not the
+    // row's command.arguments — the IndexItem rides on node.payload (see
+    // itemToRow), exactly as nimbus.askAboutIndexItem reads it.
+    const node = args[0];
+    const payload =
+      typeof node === "object" && node !== null
+        ? (node as { payload?: unknown }).payload
+        : undefined;
+    const item = parseIndexRow(payload);
+    if (item === undefined) return;
+    const ctl = ensureChatController();
+    if (ctl === undefined) return;
+    // The row carries no snippet (NimbusItem has none) — an empty one attaches
+    // and the assembler correctly reports it as "unreadable · not sent",
+    // visibly rather than silently, exactly as it does for a searchRanked hit
+    // whose semanticSnippet is absent.
+    attachIndexItem(ctl, {
+      kind: "index",
+      itemId: item.id,
+      name: item.name,
+      service: item.service,
+      snippet: "",
+    });
   });
 
   // Wired here rather than beside the other seams above because it is the one

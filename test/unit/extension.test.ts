@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
 import { commands, env, Uri, window as vscodeWindow, workspace as vscodeWorkspace } from "vscode";
-
+import type { Attachment } from "../../src/chat/attachments.js";
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
@@ -157,6 +157,10 @@ interface Captured {
   // Webview message handlers registered via panel.onMessage(), so tests can
   // simulate the chat panel posting messages back to the extension host.
   webviewMessageHandlers: Array<(msg: unknown) => void>;
+  // Every message the (fake) chat panel would have posted to the webview —
+  // the only way these tests can see an attach command's effect, since
+  // ChatController lives inside extension.ts's closure.
+  postedToWebview: unknown[];
   panelRevealedCount: number;
   // Lets a test invoke the chat panel's onDispose listeners directly (the same
   // way a real webview panel firing onDidDispose would), without exposing the
@@ -275,6 +279,9 @@ function makeFixture(opts: {
     languageId?: string;
     /** Zero-based cursor line, as VS Code reports it. Defaults to 0. */
     line?: number;
+    /** Zero-based selection range endpoints. Default to `line` when omitted. */
+    startLine?: number;
+    endLine?: number;
     /** document.uri.scheme. Defaults to "file"; set to e.g. "untitled" or a
      *  virtual scheme to exercise the brief commands' real-file filter. */
     scheme?: string;
@@ -285,7 +292,9 @@ function makeFixture(opts: {
   realAuditDetail?: boolean;
   realProofSave?: boolean;
   quickPickAnswers?: Array<
-    { label: string; preset?: { label: string; prompt: string } } | undefined
+    | { label: string; preset?: { label: string; prompt: string } }
+    | { label: string; attachment: Attachment }
+    | undefined
   >;
   infoMessageClicks?: Array<string | undefined>;
   warnMessageClicks?: Array<string | undefined>;
@@ -302,6 +311,14 @@ function makeFixture(opts: {
    */
   cancelSubscribers?: Array<() => void>;
   workspaceFolders?: readonly { uri: { fsPath: string } }[];
+  /** What `workspace.findFiles` resolves to — the attach picker's file half. */
+  findFilesResult?: readonly { fsPath: string }[];
+  /**
+   * Absolute fsPath -> file text, backing `workspace.openTextDocument` — what
+   * the attachment cache primes from. A path missing here rejects, matching
+   * the "file deleted since indexed" case the cache already tolerates.
+   */
+  fileContents?: Record<string, string>;
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -330,6 +347,7 @@ function makeFixture(opts: {
   const cancelSubscribers = opts.cancelSubscribers ?? [];
 
   const webviewMessageHandlers: Array<(msg: unknown) => void> = [];
+  const postedToWebview: unknown[] = [];
   const openedDocs: Array<{ title: string; content: string }> = [];
   const treeProviders = new Map<string, RegisteredProvider>();
   const panelDisposeListeners: Array<() => void> = [];
@@ -349,7 +367,10 @@ function makeFixture(opts: {
     onMessage: (h) => {
       webviewMessageHandlers.push(h);
     },
-    postMessage: () => Promise.resolve(true),
+    postMessage: (msg: unknown) => {
+      postedToWebview.push(msg);
+      return Promise.resolve(true);
+    },
     isVisible: () => opts.panelVisible ?? false,
     isActive: () => opts.panelActive ?? false,
   };
@@ -407,6 +428,8 @@ function makeFixture(opts: {
             selection: {
               isEmpty: opts.activeEditor.empty ?? false,
               active: { line: opts.activeEditor.line ?? 0 },
+              start: { line: opts.activeEditor.startLine ?? opts.activeEditor.line ?? 0 },
+              end: { line: opts.activeEditor.endLine ?? opts.activeEditor.line ?? 0 },
             },
             document: {
               getText: (range?: unknown) =>
@@ -453,8 +476,15 @@ function makeFixture(opts: {
     isTrusted: opts.isTrusted ?? true,
     workspaceFolders: opts.workspaceFolders,
     textDocuments: [],
-    openTextDocument: () => Promise.reject(new Error("not implemented in test double")),
-    findFiles: () => Promise.resolve([]),
+    openTextDocument: (fsPath: string) => {
+      const text = opts.fileContents?.[fsPath];
+      return text === undefined
+        ? Promise.reject(new Error("not implemented in test double"))
+        : Promise.resolve({ getText: () => text, uri: { fsPath } });
+    },
+    findFiles: vi.fn((_include: string, _exclude: string | undefined, _max: number) =>
+      Promise.resolve([...(opts.findFilesResult ?? [])]),
+    ),
   };
 
   const commands: CommandsApi = {
@@ -520,6 +550,7 @@ function makeFixture(opts: {
     configChangeHandlers,
     cfgValues,
     webviewMessageHandlers,
+    postedToWebview,
     get panelRevealedCount(): number {
       return panelRevealed;
     },
@@ -541,6 +572,25 @@ function cmd(f: Captured, id: string): (...args: unknown[]) => unknown {
   const h = f.commandHandlers.get(id);
   if (h === undefined) throw new Error(`command ${id} not registered`);
   return h;
+}
+
+interface WireChip {
+  id: string;
+  label: string;
+  detail: string;
+  state: string;
+  chars: number;
+}
+
+// The most recent "attachments" message posted to the (fake) chat panel — the
+// only observable trace of an attach command's effect from outside
+// extension.ts's closure, since ChatController itself is never exposed.
+function lastAttachments(f: Captured): { chips: readonly WireChip[] } | undefined {
+  const msgs = f.postedToWebview.filter(
+    (m): m is { type: "attachments"; chips: readonly WireChip[] } =>
+      typeof m === "object" && m !== null && (m as { type?: unknown }).type === "attachments",
+  );
+  return msgs.at(-1);
 }
 
 // An askStream handle that immediately yields a terminal "done" event, so a
@@ -1011,6 +1061,194 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     await cmd(f, "nimbus.askAboutIndexItem")({ label: "x", contextValue: "nimbusIndexItem" });
     expect(askStream).not.toHaveBeenCalled();
+  });
+
+  test("nimbus.attachContext excludes node_modules and primes+attaches the chosen file", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      fileContents: { "/home/dev/proj/src/a.ts": "console.log('hi');\n" },
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+      quickPickAnswers: [
+        { label: "$(file) src/a.ts", attachment: { kind: "file", path: "src/a.ts" } },
+      ],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    const findFiles = f.deps.workspace.findFiles as ReturnType<typeof vi.fn>;
+    expect(findFiles).toHaveBeenCalledWith("**/*", "**/node_modules/**", 200);
+
+    const posted = lastAttachments(f);
+    expect(posted?.chips).toHaveLength(1);
+    expect(posted?.chips[0]?.label).toBe("src/a.ts");
+    // Primed BEFORE attach: had cacheFile never been awaited, this would read
+    // "unreadable · not sent" even though the file is perfectly readable.
+    expect(posted?.chips[0]?.state).toBe("sent");
+  });
+
+  test("nimbus.attachContext lists both files and index hits, each with its own icon", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      openClient: makeFakeClient({
+        searchRanked: async () => [
+          { name: "Q3 Deck", service: "gdrive", indexPrimaryKey: "gdrive:1", itemType: "file" },
+        ],
+      } as never),
+      quickPickAnswers: [undefined],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    const showQuickPick = f.deps.window.showQuickPick as ReturnType<typeof vi.fn>;
+    const items = showQuickPick.mock.calls[0]?.[0] as Array<{ label: string }>;
+    expect(items.some((i) => i.label === "$(file) src/a.ts")).toBe(true);
+    expect(items.some((i) => i.label === "$(database) Q3 Deck")).toBe(true);
+  });
+
+  test("nimbus.attachContext refuses a secret-shaped index hit with a warning instead of attaching it", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+      quickPickAnswers: [
+        {
+          label: "$(database) .env",
+          attachment: {
+            kind: "index",
+            itemId: "x",
+            name: ".env",
+            service: "gdrive",
+            snippet: "SECRET=1",
+          },
+        },
+      ],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    expect(f.warnMessages.some((m) => m.includes(".env") && m.includes("secret"))).toBe(true);
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+
+  test("nimbus.attachSelectionToAsk captures the selection text and 1-based line range", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      activeEditor: {
+        text: "line0\nline1\nline2\nline3\n",
+        selectionText: "line1\nline2",
+        empty: false,
+        startLine: 1,
+        endLine: 2,
+        fileName: "/home/dev/proj/src/a.ts",
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.attachSelectionToAsk")();
+    await waitForConnect();
+
+    const posted = lastAttachments(f);
+    expect(posted?.chips[0]?.label).toBe("src/a.ts");
+    expect(posted?.chips[0]?.detail).toContain("lines 2-3");
+  });
+
+  test("nimbus.attachSelectionToAsk errors when there is no selection", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.attachSelectionToAsk")();
+    expect(f.errorMessages.some((m) => m.includes("select text first"))).toBe(true);
+  });
+
+  test("nimbus.attachIndexItemToAsk attaches from the node payload; an absent snippet is visibly unreadable", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(
+      f,
+      "nimbus.attachIndexItemToAsk",
+    )({
+      label: "Q3 Deck",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
+    });
+    await waitForConnect();
+
+    const posted = lastAttachments(f);
+    expect(posted?.chips[0]?.label).toBe("Q3 Deck");
+    expect(posted?.chips[0]?.state).toBe("refused");
+    expect(posted?.chips[0]?.detail).toBe("unreadable · not sent");
+  });
+
+  test("nimbus.attachIndexItemToAsk refuses a secret-shaped item with a warning, never attaching it", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(
+      f,
+      "nimbus.attachIndexItemToAsk",
+    )({
+      label: ".env.production",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: ".env.production", service: "local_files" },
+    });
+    await waitForConnect();
+
+    expect(f.warnMessages.some((m) => m.includes(".env.production") && m.includes("secret"))).toBe(
+      true,
+    );
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+
+  test("nimbus.attachIndexItemToAsk is a no-op for a node without a payload", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.attachIndexItemToAsk")({ label: "x", contextValue: "nimbusIndexItem" });
+    await waitForConnect();
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+
+  test("openAttachPicker and detachContext webview messages route to the attach picker and detach", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      fileContents: { "/home/dev/proj/src/a.ts": "console.log('hi');\n" },
+      openClient: makeFakeClient({
+        askStream: doneAskStream(),
+        searchRanked: async () => [],
+      } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+      quickPickAnswers: [
+        { label: "$(file) src/a.ts", attachment: { kind: "file", path: "src/a.ts" } },
+      ],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // Ask first, so the panel exists and registers its onMessage handler.
+    await cmd(f, "nimbus.ask")();
+    const fire = f.webviewMessageHandlers[0];
+    if (fire === undefined) throw new Error("no webview message handler registered");
+
+    // `fire` mirrors panel.onMessage's real signature — void, fire-and-forget —
+    // so its async work (findFiles/searchRanked/showQuickPick/cacheFile) is
+    // only OBSERVABLE after letting the microtask queue drain, same as the
+    // "route every known message type" test above does for submitAsk.
+    fire({ type: "openAttachPicker" });
+    await waitForConnect();
+    await waitForConnect();
+    const afterAttach = lastAttachments(f);
+    const id = afterAttach?.chips[0]?.id;
+    expect(id).toBeTruthy();
+
+    fire({ type: "detachContext", id });
+    await waitForConnect();
+    const afterDetach = lastAttachments(f);
+    expect(afterDetach?.chips).toHaveLength(0);
   });
 
   test("falls back to the real read-only JSON opener when none is injected", async () => {
@@ -1847,6 +2085,8 @@ describe("activateWithDeps", () => {
       fire({ type: "stopStream" });
       fire({ type: "hitlResponse", requestId: "x", decision: "approve" });
       fire({ type: "openExternal", url: "https://example.com" });
+      fire({ type: "openAttachPicker" });
+      fire({ type: "detachContext", id: "a1" });
       fire({ type: "unknownType" });
       fire("not an object");
       fire(null);
