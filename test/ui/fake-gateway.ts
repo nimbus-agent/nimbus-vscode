@@ -3,6 +3,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { ASK_REPLY } from "./fixtures/ask.js";
 import { BRIEF_BY_AGENT, WHY_PEEK } from "./fixtures/briefs.js";
 import {
   CANCELLED_RUN_RESULT,
@@ -25,6 +26,13 @@ import {
 //                        minted `streamId`; it settles only when
 //                        `workflow.cancel` arrives (or a watchdog fires). A DRY
 //                        run answers immediately — it executes nothing.
+//   - engine.askStream -> unlike workflow.run, the GATEWAY mints the streamId
+//                        (returned in the response, not supplied by the
+//                        caller); the fake answers with one immediately, then
+//                        emits `engine.streamToken` and `engine.streamDone`
+//                        (tagged with that streamId) in the same tick, since
+//                        the client registers its notification handlers
+//                        before sending the request.
 
 export interface RecordedRequest {
   method: string;
@@ -40,6 +48,8 @@ export interface FakeGateway {
   /** The author name `agents.whyPeek` answers with — the single source a spec
    * can assert against, rather than a copy of the WHY_PEEK fixture's literal. */
   whyPeekAuthor(): string;
+  /** The reply text `engine.askStream` streams back — see whyPeekAuthor. */
+  askReply(): string;
   reset(): void;
 }
 
@@ -236,6 +246,28 @@ export function createFakeGateway(): FakeGateway {
       return;
     }
 
+    // The Ask panel's one Gateway round trip: mint a streamId, answer the
+    // RPC, then emit exactly the notifications createAskStream listens for —
+    // one token and a done, both tagged with that streamId. No watchdog is
+    // needed: unlike workflow.run this always settles itself in the same
+    // handler invocation, so nothing is left held open for a spec to cancel
+    // or for `stop()` to clean up.
+    if (method === "engine.askStream") {
+      const streamId = `ask-${recorded.length}`;
+      send(sock, { jsonrpc: "2.0", id, result: { streamId } });
+      send(sock, {
+        jsonrpc: "2.0",
+        method: "engine.streamToken",
+        params: { streamId, text: ASK_REPLY },
+      });
+      send(sock, {
+        jsonrpc: "2.0",
+        method: "engine.streamDone",
+        params: { streamId, meta: { reply: ASK_REPLY, sessionId: `s-${recorded.length}` } },
+      });
+      return;
+    }
+
     send(sock, { jsonrpc: "2.0", id: req.id, result: CANNED[method] ?? {} });
   };
 
@@ -295,6 +327,7 @@ export function createFakeGateway(): FakeGateway {
       if (WHY_PEEK.author === null) throw new Error("WHY_PEEK fixture has no author");
       return WHY_PEEK.author;
     },
+    askReply: () => ASK_REPLY,
     reset: () => {
       recorded.length = 0;
       queuedErrors.clear();
