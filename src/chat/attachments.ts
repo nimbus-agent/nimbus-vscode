@@ -57,7 +57,11 @@ export function looksBinary(text: string): boolean {
 // code that does not exist. A single line over budget yields nothing at all.
 export function clampToLineBoundary(text: string, budget: number): string {
   if (text.length <= budget) return text;
-  const cut = text.lastIndexOf("\n", budget);
+  // Search strictly BEFORE `budget`, not at-or-before it: `lastIndexOf`'s
+  // fromIndex is inclusive, so searching at `budget` itself would let a
+  // newline landing exactly there back in, yielding budget + 1 characters
+  // once the newline is kept (`cut + 1`) — one over the promised ceiling.
+  const cut = text.lastIndexOf("\n", budget - 1);
   return cut < 0 ? "" : text.slice(0, cut + 1);
 }
 
@@ -135,7 +139,20 @@ export function buildAttachedContext(
       continue;
     }
 
-    const budget = Math.min(PER_ATTACHMENT_BUDGET, remaining);
+    // `total` (and therefore `remaining`) accumulates block.length — header
+    // included — so the budget handed to the body must account for the
+    // header too, or the header bytes ride free and the block can land past
+    // what the caller was promised. Reserve the header's own line (its text
+    // plus the "\n" that always follows it) and one more char for the
+    // trailing newline blockFor pads on in the worst case (when the body
+    // doesn't already end with one), so `block.length` never exceeds budget.
+    const overhead = headerFor(a).length + 2;
+    const budget = Math.min(PER_ATTACHMENT_BUDGET, remaining) - overhead;
+    if (budget <= 0) {
+      chips.push(refuse(a, "budget", "omitted · turn budget reached"));
+      continue;
+    }
+
     const body = clampToLineBoundary(raw, budget);
     if (body.length === 0) {
       chips.push(refuse(a, "budget", "omitted · turn budget reached"));

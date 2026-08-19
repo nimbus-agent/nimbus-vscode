@@ -50,6 +50,19 @@ describe("clampToLineBoundary", () => {
   test("a single line longer than the budget yields nothing rather than half a line", () => {
     expect(clampToLineBoundary("a-very-long-single-line", 5)).toBe("");
   });
+
+  test("a budget landing exactly on the newline still excludes that line — it doesn't fit", () => {
+    // "aaa\nbbb\n" has its first newline at index 3; keeping it costs 4 chars.
+    expect(clampToLineBoundary("aaa\nbbb\n", 3)).toBe("");
+  });
+
+  test("one under that boundary also excludes the line", () => {
+    expect(clampToLineBoundary("aaa\nbbb\n", 2)).toBe("");
+  });
+
+  test("one over that boundary is exactly where the line starts fitting", () => {
+    expect(clampToLineBoundary("aaa\nbbb\n", 4)).toBe("aaa\n");
+  });
 });
 
 describe("looksBinary", () => {
@@ -99,6 +112,19 @@ describe("buildAttachedContext", () => {
       .filter((c) => c.outcome.state !== "refused")
       .reduce((n, c) => n + (c.block?.length ?? 0), 0);
     expect(summed).toBe(built.totalChars);
+
+    // The above only pins internal self-consistency (chars is assigned FROM
+    // block.length, so it cannot disagree with itself). What actually leaves
+    // is `blocks`, built as a separate `bodies.join("")` — assert that IT
+    // matches what the chips report, so reordering or changing that join
+    // could not silently make the chips misreport the payload.
+    expect(
+      built.chips
+        .filter((c) => c.outcome.state !== "refused")
+        .map((c) => c.block)
+        .join(""),
+    ).toBe(built.blocks);
+    expect(built.blocks.length).toBe(built.totalChars);
   });
 
   test("a secret path is refused outright and reads nothing", () => {
@@ -155,6 +181,24 @@ describe("buildAttachedContext", () => {
     expect(omitted.length).toBeGreaterThan(0);
   });
 
+  test("the total budget is enforced on the BLOCK, header included, not just the body", () => {
+    // 60 files of fine-grained (2-char) lines, well past TOTAL_BUDGET in raw
+    // size: budgeting only the body lets the header of whichever attachment
+    // lands near the boundary ride in for free, pushing the real accumulated
+    // bytes past TOTAL_BUDGET even though every individual body respected its
+    // slice of it.
+    const files: Record<string, string> = {};
+    const list: Attachment[] = [];
+    const perFile = Math.ceil(TOTAL_BUDGET / 60) + 200;
+    const bodyLine = "a\n".repeat(Math.ceil(perFile / 2));
+    for (let i = 0; i < 60; i += 1) {
+      files[`file-${i}.ts`] = bodyLine;
+      list.push(file(`file-${i}.ts`));
+    }
+    const built = buildAttachedContext(list, reader(files).read);
+    expect(built.totalChars).toBeLessThanOrEqual(TOTAL_BUDGET);
+  });
+
   test("a missing file is refused as unreadable, and the turn survives", () => {
     const built = buildAttachedContext([file("gone.ts")], reader({}).read);
     expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "unreadable" });
@@ -187,8 +231,7 @@ describe("buildAttachedContext", () => {
   test("a selection block names its line range", () => {
     const built = buildAttachedContext([selection("src/c.ts", "sel\n")], reader({}).read);
     expect(built.blocks).toContain("src/c.ts");
-    expect(built.blocks).toContain("12");
-    expect(built.blocks).toContain("30");
+    expect(built.blocks).toContain("lines 12-30");
     expect(built.chips[0]?.detail).toContain("captured at attach");
   });
 
