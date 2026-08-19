@@ -128,11 +128,19 @@ export interface ChipView {
 }
 
 function renderChipLi(id: string, c: Omit<ChipView, "id">): string {
-  const count = c.state === "refused" ? "" : `<span class="chip-count">${c.chars}</span>`;
+  // `c.state` is a TS union literal and `c.chars` a number, so neither can
+  // legitimately carry markup — but the host->webview listener only checks
+  // `typeof data.type === "string"` before this data reaches here, with no
+  // deeper runtime validation of a posted message's shape. Escape both for
+  // consistency with every other interpolation in this function rather than
+  // resting on a type guarantee the listener doesn't actually enforce.
+  const state = escapeHtml(c.state);
+  const chars = escapeHtml(String(c.chars));
+  const count = c.state === "refused" ? "" : `<span class="chip-count">${chars}</span>`;
   const detail =
     c.detail.length > 0 ? `<span class="chip-detail">${escapeHtml(c.detail)}</span>` : "";
   const chipId = escapeHtml(id);
-  return `<li class="chip chip-${c.state}" data-id="${chipId}">
+  return `<li class="chip chip-${state}" data-id="${chipId}">
 <span class="chip-label">${escapeHtml(c.label)}</span>${detail}${count}
 <button class="chip-remove" data-id="${chipId}" title="Remove">×</button></li>`;
 }

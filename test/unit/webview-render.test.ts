@@ -171,7 +171,7 @@ describe("renderTurnChips", () => {
     expect(html).not.toContain("chip-total");
   });
 
-  test("carries the turn-chips class so history chips render dimmer with no remove control", () => {
+  test("carries the turn-chips class, whose remove control markup is present but CSS-hidden, not omitted", () => {
     const html = renderTurnChips([{ label: "a.ts", detail: "", state: "sent", chars: 3 }]);
     expect(html).toContain('class="chips turn-chips"');
     expect(html).toContain("chip-remove");

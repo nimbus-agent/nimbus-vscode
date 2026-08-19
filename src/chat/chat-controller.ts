@@ -221,6 +221,13 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
         throw new Error("Stream in progress; click Stop or wait for it to finish.");
       }
       generation += 1; // a new live turn supersedes any in-flight hydrate
+      // Built BEFORE any post: buildAskStreamOptions() invokes the
+      // caller-supplied deps.agent() closure, which can throw. If that threw
+      // after the manifest below had already been posted, the manifest would
+      // stand with no retraction (no synchronous askStream() throw to catch
+      // it) and the buffered turn chips would leak into the NEXT turn's
+      // bubble instead of this one's.
+      const opts = buildAskStreamOptions(deps.sessionStore, deps.agent);
       // Resolve now, not at attach time, so a file edited since attaching sends
       // what the user is actually looking at. The manifest is posted BEFORE the
       // request goes out: the composer is this surface's pre-flight preview, so
@@ -251,7 +258,6 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       // is an estimate again. Posting this here rather than on stream-end keeps
       // it in the same tick as the send, so the chips never visibly flicker.
       if (built.chips.length > 0) postAttachmentsFrom(built, entries, true);
-      const opts = buildAskStreamOptions(deps.sessionStore, deps.agent);
       let handle: AskStreamHandle;
       try {
         handle = deps.client.askStream(prompt, opts);
@@ -313,6 +319,13 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
     },
     async newConversation(): Promise<void> {
       attached.clear();
+      // The composer's chips are the pre-flight preview for this surface — a
+      // stale chip after "New conversation" would show an attachment that
+      // will not actually be sent. "reset" clears the transcript and the
+      // pending turn-manifest buffer, but never the composer's own
+      // #attach-mount (see main.ts), so the (now empty) attachment state must
+      // be posted explicitly rather than assumed to follow from the reset.
+      postAttachments(true);
       generation += 1; // clearing the conversation supersedes any in-flight hydrate
       if (active !== undefined) {
         const handle = active;

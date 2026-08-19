@@ -427,6 +427,20 @@ describe("ChatController", () => {
     expect(posted.some((m) => (m as { type: string }).type === "reset")).toBe(true);
   });
 
+  test("newConversation posts an empty attachments manifest, so the composer stops showing dropped chips", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(baseDeps(fakeChatClient(), { panel }));
+    ctrl.attach({ kind: "selection", path: "a.ts", startLine: 1, endLine: 2, text: "hello" });
+    posted.length = 0; // discard the attach()-triggered post
+    await ctrl.newConversation();
+    const attachmentsMsgs = posted.filter(
+      (m) => (m as { type: string }).type === "attachments",
+    ) as Array<{ chips: readonly unknown[] }>;
+    expect(attachmentsMsgs).toHaveLength(1);
+    expect(attachmentsMsgs[0]?.chips).toEqual([]);
+    expect(ctrl.attachments()).toEqual([]);
+  });
+
   test("stop() cancels the in-flight stream and clears the streaming flag", async () => {
     const { handle, cancel } = pendingStream();
     const ctrl = createChatController(

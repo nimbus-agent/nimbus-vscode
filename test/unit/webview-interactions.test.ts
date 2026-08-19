@@ -282,7 +282,8 @@ describe("webview interactions", () => {
     const removeBtn = document.querySelector<HTMLButtonElement>(
       "article.turn-user .turn-chips button.chip-remove",
     );
-    expect(removeBtn?.closest(".turn-chips")).not.toBeNull();
+    if (removeBtn === null) throw new Error("no chip-remove button");
+    expect(removeBtn.closest(".turn-chips")).not.toBeNull();
   });
 
   test("empty-state action buttons post their commands", () => {
