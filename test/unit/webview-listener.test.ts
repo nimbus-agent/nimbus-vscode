@@ -9,6 +9,10 @@ const CHAT_SHELL = `
   <footer id="footer">
     <ul id="subtask-list"></ul>
     <span id="status"></span>
+    <div id="attach-row">
+      <div id="attach-mount"></div>
+      <button type="button" id="attach-btn">Attach…</button>
+    </div>
     <form id="input-form">
       <textarea id="input-text"></textarea>
       <button type="submit" id="input-send">Send</button>

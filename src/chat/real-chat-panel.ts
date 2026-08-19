@@ -130,6 +130,10 @@ function renderChatHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string 
       <ul id="subtask-list"></ul>
       <span id="status"></span>
     </div>
+    <div id="attach-row">
+      <div id="attach-mount"></div>
+      <button type="button" id="attach-btn" title="Attach context">Attach…</button>
+    </div>
     <form id="input-form">
       <textarea id="input-text" rows="2" placeholder="Ask Nimbus… (Cmd/Ctrl+Enter to send)"></textarea>
       <button type="submit" id="input-send">Send</button>

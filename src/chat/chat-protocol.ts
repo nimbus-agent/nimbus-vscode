@@ -42,6 +42,12 @@ export type ExtensionToWebview =
         state: "sent" | "clamped" | "refused";
         chars: number;
       }>;
+    }
+  | {
+      // Retracts a "turnAttachments" the extension posted for a turn whose
+      // askStream() call then threw synchronously — the request never left,
+      // so the record it announced must not survive into the transcript.
+      type: "turnAttachmentsFailed";
     };
 
 export type WebviewToExtension =

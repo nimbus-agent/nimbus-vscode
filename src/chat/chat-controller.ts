@@ -257,6 +257,13 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
         handle = deps.client.askStream(prompt, opts);
       } catch (e) {
         deps.log.error(`ask: askStream failed to start: ${errMsg(e)}`);
+        // The turn manifest above was posted BEFORE this call so the resolved
+        // preview would reach the webview ahead of the request — but the
+        // request never actually left. Retract it, or the transcript ends up
+        // claiming attachments were sent on a turn that never started.
+        if (built.chips.length > 0) {
+          post({ type: "turnAttachmentsFailed" });
+        }
         post({ type: "userMessage", text: input });
         post({ type: "error", message: `Nimbus couldn't start the request: ${errMsg(e)}` });
         return;

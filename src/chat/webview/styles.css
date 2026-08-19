@@ -375,3 +375,48 @@ main#root {
 #input-stop {
   background: var(--vscode-errorForeground);
 }
+
+/* Attachment chips ------------------------------------------------------- */
+
+#attach-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.4rem var(--nimbus-gap) 0;
+}
+
+#attach-mount {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+#attach-btn {
+  flex: 0 0 auto;
+  padding: 0.3em 0.8em;
+  font: inherit;
+  border: var(--nimbus-border);
+  border-radius: var(--nimbus-radius);
+  cursor: pointer;
+  background: transparent;
+  color: var(--vscode-foreground);
+}
+
+#attach-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-editorWidget-background));
+}
+
+.chips { display: flex; flex-wrap: wrap; gap: 4px; max-height: 5.5em; overflow-y: auto;
+         list-style: none; margin: 0 0 4px; padding: 0; }
+.chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px;
+        border: 1px solid var(--vscode-panel-border); border-radius: 10px; font-size: 0.9em; }
+.chip-refused { opacity: 0.7; text-decoration: line-through; }
+.chip-clamped { border-style: dashed; }
+.chip-detail { opacity: 0.8; }
+.chip-count { opacity: 0.6; }
+.chip-remove { border: none; background: transparent; color: inherit; opacity: 0.6;
+                cursor: pointer; font: inherit; line-height: 1; padding: 0; }
+.chip-remove:hover { opacity: 1; }
+.chip-total { font-size: 0.85em; opacity: 0.7; }
+/* History chips are a record, not a control: no remove button, dimmer. */
+.turn-chips .chip-remove { display: none; }
+.turn-chips { opacity: 0.75; }

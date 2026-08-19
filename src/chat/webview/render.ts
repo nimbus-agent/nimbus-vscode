@@ -119,6 +119,57 @@ ${path}
 </div>`;
 }
 
+export interface ChipView {
+  id: string;
+  label: string;
+  detail: string;
+  state: "sent" | "clamped" | "refused";
+  chars: number;
+}
+
+function renderChipLi(id: string, c: Omit<ChipView, "id">): string {
+  const count = c.state === "refused" ? "" : `<span class="chip-count">${c.chars}</span>`;
+  const detail =
+    c.detail.length > 0 ? `<span class="chip-detail">${escapeHtml(c.detail)}</span>` : "";
+  const chipId = escapeHtml(id);
+  return `<li class="chip chip-${c.state}" data-id="${chipId}">
+<span class="chip-label">${escapeHtml(c.label)}</span>${detail}${count}
+<button class="chip-remove" data-id="${chipId}" title="Remove">×</button></li>`;
+}
+
+// Renders exactly what the host resolved. This module never reads a file,
+// never counts characters itself, and never infers a state — the composer is
+// this surface's pre-flight preview, and a preview that computes its own
+// numbers is not a preview of anything.
+export function renderChips(
+  chips: readonly ChipView[],
+  totalChars: number,
+  provisional: boolean,
+): string {
+  if (chips.length === 0) return "";
+  const items = chips.map((c) => renderChipLi(c.id, c)).join("");
+  const suffix = provisional ? " estimated" : "";
+  return `<ul class="chips">${items}</ul>
+<div class="chip-total">${totalChars} chars attached${suffix}</div>`;
+}
+
+export interface TurnChipView {
+  label: string;
+  detail: string;
+  state: "sent" | "clamped" | "refused";
+  chars: number;
+}
+
+// A sent turn's attachment record is history, not a control: the same chip
+// markup as the composer (so `.turn-chips .chip-remove` can hide the button
+// via CSS), but no total line — the host never posts a total for a turn
+// record, and this module computes nothing it wasn't handed.
+export function renderTurnChips(chips: readonly TurnChipView[]): string {
+  if (chips.length === 0) return "";
+  const items = chips.map((c, i) => renderChipLi(`t${i}`, c)).join("");
+  return `<ul class="chips turn-chips">${items}</ul>`;
+}
+
 function formatTimestamp(ms: number): string {
   const d = new Date(ms);
   const hh = String(d.getHours()).padStart(2, "0");

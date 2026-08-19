@@ -706,6 +706,54 @@ describe("ChatController", () => {
     expect(ctrl.isStreaming()).toBe(false);
   });
 
+  test("a synchronous askStream failure retracts the turn's attachment manifest instead of leaving it standing", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () => {
+            throw new Error("boom");
+          },
+        }),
+        { panel },
+      ),
+    );
+    // Give the turn something to attach, so a turnAttachments manifest is
+    // actually posted before the synchronous throw.
+    ctrl.attach({ kind: "selection", path: "a.ts", startLine: 1, endLine: 2, text: "hello" });
+    posted.length = 0; // discard the attach()-triggered "attachments" post
+    await ctrl.start("hi");
+    // The manifest was posted BEFORE askStream (required — the resolved
+    // preview must reach the webview before the request leaves), then
+    // retracted in the catch path once the request turned out never to have
+    // gone out. The webview must never be left claiming attachments were sent
+    // on a turn that failed to start.
+    expect(postedTypes(posted)).toEqual([
+      "attachments",
+      "turnAttachments",
+      "attachments",
+      "turnAttachmentsFailed",
+      "userMessage",
+      "error",
+    ]);
+  });
+
+  test("a synchronous askStream failure with nothing attached posts no manifest to retract", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () => {
+            throw new Error("boom");
+          },
+        }),
+        { panel },
+      ),
+    );
+    await ctrl.start("hi");
+    expect(postedTypes(posted)).toEqual(["userMessage", "error"]);
+  });
+
   test("rehydrateIfNeeded falls back to emptyState when the transcript fetch fails", async () => {
     const { panel, posted } = capturingPanel();
     const warn = vi.fn();

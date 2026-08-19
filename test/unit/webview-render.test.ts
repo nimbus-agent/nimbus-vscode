@@ -8,11 +8,13 @@ const TEST_SOCKET_PATH = join(tmpdir(), `nimbus-render-${process.pid}.sock`);
 
 import {
   escapeHtml,
+  renderChips,
   renderEmptyState,
   renderHitlCard,
   renderMarkdown,
   renderSubTaskRow,
   renderTurn,
+  renderTurnChips,
 } from "../../src/chat/webview/render.js";
 
 describe("escapeHtml", () => {
@@ -100,6 +102,83 @@ describe("renderSubTaskRow", () => {
   test("omits percentage block when progress not provided", () => {
     const row = renderSubTaskRow({ subTaskId: "t1", status: "queued" });
     expect(row).not.toContain("subtask-pct");
+  });
+});
+
+describe("renderChips", () => {
+  test("a sent chip shows its label and character count", () => {
+    const html = renderChips(
+      [{ id: "a1", label: "src/a.ts", detail: "", state: "sent", chars: 20 }],
+      20,
+      true,
+    );
+    expect(html).toContain("src/a.ts");
+    expect(html).toContain("20");
+  });
+
+  test("a refused chip says why, and carries no count", () => {
+    const html = renderChips(
+      [
+        {
+          id: "a1",
+          label: ".env",
+          detail: "possible secret · not sent",
+          state: "refused",
+          chars: 0,
+        },
+      ],
+      0,
+      true,
+    );
+    expect(html).toContain("possible secret · not sent");
+  });
+
+  test("provisional chips say the size is an estimate; resolved ones do not", () => {
+    const chip = { id: "a1", label: "a.ts", detail: "", state: "sent" as const, chars: 20 };
+    expect(renderChips([chip], 20, true)).toContain("estimated");
+    expect(renderChips([chip], 20, false)).not.toContain("estimated");
+  });
+
+  test("no attachments renders nothing at all", () => {
+    expect(renderChips([], 0, true)).toBe("");
+  });
+
+  test("escapes a label an attacker could control (a repo file named to inject markup)", () => {
+    const html = renderChips(
+      [{ id: "a1", label: `<img src=x onerror=alert(1)>`, detail: "", state: "sent", chars: 3 }],
+      3,
+      false,
+    );
+    expect(html).not.toContain("<img");
+    expect(html).toContain("&lt;img");
+  });
+
+  test("a remove button carries the chip's id for detachContext", () => {
+    const html = renderChips(
+      [{ id: "a7", label: "a.ts", detail: "", state: "sent", chars: 3 }],
+      3,
+      false,
+    );
+    expect(html).toContain('<button class="chip-remove" data-id="a7"');
+  });
+});
+
+describe("renderTurnChips", () => {
+  test("renders sent-turn chips with no total line and no id field required", () => {
+    const html = renderTurnChips([{ label: "src/a.ts", detail: "", state: "sent", chars: 20 }]);
+    expect(html).toContain("src/a.ts");
+    expect(html).toContain("20");
+    expect(html).not.toContain("chip-total");
+  });
+
+  test("carries the turn-chips class so history chips render dimmer with no remove control", () => {
+    const html = renderTurnChips([{ label: "a.ts", detail: "", state: "sent", chars: 3 }]);
+    expect(html).toContain('class="chips turn-chips"');
+    expect(html).toContain("chip-remove");
+  });
+
+  test("no attachments renders nothing at all", () => {
+    expect(renderTurnChips([])).toBe("");
   });
 });
 
