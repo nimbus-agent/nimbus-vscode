@@ -453,6 +453,8 @@ function makeFixture(opts: {
     isTrusted: opts.isTrusted ?? true,
     workspaceFolders: opts.workspaceFolders,
     textDocuments: [],
+    openTextDocument: () => Promise.reject(new Error("not implemented in test double")),
+    findFiles: () => Promise.resolve([]),
   };
 
   const commands: CommandsApi = {
@@ -1850,6 +1852,13 @@ describe("activateWithDeps", () => {
       fire(null);
       fire({ noType: true });
     }).not.toThrow();
+
+    // `startGateway` above kicks off a fire-and-forget reconnect
+    // (closeClient -> tryConnect); let it fully settle before relying on the
+    // connection again, or submitAsk can land in the brief disconnected
+    // window and skip the askStream call it's here to prove happens.
+    await waitForConnect();
+    await waitForConnect();
 
     await fire({ type: "submitAsk", text: "follow-up" });
     expect(askStream.mock.calls.length).toBeGreaterThanOrEqual(2);

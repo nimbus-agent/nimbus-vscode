@@ -67,6 +67,15 @@ describe("attachment state", () => {
     expect(msg.chips[0]?.label).toBe("a.ts");
   });
 
+  test("a freshly attached file renders with a size, not as unreadable", async () => {
+    const h = harness({ "a.ts": "export const a = 1;\n" });
+    h.ctl.attach(file("a.ts"));
+    const msg = h.posted.find((m) => m.type === "attachments");
+    if (msg?.type !== "attachments") throw new Error("expected attachments");
+    expect(msg.chips[0]?.state).toBe("sent");
+    expect(msg.chips[0]?.chars).toBeGreaterThan(0);
+  });
+
   test("detaching removes it", async () => {
     const h = harness({ "a.ts": "x\n" });
     h.ctl.attach(file("a.ts"));

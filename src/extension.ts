@@ -1,7 +1,5 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
 
 import {
   type AskStreamHandle,
@@ -16,6 +14,7 @@ import { createNamespaceStore } from "./briefs/namespace-store.js";
 import { toRelativeRef, whyParams } from "./briefs/params.js";
 import { createPeekHover } from "./briefs/peek-hover.js";
 import { registerWhyPeekHover } from "./briefs/real-hover.js";
+import { isWithinRoot, toAbsolute } from "./chat/attachment-paths.js";
 import {
   type ChatClientLike,
   type ChatController,
@@ -398,6 +397,54 @@ export function activateWithDeps(
 
   const chatPanelFactory = deps.chatPanelFactory?.({ log }) ?? createRealChatPanelFactory(log);
 
+  // First workspace folder only, matching egressRoots()/the leak-check needles
+  // above. With no folder open, paths pass through unchanged — a loose file is
+  // still attachable, it just has no root to be relative to.
+  const workspaceRoot = (): string | undefined => deps.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  // Repo-relative path -> contents. Primed when a file is ATTACHED and
+  // refreshed before each send. Priming at attach is not an optimisation: the
+  // controller renders provisional chips the moment attach() is called, and an
+  // unprimed cache would render a perfectly good file as "unreadable · not
+  // sent". The spec's own wording ("about 4 KB, measured when attached")
+  // requires a real measurement at attach time.
+  const attachmentCache = new Map<string, string>();
+  const readAttachment = (path: string): string | undefined => attachmentCache.get(path);
+
+  /**
+   * Reads one path into the cache. Silent on failure — the assembler reports
+   * it. A path that resolves outside the workspace root is treated the same
+   * as one that fails to open: cleared from the cache, never read.
+   */
+  const cacheFile = async (path: string): Promise<void> => {
+    const root = workspaceRoot();
+    const absolute = toAbsolute(root, path);
+    if (!isWithinRoot(root, absolute)) {
+      attachmentCache.delete(path);
+      return;
+    }
+    try {
+      const doc = await deps.workspace.openTextDocument(absolute);
+      attachmentCache.set(path, doc.getText());
+    } catch {
+      attachmentCache.delete(path);
+    }
+  };
+
+  /**
+   * Re-reads every currently attached FILE before a turn goes out, so a file
+   * attached a while ago sends what is on screen now rather than what it held
+   * at attach time. `selection` and `index` attachments carry their own text
+   * and need no priming.
+   */
+  const primeAttachments = async (ctl: ChatController): Promise<void> => {
+    attachmentCache.clear();
+    for (const a of ctl.attachments()) {
+      if (a.kind !== "file") continue;
+      await cacheFile(a.path);
+    }
+  };
+
   let chatController: ChatController | undefined;
   let activeAgent: string | undefined;
   const registeredHitlStreams = new Set<string>();
@@ -470,7 +517,7 @@ export function activateWithDeps(
       },
       log,
       agent: () => activeAgent ?? settings.askAgent(),
-      readFile: readWorkspaceFileSync,
+      readFile: readAttachment,
     });
     panel.onMessage((msg) => {
       if (msg === null || typeof msg !== "object") return;
@@ -497,6 +544,7 @@ export function activateWithDeps(
     const ctl = ensureChatController();
     if (ctl === undefined) return;
     try {
+      await primeAttachments(ctl);
       await ctl.start(text);
     } catch (e) {
       log.error(`submitAsk failed: ${errMsg(e)}`);
@@ -915,6 +963,7 @@ export function activateWithDeps(
     if (input === undefined || input.trim().length === 0) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;
+    await primeAttachments(ctl);
     await ctl.start(input.trim());
   });
 
@@ -944,6 +993,7 @@ export function activateWithDeps(
         `Nimbus: context truncated to ${QUICK_ASK_MAX_CONTEXT_CHARS} characters.`,
       );
     }
+    await primeAttachments(ctl);
     await ctl.start(
       buildQuickAskPrompt({
         question: prefix,
@@ -1413,6 +1463,7 @@ export function activateWithDeps(
     if (item === undefined) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;
+    await primeAttachments(ctl);
     await ctl.start(buildAskPrompt(item));
   });
 
@@ -1839,31 +1890,6 @@ export function createSourceOpener(): (item: { url?: string }) => Promise<void> 
       if (!ok) throw new Error("the system declined to open this URL");
     }
   };
-}
-
-// Minimal stand-in for the attachment file reader: resolves a repo-relative
-// path against the first workspace folder, preferring an already-open
-// document's live buffer over the on-disk bytes — otherwise attaching the
-// file you are actively editing would silently send the last-saved version
-// while the chip claims it is current — and falling back to a synchronous
-// disk read. Task 3 replaces this with a cached, multi-root-aware reader;
-// this exists only so ChatControllerDeps.readFile has a real implementation
-// in the meantime. Two known limitations left to that task: only the FIRST
-// workspace folder is considered in a multi-root workspace, and there is no
-// containment check, so a path escaping the root (e.g. "../../etc/passwd")
-// is not rejected here — no untrusted path source reaches this today, but
-// the real reader should not rely on that staying true.
-function readWorkspaceFileSync(path: string): string | undefined {
-  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (root === undefined) return undefined;
-  const absolute = join(root, path);
-  const open = vscode.workspace.textDocuments.find((doc) => doc.uri.fsPath === absolute);
-  if (open !== undefined) return open.getText();
-  try {
-    return readFileSync(absolute, "utf8");
-  } catch {
-    return undefined;
-  }
 }
 
 // Save a JSON document to disk via a native Save dialog; returns the chosen Uri
