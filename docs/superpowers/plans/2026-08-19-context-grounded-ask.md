@@ -134,11 +134,15 @@ describe("buildAttachedContext", () => {
     const r = reader({ "src/a.ts": "export const a = 1;\n" });
     const built = buildAttachedContext([file("src/a.ts")], r.read);
     expect(built.chips).toHaveLength(1);
-    expect(built.chips[0]?.outcome).toEqual({ state: "sent", chars: 20 });
+    expect(built.chips[0]?.outcome.state).toBe("sent");
     expect(built.chips[0]?.label).toBe("src/a.ts");
     expect(built.blocks).toContain("src/a.ts");
     expect(built.blocks).toContain("export const a = 1;");
-    expect(built.totalChars).toBe(20);
+    // `chars` counts the whole block, header included, because that is what
+    // enters the payload. Asserted against the built blocks rather than a
+    // hand-counted body length, so the two can never disagree.
+    expect(built.chips[0]?.outcome).toEqual({ state: "sent", chars: built.blocks.length });
+    expect(built.totalChars).toBe(built.blocks.length);
   });
 
   test("THE INVARIANT: every chip's character count equals its block body, exactly", () => {
@@ -193,7 +197,12 @@ describe("buildAttachedContext", () => {
     expect(outcome?.state).toBe("clamped");
     if (outcome?.state !== "clamped") throw new Error("expected clamped");
     expect(outcome.ofChars).toBe(100_000);
-    expect(outcome.chars).toBeLessThanOrEqual(PER_ATTACHMENT_BUDGET);
+    // The BODY respects the budget; `chars` counts the block, so it is larger
+    // by exactly the header. Asserting `chars <= budget` would fail against a
+    // correct implementation.
+    const body = built.chips[0]?.block?.split("\n").slice(1).join("\n") ?? "";
+    expect(body.length).toBeLessThanOrEqual(PER_ATTACHMENT_BUDGET);
+    expect(outcome.chars).toBe(built.blocks.length);
     expect(built.chips[0]?.block?.endsWith("\n")).toBe(true);
   });
 
@@ -351,14 +360,19 @@ function refuse(a: Attachment, reason: RefusalReason, detail: string): ResolvedA
   return { attachment: a, label: labelOf(a), detail, outcome: { state: "refused", reason } };
 }
 
+function headerFor(a: Attachment): string {
+  switch (a.kind) {
+    case "file":
+      return `--- file: ${a.path} ---`;
+    case "selection":
+      return `--- selection: ${a.path} (lines ${a.startLine}-${a.endLine}) ---`;
+    case "index":
+      return `--- index item: ${a.service}/${a.name} ---`;
+  }
+}
+
 function blockFor(a: Attachment, body: string): string {
-  const header =
-    a.kind === "file"
-      ? `--- file: ${a.path} ---`
-      : a.kind === "selection"
-        ? `--- selection: ${a.path} (lines ${a.startLine}-${a.endLine}) ---`
-        : `--- index item: ${a.service}/${a.name} ---`;
-  return `${header}\n${body}\n`;
+  return `${headerFor(a)}\n${body}\n`;
 }
 
 /**
@@ -502,11 +516,20 @@ import type { ExtensionToWebview } from "../../src/chat/chat-protocol.js";
 function harness(files: Record<string, string> = {}) {
   const posted: ExtensionToWebview[] = [];
   const order: string[] = [];
+  // AskStreamHandle is `AsyncIterable<StreamEvent> & { streamId, cancel() }` —
+  // NOT an object with an `events` property. `test/unit/chat-controller.test.ts`
+  // already builds this shape in its `pendingStream` helper; read that first and
+  // mirror it rather than inventing a second fake.
   const handle = {
     streamId: "s1",
-    events: (async function* () {
-      /* no events: the turn ends immediately */
-    })(),
+    cancel: vi.fn(async () => {}),
+    [Symbol.asyncIterator](): AsyncIterator<never> {
+      return {
+        async next(): Promise<IteratorResult<never>> {
+          return { value: undefined as never, done: true };
+        },
+      };
+    },
   };
   const client = {
     askStream: vi.fn((_input: string) => {
@@ -802,6 +825,37 @@ Where the real `workspace` object is assembled, add:
         uris.map((u) => ({ fsPath: u.fsPath })),
       ),
 ```
+
+- [ ] **Step 2b: Define the two path helpers — neither exists yet**
+
+Attachments are keyed by **repo-relative** path (that is what appears in a chip
+and in a block header), while the shim reads by absolute path. No helper for
+either exists in `src/`; today the codebase reads `workspaceFolders` raw at
+`src/context/real-context-view.ts:140` and `src/extension.ts:1849`. Define both
+once, near the cache, and use them everywhere:
+
+```ts
+  // First workspace folder only, matching what extension.ts:1849 already does.
+  // With no folder open, paths pass through unchanged — a loose file is still
+  // attachable, it just has no root to be relative to.
+  const workspaceRoot = (): string | undefined =>
+    deps.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+  const toAbsolute = (repoRelative: string): string => {
+    const root = workspaceRoot();
+    return root === undefined ? repoRelative : `${root}/${repoRelative}`;
+  };
+
+  const toRepoRelative = (fsPath: string): string => {
+    const root = workspaceRoot();
+    if (root === undefined || !fsPath.startsWith(root)) return fsPath;
+    return fsPath.slice(root.length).replace(/^[\\/]+/, "").replaceAll("\\", "/");
+  };
+```
+
+These two must round-trip: `toRepoRelative(toAbsolute(p)) === p`. A mismatch
+does not throw — it silently misses the cache, and the chip reports
+`unreadable · not sent` for a file that reads perfectly well.
 
 - [ ] **Step 3: Build the reader passed to the controller**
 
