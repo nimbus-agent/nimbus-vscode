@@ -24,8 +24,13 @@ export function summarizeConnectorHealth(
 // degraded summary. Sorted so the poll's own array order — which is not a
 // contract — cannot itself register as a change.
 export function connectorStatusFingerprint(statuses: readonly ConnectorSyncStatus[]): string {
-  return statuses
-    .map((s) => `${s.serviceId}:${s.status}:${s.itemCount}:${s.lastSyncAt ?? ""}`)
-    .sort()
-    .join("|");
+  return (
+    statuses
+      .map((s) => `${s.serviceId}:${s.status}:${s.itemCount}:${s.lastSyncAt ?? ""}`)
+      // Explicit comparator, matching summarizeConnectorHealth above: a bare
+      // sort() orders by UTF-16 code unit, which is deterministic but not what a
+      // reader assumes of a string sort (and Sonar's S2871 flags it).
+      .sort((a, b) => a.localeCompare(b))
+      .join("|")
+  );
 }
