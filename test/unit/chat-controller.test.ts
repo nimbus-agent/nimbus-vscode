@@ -104,6 +104,7 @@ function baseDeps(
     registerStreamWithHitl: () => undefined,
     unregisterStreamWithHitl: () => undefined,
     log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+    readFile: () => undefined,
     ...over,
   };
 }
@@ -280,6 +281,7 @@ describe("ChatController", () => {
       registerStreamWithHitl: () => undefined,
       unregisterStreamWithHitl: () => undefined,
       log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+      readFile: () => undefined,
     });
     await ctrl.start("hi");
     const types = posted.map((m) => (m as { type: string }).type);
@@ -391,6 +393,7 @@ describe("ChatController", () => {
       registerStreamWithHitl: () => undefined,
       unregisterStreamWithHitl: () => undefined,
       log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+      readFile: () => undefined,
     });
     const p = ctrl.start("first");
     await expect(ctrl.start("second")).rejects.toThrow(/in progress/i);
@@ -417,6 +420,7 @@ describe("ChatController", () => {
       registerStreamWithHitl: () => undefined,
       unregisterStreamWithHitl: () => undefined,
       log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+      readFile: () => undefined,
     });
     await ctrl.newConversation();
     expect(cleared).toHaveBeenCalled();

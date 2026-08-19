@@ -1,5 +1,7 @@
 import { spawn as nodeSpawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
 
 import {
   type AskStreamHandle,
@@ -468,6 +470,7 @@ export function activateWithDeps(
       },
       log,
       agent: () => activeAgent ?? settings.askAgent(),
+      readFile: readWorkspaceFileSync,
     });
     panel.onMessage((msg) => {
       if (msg === null || typeof msg !== "object") return;
@@ -1836,6 +1839,22 @@ export function createSourceOpener(): (item: { url?: string }) => Promise<void> 
       if (!ok) throw new Error("the system declined to open this URL");
     }
   };
+}
+
+// Minimal stand-in for the attachment file reader: resolves a repo-relative
+// path against the first workspace folder and reads it synchronously,
+// returning undefined on any failure (no folder, missing file, non-UTF8,
+// permission error, ...). Task 3 replaces this with a cached, multi-root-aware
+// reader; this exists only so ChatControllerDeps.readFile has a real
+// implementation in the meantime.
+function readWorkspaceFileSync(path: string): string | undefined {
+  const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (root === undefined) return undefined;
+  try {
+    return readFileSync(join(root, path), "utf8");
+  } catch {
+    return undefined;
+  }
 }
 
 // Save a JSON document to disk via a native Save dialog; returns the chosen Uri

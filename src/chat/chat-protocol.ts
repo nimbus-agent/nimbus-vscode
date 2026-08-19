@@ -21,7 +21,28 @@ export type ExtensionToWebview =
       sub: "no-transcript" | "disconnected" | "permission-denied";
       socketPath?: string;
     }
-  | { type: "themeChange" };
+  | { type: "themeChange" }
+  | {
+      type: "attachments";
+      chips: ReadonlyArray<{
+        id: string;
+        label: string;
+        detail: string;
+        state: "sent" | "clamped" | "refused";
+        chars: number;
+      }>;
+      totalChars: number;
+      provisional: boolean;
+    }
+  | {
+      type: "turnAttachments";
+      chips: ReadonlyArray<{
+        label: string;
+        detail: string;
+        state: "sent" | "clamped" | "refused";
+        chars: number;
+      }>;
+    };
 
 export type WebviewToExtension =
   | { type: "submitAsk"; text: string }
@@ -31,4 +52,6 @@ export type WebviewToExtension =
   | { type: "ready" }
   | { type: "openLogs" }
   | { type: "startGateway" }
-  | { type: "openExternal"; url: string };
+  | { type: "openExternal"; url: string }
+  | { type: "detachContext"; id: string }
+  | { type: "openAttachPicker" };
