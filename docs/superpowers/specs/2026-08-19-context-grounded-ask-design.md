@@ -38,6 +38,15 @@ UI, keyboard navigation and its own debounce inside a custom webview, which is
 the largest slice of the work and the least load-bearing); attaching whole
 folders; image or other binary attachments.
 
+**Out, and a good follow-up: drag-and-drop from the Explorer.** Dropping a file
+onto the panel is the most natural way to attach one, and a webview can accept
+`text/uri-list` without much ceremony. It is out of *this* slice because it is
+additive rather than load-bearing — it adds a fourth entry point to a model that
+has not been used yet — and because its edge cases (folders, files outside the
+workspace, untitled buffers, multi-select) each need an answer that the chip
+vocabulary defined here does not yet have. It belongs with typed `@`-mentions in
+the follow-up that makes attaching fluent, once the attachment model is settled.
+
 **Out, and worth stating:** this does not touch the `@nimbus` chat participant,
 which already has `#file` through VS Code's own attachment UI. This is the
 custom panel only.
@@ -80,11 +89,27 @@ ninth `EgressKind`. The `EgressKind` count stays at **eight**.
 | `src/chat/real-chat-panel.ts` | Only if the composer button needs new host plumbing. | **yes** |
 | `src/extension.ts` | The Quick Pick command and the *Attach to Ask* entries on Index rows, search results and the editor selection. | yes |
 
-**Reuse, not reinvention.** `src/scm/diff.ts` is pure and already exports
-`isSecretPath`, `selectWithinBudget` and `truncateAtHunkBoundary`, shipped and
-tested behind *Review Changes*. `attachments.ts` imports them rather than
-growing a second policy that can drift from the first. Importing across feature
-modules is established here — `src/context/` imports from `src/briefs/`.
+**Reuse only what actually transfers.** `src/scm/diff.ts` is pure, shipped and
+tested behind *Review Changes*, but most of it is **diff-shaped**:
+`truncateAtHunkBoundary` splits a diff into hunks and returns `undefined` when
+there are none, and `selectWithinBudget` takes `{path, diff}` entries. Neither
+means anything for a continuous file, and an earlier draft of this spec was
+wrong to claim them.
+
+What transfers is `isSecretPath` — a match over repo-relative path patterns,
+and the one rule whose duplication would be genuinely dangerous. `attachments.ts`
+imports that and nothing else, and does its own clamping (see *The payload*).
+Importing across feature modules is established here — `src/context/` imports
+from `src/briefs/`.
+
+**`isSecretPath` matches names, not contents.** It catches `.env`, key files and
+their kin by path. It will not notice an API key pasted into an ordinary `.ts`
+file, and this design does not scan attachment bodies for credentials — the same
+limitation *Review Changes* ships with today. That is a deliberate boundary, not
+an oversight: content scanning is a different feature with its own false-positive
+budget. The docs must state it plainly, because a user who sees "possible secret
+· not sent" on one chip will reasonably assume the others were checked the same
+way.
 
 ## Attaching
 
@@ -100,9 +125,31 @@ Three entry points, all reaching the same controller message:
    picker is the friction this feature exists to remove.
 3. **The active editor**, as a one-click "attach this file".
 
+The picker distinguishes the two sources by icon — a file icon for the working
+tree, a database icon for the index — because "the file on disk" and "what the
+index remembers about it" can differ, and a label alone is easy to skim past.
+
 Attachments belong to the **chat session**, not the turn: a follow-up question
 keeps them, because "now explain the other half" is the normal second question.
 Detach is per-chip. Starting a new conversation clears them.
+
+### A selection is a snapshot; a file is a path
+
+These two attachment kinds resolve differently, and the difference is deliberate.
+
+A **file** attachment stores its path and is read at send, so you get the
+version you are looking at (see *Resolution*).
+
+A **selection** attachment stores **the selected text, captured at attach**,
+along with the path and line range it came from. It is not re-read. A stored
+range would drift the moment the user edited above it — by send time,
+`L12–L30` can cover entirely different code, and sending that under the label
+"the code you selected" would be worse than sending nothing. The text is what
+the user meant; the range is provenance, not a pointer.
+
+Its chip says so: `selection · foo.ts (L12–30) · captured at attach`. That
+wording is the point — a reader must be able to tell, from the composer, that
+this one block is a snapshot while the file beside it is live.
 
 ## Resolution — the property that justifies not prompting
 
@@ -123,7 +170,26 @@ about a payload that no longer matches the workspace.
 
 Chips before send show a **provisional** size, marked as such. This spec would
 rather say "about 4 KB, measured when attached" than assert a number it has not
-re-read.
+re-read. A selection chip is exempt: its bytes were captured at attach, so its
+count is exact from the start.
+
+### What happens to the chips after send
+
+Three distinct pieces of state, easily conflated:
+
+1. **The sent turn keeps its manifest.** The resolved chips are recorded on the
+   user message in the transcript — compact by default, expandable — so the
+   panel's own history answers "what did that question actually send?" without
+   opening the Egress ledger. This is the permanent record.
+2. **The composer keeps its attachments.** They are session-scoped, so the chips
+   stay for the follow-up question. Clearing them on send would defeat the point
+   of persisting them at all.
+3. **The resolved sizes become the next turn's provisional baseline** — the
+   composer chips are not re-measured until the next send.
+
+The two must be visually distinct: chips in a sent turn are historical record and
+are not detachable; chips in the composer are live and each carry a remove
+control. A user who cannot tell them apart will try to detach history.
 
 ## The payload
 
@@ -140,11 +206,17 @@ actionably reported as too large:
 | --- | --- | --- |
 | Possible secret (`isSecretPath`) | not sent at all | `possible secret · not sent` |
 | Binary / non-textual | not sent at all | `binary · not sent` |
-| Over budget | clamped head sent | `clamped · 12 KB of 400 KB sent` |
+| Over budget | clamped head sent, cut at a **line boundary** — never mid-line, which would hand the model a truncated identifier and invite a confident answer about code that does not exist | `clamped · 12 KB of 400 KB sent` |
 | Index item | its stored snippet and metadata, no working-tree read | `from index` |
 | Every attachment refused | the turn still sends the typed question | a line saying nothing was attached |
 
 A refused attachment is never silently dropped, and never blocks the question.
+
+**Chips must survive a crowded composer.** Six attachments is a normal working
+set, not an edge case. They wrap, or scroll inside their own container; they
+never compress the text area, which is the part being typed into. The running
+total stays visible regardless of how many chips there are — it is the number
+that tells you a question grew expensive.
 
 ## Degraded states
 
@@ -165,7 +237,12 @@ Pure, in `test/unit/chat-attachments.test.ts`:
 - refusal precedence: secret beats non-textual beats too-large;
 - clamping exactly at the budget boundary, and one byte either side;
 - an entirely-refused set still yields a sendable prompt;
-- an index item contributes no filesystem read.
+- an index item contributes no filesystem read;
+- **a selection attachment ignores later edits to its file** — the snapshot is
+  what is sent, and the block still names its original line range;
+- **a file attachment does not** — an edit between attach and send is reflected,
+  which is the asymmetry a reader is most likely to think is a bug;
+- clamping cuts at a line boundary: the last line of a clamped block is whole.
 
 Controller, over stubs: attach → chips posted; detach; attachments surviving a
 turn; cleared on new conversation; the resolved manifest posted **before**
