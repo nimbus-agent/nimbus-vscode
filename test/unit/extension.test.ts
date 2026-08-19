@@ -294,6 +294,7 @@ function makeFixture(opts: {
     | { label: string; preset?: { label: string; prompt: string } }
     | { label: string; kind: "file"; path: string }
     | { label: string; description?: string; kind: "index"; item: IndexItem; snippet: string }
+    | { label: string; kind: "status" }
     | undefined
   >;
   infoMessageClicks?: Array<string | undefined>;
@@ -1111,6 +1112,54 @@ describe("activateWithDeps", () => {
     expect(items.some((i) => i.label === "$(database) Q3 Deck")).toBe(true);
   });
 
+  // Degraded state the spec's table requires: "searchRanked throws while
+  // picking → the picker shows files only, with a row explaining the index
+  // is unavailable." Before this fix, a thrown searchRanked only produced a
+  // `log.warn` — a user with the Gateway down saw a files-only picker
+  // indistinguishable from "your index is empty".
+  test("nimbus.attachContext shows a status row (not silence) when searchRanked throws", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      openClient: makeFakeClient({
+        searchRanked: async () => {
+          throw new Error("index down");
+        },
+      } as never),
+      quickPickAnswers: [undefined],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    const showQuickPick = f.deps.window.showQuickPick as ReturnType<typeof vi.fn>;
+    const items = showQuickPick.mock.calls[0]?.[0] as Array<{
+      label: string;
+      kind?: string;
+    }>;
+    expect(items.some((i) => i.label === "$(file) src/a.ts")).toBe(true);
+    const status = items.find((i) => i.kind === "status");
+    expect(status?.label).toContain("Index unavailable");
+  });
+
+  // Selecting the status row must be a no-op — it exists to explain absence,
+  // not to be attached.
+  test("nimbus.attachContext's status row cannot itself be attached", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({
+        searchRanked: async () => {
+          throw new Error("index down");
+        },
+      } as never),
+      quickPickAnswers: [{ label: "$(warning) Index unavailable", kind: "status" }],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+
   test("nimbus.attachContext refuses a secret-shaped index hit with a warning instead of attaching it", async () => {
     const f = makeFixture({
       workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
@@ -1245,11 +1294,12 @@ describe("activateWithDeps", () => {
   });
 
   // Nothing in the index matches by name (or the match has no
-  // semanticSnippet either) — attachIndexItem must fall back to
-  // buildAskPrompt's metadata block rather than attaching emptiness. Proven
-  // by checking the block that actually reaches askStream contains the
-  // item's own name and service, so "we attached something" cannot pass
-  // while the block is blank.
+  // semanticSnippet either) — attachIndexItem must fall back to a NEUTRAL
+  // metadata block rather than attaching emptiness. Proven by checking the
+  // block that actually reaches askStream contains the item's own name and
+  // service, so "we attached something" cannot pass while the block is
+  // blank — and that it carries no imperative, since it is prepended AHEAD
+  // of the user's own typed question and must not upstage it.
   test("nimbus.attachIndexItemToAsk falls back to a metadata block when no snippet can be found", async () => {
     const askStream = doneAskStream();
     const f = makeFixture({
@@ -1280,6 +1330,9 @@ describe("activateWithDeps", () => {
     const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
     expect(sent).toContain("Q3 Deck");
     expect(sent).toContain("gdrive");
+    // Not buildAskPrompt's imperative: the user's own typed question ("hi")
+    // must read as the instruction, not have one prepended ahead of it.
+    expect(sent).not.toContain("Tell me about");
   });
 
   test("nimbus.attachIndexItemToAsk refuses a secret-shaped item with a warning, never attaching it", async () => {
@@ -1345,6 +1398,99 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     const afterDetach = lastAttachments(f);
     expect(afterDetach?.chips).toHaveLength(0);
+  });
+
+  // Before this fix, `openAttachPicker: () => attachPicker()` had no
+  // try/catch, and panel.onMessage's caller `void`-s the handler's promise —
+  // a thrown findFiles (a very large or virtual workspace can throw rather
+  // than reject gracefully) left the Attach button doing nothing at all: no
+  // message, no log. `onSubmitAsk` right next door already guards this;
+  // mirrored here.
+  test("openAttachPicker webview message logs rather than swallowing when the picker throws", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({
+        askStream: doneAskStream(),
+        searchRanked: async () => [],
+      } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.ask")();
+    const fire = f.webviewMessageHandlers[0];
+    if (fire === undefined) throw new Error("no webview message handler registered");
+
+    (f.deps.workspace.findFiles as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      throw new Error("workspace too large to enumerate");
+    });
+
+    expect(() => fire({ type: "openAttachPicker" })).not.toThrow();
+    await waitForConnect();
+    await waitForConnect();
+    expect(
+      f.outputAppendLines.some(
+        (l) => l.includes("openAttachPicker failed") && l.includes("too large"),
+      ),
+    ).toBe(true);
+  });
+
+  // `attachments.ts` promises a secret-shaped path is "never even read" — the
+  // picker's file branch called cacheFile() BEFORE attaching, reading a
+  // picked .env's bytes into the extension host even though the assembler
+  // would refuse to send them. No bytes left the process, but the comment
+  // and the behaviour disagreed; this proves the read itself is skipped.
+  test("nimbus.attachContext never reads a secret-shaped file picked from the list", async () => {
+    const openTextDocument = vi.fn(async () => ({
+      getText: () => "SECRET=1",
+      uri: { fsPath: "/home/dev/proj/.env" },
+    }));
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/.env" }],
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+      quickPickAnswers: [{ label: "$(file) .env", kind: "file", path: ".env" }],
+    });
+    f.deps.workspace.openTextDocument = openTextDocument;
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    expect(openTextDocument).not.toHaveBeenCalled();
+    // Still attached (and still correctly refused by the assembler) — this
+    // is about the READ, not about whether the chip shows up.
+    const posted = lastAttachments(f);
+    expect(posted?.chips[0]?.label).toBe(".env");
+    expect(posted?.chips[0]?.state).toBe("refused");
+  });
+
+  // When a chat controller already exists, ensureChatController() returns it
+  // WITHOUT calling createOrReveal() — so an attach from the editor context
+  // menu, with the Nimbus tab in a background group, used to look like
+  // nothing happened.
+  test("nimbus.attachSelectionToAsk reveals the panel even when the controller already exists", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({ askStream: doneAskStream() } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+      activeEditor: {
+        text: "line0\nline1\n",
+        selectionText: "line1",
+        empty: false,
+        startLine: 1,
+        endLine: 1,
+        fileName: "/home/dev/proj/src/a.ts",
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.ask")(); // creates the controller (and reveals once)
+    const revealedAfterCreate = f.panelRevealedCount;
+
+    cmd(f, "nimbus.attachSelectionToAsk")();
+    await waitForConnect();
+
+    expect(f.panelRevealedCount).toBeGreaterThan(revealedAfterCreate);
   });
 
   test("falls back to the real read-only JSON opener when none is injected", async () => {
