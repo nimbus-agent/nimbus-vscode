@@ -42,14 +42,20 @@ describe("extension manifest: attachments", () => {
     expect(entry?.when).toBe("editorHasSelection");
   });
 
-  // Every one of these three prompts or reads the active editor on its own, so
-  // none of them needs a node to work — unlike nimbus.askAboutIndexItem or
-  // nimbus.openIndexItem, which are hidden with "when": "false" because they
-  // are meaningless without a tree row. The repo's rule for hiding a command
-  // from the palette does not apply here.
-  test("none of the three is hidden from the palette", () => {
-    for (const id of ALL) {
+  // attachContext prompts (the picker), and attachSelectionToAsk reads the
+  // active editor on its own — neither needs a node to work, so the repo's
+  // rule for hiding a command from the palette does not apply to them.
+  test("attachContext and attachSelectionToAsk are not hidden from the palette", () => {
+    for (const id of ["nimbus.attachContext", "nimbus.attachSelectionToAsk"]) {
       expect(palette.find((m) => m.command === id)?.when, id).not.toBe("false");
     }
+  });
+
+  // attachIndexItemToAsk, unlike the other two, silently no-ops without a
+  // tree node (there is nothing to prompt for in its place) — exactly the
+  // same shape as nimbus.askAboutIndexItem and nimbus.findRelatedFromIndex,
+  // both of which are hidden for the same reason.
+  test("attachIndexItemToAsk IS hidden from the palette — it no-ops without a tree node", () => {
+    expect(palette.find((m) => m.command === "nimbus.attachIndexItemToAsk")?.when).toBe("false");
   });
 });

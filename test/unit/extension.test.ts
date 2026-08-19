@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
 import { commands, env, Uri, window as vscodeWindow, workspace as vscodeWorkspace } from "vscode";
-import type { Attachment } from "../../src/chat/attachments.js";
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
@@ -293,7 +292,8 @@ function makeFixture(opts: {
   realProofSave?: boolean;
   quickPickAnswers?: Array<
     | { label: string; preset?: { label: string; prompt: string } }
-    | { label: string; attachment: Attachment }
+    | { label: string; kind: "file"; path: string }
+    | { label: string; description?: string; kind: "index"; item: IndexItem; snippet: string }
     | undefined
   >;
   infoMessageClicks?: Array<string | undefined>;
@@ -1069,16 +1069,18 @@ describe("activateWithDeps", () => {
       findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
       fileContents: { "/home/dev/proj/src/a.ts": "console.log('hi');\n" },
       openClient: makeFakeClient({ searchRanked: async () => [] } as never),
-      quickPickAnswers: [
-        { label: "$(file) src/a.ts", attachment: { kind: "file", path: "src/a.ts" } },
-      ],
+      quickPickAnswers: [{ label: "$(file) src/a.ts", kind: "file", path: "src/a.ts" }],
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
     await cmd(f, "nimbus.attachContext")();
 
     const findFiles = f.deps.workspace.findFiles as ReturnType<typeof vi.fn>;
-    expect(findFiles).toHaveBeenCalledWith("**/*", "**/node_modules/**", 200);
+    expect(findFiles).toHaveBeenCalledWith(
+      "**/*",
+      "**/{node_modules,dist,out,build,.git,coverage}/**",
+      200,
+    );
 
     const posted = lastAttachments(f);
     expect(posted?.chips).toHaveLength(1);
@@ -1116,13 +1118,9 @@ describe("activateWithDeps", () => {
       quickPickAnswers: [
         {
           label: "$(database) .env",
-          attachment: {
-            kind: "index",
-            itemId: "x",
-            name: ".env",
-            service: "gdrive",
-            snippet: "SECRET=1",
-          },
+          kind: "index",
+          item: { id: "x", name: ".env", service: "gdrive" },
+          snippet: "SECRET=1",
         },
       ],
     });
@@ -1132,6 +1130,40 @@ describe("activateWithDeps", () => {
 
     expect(f.warnMessages.some((m) => m.includes(".env") && m.includes("secret"))).toBe(true);
     expect(lastAttachments(f)).toBeUndefined();
+  });
+
+  // A row whose semanticSnippet already came back from the browse
+  // (searchRanked({limit})) call must not trigger a SECOND, per-attach
+  // lookup — attachIndexItem's fetch is a fallback for an absent snippet,
+  // not an unconditional re-query.
+  test("nimbus.attachContext's index rows skip the snippet lookup when one is already known", async () => {
+    const askStream = doneAskStream();
+    const searchRanked = vi.fn(async (_p: { name?: string; limit?: number }) => []);
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({ askStream, searchRanked } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+      quickPickAnswers: [
+        {
+          label: "$(database) Report",
+          kind: "index",
+          item: { id: "x", name: "Report", service: "github" },
+          snippet: "Already-known snippet content.",
+        },
+      ],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    // Exactly one call: the browse that built the picker's rows. A second
+    // call (the named lookup) would mean the known snippet was ignored.
+    expect(searchRanked).toHaveBeenCalledTimes(1);
+    expect(searchRanked).toHaveBeenCalledWith({ limit: expect.any(Number) });
+
+    await cmd(f, "nimbus.ask")();
+    const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
+    expect(sent).toContain("Already-known snippet content.");
   });
 
   test("nimbus.attachSelectionToAsk captures the selection text and 1-based line range", async () => {
@@ -1164,11 +1196,35 @@ describe("activateWithDeps", () => {
     expect(f.errorMessages.some((m) => m.includes("select text first"))).toBe(true);
   });
 
-  test("nimbus.attachIndexItemToAsk attaches from the node payload; an absent snippet is visibly unreadable", async () => {
-    const f = makeFixture({});
+  // The tree row never carries a snippet at all (NimbusItem has no such
+  // field) — attachIndexItem must fetch one via a NAMED searchRanked lookup,
+  // matched on indexPrimaryKey, before falling back to metadata. Proven at
+  // the CONTENT level (not just chip state) by actually sending a turn and
+  // reading what askStream received — the wire "attachments" message never
+  // carries the raw block, only label/detail/state/chars.
+  test("nimbus.attachIndexItemToAsk fetches a semantic snippet via a named searchRanked lookup", async () => {
+    const askStream = doneAskStream();
+    const searchRanked = vi.fn(async (p: { name?: string; limit?: number }) => {
+      if (p.name === "Q3 Deck") {
+        return [
+          {
+            name: "Q3 Deck",
+            service: "gdrive",
+            indexPrimaryKey: "a",
+            itemType: "file",
+            semanticSnippet: "Quarterly revenue is up 12% year over year.",
+          },
+        ];
+      }
+      return [];
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream, searchRanked } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+    });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
-    cmd(
+    await cmd(
       f,
       "nimbus.attachIndexItemToAsk",
     )({
@@ -1176,12 +1232,54 @@ describe("activateWithDeps", () => {
       contextValue: "nimbusIndexItem",
       payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
     });
+
+    expect(searchRanked).toHaveBeenCalledWith({ name: "Q3 Deck", limit: expect.any(Number) });
+    const posted = lastAttachments(f);
+    expect(posted?.chips[0]?.label).toBe("Q3 Deck");
+    expect(posted?.chips[0]?.state).toBe("sent");
+
+    // The fetched snippet, not a metadata block, is what actually left.
+    await cmd(f, "nimbus.ask")();
+    const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
+    expect(sent).toContain("Quarterly revenue is up 12% year over year.");
+  });
+
+  // Nothing in the index matches by name (or the match has no
+  // semanticSnippet either) — attachIndexItem must fall back to
+  // buildAskPrompt's metadata block rather than attaching emptiness. Proven
+  // by checking the block that actually reaches askStream contains the
+  // item's own name and service, so "we attached something" cannot pass
+  // while the block is blank.
+  test("nimbus.attachIndexItemToAsk falls back to a metadata block when no snippet can be found", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({
+        askStream,
+        searchRanked: async () => [],
+      } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+    });
+    activateWithDeps(f.ctx, f.deps);
     await waitForConnect();
+    await cmd(
+      f,
+      "nimbus.attachIndexItemToAsk",
+    )({
+      label: "Q3 Deck",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
+    });
 
     const posted = lastAttachments(f);
     expect(posted?.chips[0]?.label).toBe("Q3 Deck");
-    expect(posted?.chips[0]?.state).toBe("refused");
-    expect(posted?.chips[0]?.detail).toBe("unreadable · not sent");
+    // A metadata block is real content, not emptiness — the assembler sends
+    // it, it does not refuse it as unreadable.
+    expect(posted?.chips[0]?.state).toBe("sent");
+
+    await cmd(f, "nimbus.ask")();
+    const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
+    expect(sent).toContain("Q3 Deck");
+    expect(sent).toContain("gdrive");
   });
 
   test("nimbus.attachIndexItemToAsk refuses a secret-shaped item with a warning, never attaching it", async () => {
@@ -1223,9 +1321,7 @@ describe("activateWithDeps", () => {
         searchRanked: async () => [],
       } as unknown as Partial<ClientLike>),
       inputBoxAnswers: ["hi"],
-      quickPickAnswers: [
-        { label: "$(file) src/a.ts", attachment: { kind: "file", path: "src/a.ts" } },
-      ],
+      quickPickAnswers: [{ label: "$(file) src/a.ts", kind: "file", path: "src/a.ts" }],
     });
     activateWithDeps(f.ctx, f.deps);
     await waitForConnect();

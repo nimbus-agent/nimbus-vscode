@@ -16,7 +16,6 @@ import { createPeekHover } from "./briefs/peek-hover.js";
 import { registerWhyPeekHover } from "./briefs/real-hover.js";
 import { createAttachmentCache } from "./chat/attachment-cache.js";
 import { toRepoRelative } from "./chat/attachment-paths.js";
-import type { Attachment } from "./chat/attachments.js";
 import {
   type ChatClientLike,
   type ChatController,
@@ -531,18 +530,54 @@ export function activateWithDeps(
   // controller, rather than attaching it and hoping the assembler notices (it
   // cannot). File and selection attachments stay covered by the assembler's
   // own path-based check.
-  const attachIndexItem = (
+  //
+  // Neither call site (the picker's index rows, nor the Index view's context
+  // menu) reliably has a snippet: `RankedSearchItem.semanticSnippet` is
+  // computed relative to a QUERY, and `searchRanked({limit})` with no `name`
+  // (a browse, not a search) plausibly returns rows with none; `NimbusItem` —
+  // what the tree row carries — has no snippet field at all, ever. So this is
+  // also the one place that fills one in, in two steps: try a named
+  // `searchRanked` lookup for a real semantic snippet, and if that still
+  // yields nothing, fall back to `buildAskPrompt`'s metadata block (name,
+  // service, type, URL) rather than attaching emptiness. A metadata-only
+  // attachment still lets the turn say which indexed item is being asked
+  // about — it is not file content, and nothing here claims it is.
+  const attachIndexItem = async (
     ctl: ChatController,
-    a: Extract<Attachment, { kind: "index" }>,
-  ): void => {
-    if (isSecretPath(a.name)) {
+    item: IndexItem,
+    known: string,
+  ): Promise<void> => {
+    if (isSecretPath(item.name)) {
       void deps.window.showWarningMessage(
-        `Nimbus: "${a.name}" looks like it may hold a secret and was not attached.`,
+        `Nimbus: "${item.name}" looks like it may hold a secret and was not attached.`,
       );
       return;
     }
-    ctl.attach(a);
+    let snippet = known;
+    if (snippet.trim().length === 0) {
+      const client = nimbus();
+      if (client !== undefined) {
+        try {
+          const hits = await client.searchRanked({
+            name: item.name,
+            limit: settings.searchLimit(),
+          });
+          const found = hits.find((h) => h.indexPrimaryKey === item.id)?.semanticSnippet;
+          if (found !== undefined && found.trim().length > 0) snippet = found;
+        } catch (e) {
+          log.warn(`attach index item: snippet lookup failed: ${errMsg(e)}`);
+        }
+      }
+    }
+    if (snippet.trim().length === 0) snippet = buildAskPrompt(item);
+    ctl.attach({ kind: "index", itemId: item.id, name: item.name, service: item.service, snippet });
   };
+
+  // service · itemType, so a same-named hit from two services (or a doc vs a
+  // PR of the same title) is never ambiguous in the list — and so
+  // matchOnDescription actually has something to match against.
+  const describeIndexItem = (item: IndexItem): string =>
+    item.itemType !== undefined ? `${item.service} · ${item.itemType}` : item.service;
 
   // The picker blends two sources into one Quick Pick — indexed workspace files
   // (via findFiles) and hits from the local index (via searchRanked) — each row
@@ -555,38 +590,52 @@ export function activateWithDeps(
     if (ctl === undefined) return;
     // A literal exclude glob, not `undefined`: passing `undefined` here falls
     // back to the user's `files.exclude` setting, whose out-of-the-box default
-    // covers only VCS metadata (.git, .svn, .hg) and NOT node_modules — so a
-    // typical repo's node_modules would dominate the picker's window before it
-    // is ever capped. `max` bounds the result COUNT, not what fills it; the
-    // exclude is what keeps that count meaningful in a large repository.
-    const files = await deps.workspace.findFiles("**/*", "**/node_modules/**", 200);
+    // covers only VCS metadata (.git, .svn, .hg) — not node_modules, dist,
+    // out, build or coverage. `max` bounds the result COUNT, not what fills
+    // it; the exclude is what keeps that count meaningful in a large
+    // repository, where VS Code fills the 200 slots in walk order rather than
+    // by relevance.
+    const files = await deps.workspace.findFiles(
+      "**/*",
+      "**/{node_modules,dist,out,build,.git,coverage}/**",
+      200,
+    );
     const root = workspaceRoot();
     const fileItems = files.map((f) => {
       const path = toRepoRelative(root, f.fsPath);
       return {
         label: `$(file) ${path}`,
-        attachment: { kind: "file", path } as Attachment,
+        kind: "file" as const,
+        path,
       };
     });
-    let indexItems: typeof fileItems = [];
+    let indexItems: Array<{
+      label: string;
+      description: string;
+      kind: "index";
+      item: IndexItem;
+      snippet: string;
+    }> = [];
     const client = nimbus();
     if (client !== undefined) {
       try {
         const hits = await client.searchRanked({ limit: settings.searchLimit() });
-        indexItems = hits.map((h) => ({
-          label: `$(database) ${h.name}`,
-          attachment: {
-            kind: "index",
-            // Verified against the pinned client: RankedSearchItem carries
-            // `indexPrimaryKey` and an OPTIONAL `semanticSnippet` — there is no
-            // `snippet` field. `name`/`service` come from NimbusItem, which is
-            // what src/sidebar/index.ts already reads.
-            itemId: h.indexPrimaryKey,
+        indexItems = hits.map((h) => {
+          const item: IndexItem = {
+            id: h.indexPrimaryKey,
             name: h.name,
             service: h.service,
+            itemType: h.itemType,
+          };
+          if (h.url !== undefined) item.url = h.url;
+          return {
+            label: `$(database) ${item.name}`,
+            description: describeIndexItem(item),
+            kind: "index" as const,
+            item,
             snippet: h.semanticSnippet ?? "",
-          } as Attachment,
-        }));
+          };
+        });
       } catch (e) {
         log.warn(`attach picker: index unavailable: ${errMsg(e)}`);
       }
@@ -596,11 +645,11 @@ export function activateWithDeps(
       matchOnDescription: true,
     });
     if (chosen === undefined) return;
-    if (chosen.attachment.kind === "file") {
-      await cacheFile(chosen.attachment.path);
-      ctl.attach(chosen.attachment);
-    } else if (chosen.attachment.kind === "index") {
-      attachIndexItem(ctl, chosen.attachment);
+    if (chosen.kind === "file") {
+      await cacheFile(chosen.path);
+      ctl.attach({ kind: "file", path: chosen.path });
+    } else {
+      await attachIndexItem(ctl, chosen.item, chosen.snippet);
     }
   };
 
@@ -1217,7 +1266,13 @@ export function activateWithDeps(
     // Captured NOW: a stored range drifts under edits, and the assembler wants
     // the text as it looked at attach time, not a pointer that can go stale.
     const text = editor.document.getText(editor.selection);
-    if (text.trim().length === 0) return;
+    // Same message as the empty-selection case above: a whitespace-only
+    // selection is not usefully "selected text" either, and a silent no-op
+    // here would look identical to the command doing nothing at all.
+    if (text.trim().length === 0) {
+      void deps.window.showErrorMessage("Nimbus: select text first.");
+      return;
+    }
     const ctl = ensureChatController();
     if (ctl === undefined) return;
     ctl.attach({
@@ -1231,7 +1286,7 @@ export function activateWithDeps(
     });
   });
 
-  register("nimbus.attachIndexItemToAsk", (...args) => {
+  register("nimbus.attachIndexItemToAsk", async (...args) => {
     // A view/item/context command receives the tree NODE element, not the
     // row's command.arguments — the IndexItem rides on node.payload (see
     // itemToRow), exactly as nimbus.askAboutIndexItem reads it.
@@ -1244,17 +1299,11 @@ export function activateWithDeps(
     if (item === undefined) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;
-    // The row carries no snippet (NimbusItem has none) — an empty one attaches
-    // and the assembler correctly reports it as "unreadable · not sent",
-    // visibly rather than silently, exactly as it does for a searchRanked hit
-    // whose semanticSnippet is absent.
-    attachIndexItem(ctl, {
-      kind: "index",
-      itemId: item.id,
-      name: item.name,
-      service: item.service,
-      snippet: "",
-    });
+    // The row carries no snippet at all (NimbusItem has no such field) — pass
+    // "" so attachIndexItem tries a named searchRanked lookup and, failing
+    // that, falls back to the buildAskPrompt metadata block, exactly as the
+    // picker's index rows do when theirs turns out empty too.
+    await attachIndexItem(ctl, item, "");
   });
 
   // Wired here rather than beside the other seams above because it is the one

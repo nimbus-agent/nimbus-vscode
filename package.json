@@ -602,6 +602,10 @@
           "when": "false"
         },
         {
+          "command": "nimbus.attachIndexItemToAsk",
+          "when": "false"
+        },
+        {
           "command": "nimbus.diagnosticExplain",
           "when": "false"
         },
