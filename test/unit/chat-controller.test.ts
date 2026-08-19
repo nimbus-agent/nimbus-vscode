@@ -139,7 +139,11 @@ describe("ChatController", () => {
     );
     await ctrl.resume("s9", 50);
     expect(set).toHaveBeenCalledWith("s9");
-    expect(postedTypes(posted)).toEqual(["reset", "hydrate"]);
+    // "attachments" (empty) first: attachments are session-scoped, so
+    // resuming a DIFFERENT session clears them, exactly as newConversation()
+    // already does — a stale chip from the session being left would
+    // otherwise be sent on the next turn in session s9.
+    expect(postedTypes(posted)).toEqual(["attachments", "reset", "hydrate"]);
     expect(getSessionTranscript).toHaveBeenCalledWith({ sessionId: "s9", limit: 50 });
   });
 
@@ -259,7 +263,8 @@ describe("ChatController", () => {
       ),
     );
     await ctrl.resume("s3", 5);
-    expect(postedTypes(posted)).toEqual(["reset", "emptyState"]);
+    // "attachments" (empty) first — see the matching comment above.
+    expect(postedTypes(posted)).toEqual(["attachments", "reset", "emptyState"]);
   });
 
   test("askStream messages get translated to webview postMessage", async () => {

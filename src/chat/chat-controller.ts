@@ -350,6 +350,15 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await hydrate(sid, limit);
     },
     async resume(sessionId, limit): Promise<void> {
+      // Attachments are session-scoped, exactly like newConversation()
+      // already treats them — resuming a DIFFERENT session must not carry the
+      // previous session's chips along. They would genuinely be sent (this is
+      // not a display-only bug), which is worse than the stale-chip case
+      // newConversation() guards against: nothing untrue is shown, but
+      // "session-scoped" stops meaning that the moment a resume forgets to
+      // clear them.
+      attached.clear();
+      postAttachments(true);
       generation += 1; // switching sessions supersedes any in-flight hydrate
       if (active !== undefined) {
         const handle = active;

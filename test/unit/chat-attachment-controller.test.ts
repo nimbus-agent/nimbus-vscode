@@ -98,6 +98,28 @@ describe("attachment state", () => {
     await h.ctl.newConversation();
     expect(h.ctl.attachments()).toHaveLength(0);
   });
+
+  // Attachments are session-scoped: resuming a DIFFERENT session must not
+  // carry session A's chips into session B, exactly as newConversation()
+  // already clears them. They would genuinely be sent — this is not a
+  // display-only staleness bug.
+  test("resuming a different session clears them, same as a new conversation", async () => {
+    const h = harness({ "a.ts": "x\n" });
+    h.ctl.attach(file("a.ts"));
+    await h.ctl.resume("session-b", 10);
+    expect(h.ctl.attachments()).toHaveLength(0);
+  });
+
+  test("resuming posts the now-empty attachment state, so a stale chip doesn't linger in the composer", async () => {
+    const h = harness({ "a.ts": "x\n" });
+    h.ctl.attach(file("a.ts"));
+    h.posted.length = 0; // ignore the attach-time post
+    await h.ctl.resume("session-b", 10);
+    const msg = h.posted.find((m) => m.type === "attachments");
+    expect(msg).toBeDefined();
+    if (msg?.type !== "attachments") throw new Error("expected attachments");
+    expect(msg.chips).toHaveLength(0);
+  });
 });
 
 describe("sending", () => {
