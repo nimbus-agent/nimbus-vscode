@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.19.0...v0.20.0) (2026-08-19)
+
+
+### Features
+
+* **connectors:** manage connectors and index health from the editor ([#115](https://github.com/nimbus-agent/nimbus-vscode/issues/115)) ([4ffe94e](https://github.com/nimbus-agent/nimbus-vscode/commit/4ffe94eb56e5f0d2d5c8a6d804b4b93d6952a3cd))
+
 ## [0.19.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.18.0...v0.19.0) (2026-08-18)
 
 
