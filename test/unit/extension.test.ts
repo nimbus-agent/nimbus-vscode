@@ -3,7 +3,6 @@ import { join } from "node:path";
 
 import { describe, expect, test, vi } from "vitest";
 import { commands, env, Uri, window as vscodeWindow, workspace as vscodeWorkspace } from "vscode";
-
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
@@ -157,6 +156,10 @@ interface Captured {
   // Webview message handlers registered via panel.onMessage(), so tests can
   // simulate the chat panel posting messages back to the extension host.
   webviewMessageHandlers: Array<(msg: unknown) => void>;
+  // Every message the (fake) chat panel would have posted to the webview —
+  // the only way these tests can see an attach command's effect, since
+  // ChatController lives inside extension.ts's closure.
+  postedToWebview: unknown[];
   panelRevealedCount: number;
   // Lets a test invoke the chat panel's onDispose listeners directly (the same
   // way a real webview panel firing onDidDispose would), without exposing the
@@ -275,6 +278,9 @@ function makeFixture(opts: {
     languageId?: string;
     /** Zero-based cursor line, as VS Code reports it. Defaults to 0. */
     line?: number;
+    /** Zero-based selection range endpoints. Default to `line` when omitted. */
+    startLine?: number;
+    endLine?: number;
     /** document.uri.scheme. Defaults to "file"; set to e.g. "untitled" or a
      *  virtual scheme to exercise the brief commands' real-file filter. */
     scheme?: string;
@@ -285,7 +291,11 @@ function makeFixture(opts: {
   realAuditDetail?: boolean;
   realProofSave?: boolean;
   quickPickAnswers?: Array<
-    { label: string; preset?: { label: string; prompt: string } } | undefined
+    | { label: string; preset?: { label: string; prompt: string } }
+    | { label: string; kind: "file"; path: string }
+    | { label: string; description?: string; kind: "index"; item: IndexItem; snippet: string }
+    | { label: string; kind: "status" }
+    | undefined
   >;
   infoMessageClicks?: Array<string | undefined>;
   warnMessageClicks?: Array<string | undefined>;
@@ -302,6 +312,14 @@ function makeFixture(opts: {
    */
   cancelSubscribers?: Array<() => void>;
   workspaceFolders?: readonly { uri: { fsPath: string } }[];
+  /** What `workspace.findFiles` resolves to — the attach picker's file half. */
+  findFilesResult?: readonly { fsPath: string }[];
+  /**
+   * Absolute fsPath -> file text, backing `workspace.openTextDocument` — what
+   * the attachment cache primes from. A path missing here rejects, matching
+   * the "file deleted since indexed" case the cache already tolerates.
+   */
+  fileContents?: Record<string, string>;
 }): Captured & { deps: ActivateDeps } {
   const ctx: ExtensionContextLike = {
     subscriptions: [],
@@ -330,6 +348,7 @@ function makeFixture(opts: {
   const cancelSubscribers = opts.cancelSubscribers ?? [];
 
   const webviewMessageHandlers: Array<(msg: unknown) => void> = [];
+  const postedToWebview: unknown[] = [];
   const openedDocs: Array<{ title: string; content: string }> = [];
   const treeProviders = new Map<string, RegisteredProvider>();
   const panelDisposeListeners: Array<() => void> = [];
@@ -349,7 +368,10 @@ function makeFixture(opts: {
     onMessage: (h) => {
       webviewMessageHandlers.push(h);
     },
-    postMessage: () => Promise.resolve(true),
+    postMessage: (msg: unknown) => {
+      postedToWebview.push(msg);
+      return Promise.resolve(true);
+    },
     isVisible: () => opts.panelVisible ?? false,
     isActive: () => opts.panelActive ?? false,
   };
@@ -407,6 +429,8 @@ function makeFixture(opts: {
             selection: {
               isEmpty: opts.activeEditor.empty ?? false,
               active: { line: opts.activeEditor.line ?? 0 },
+              start: { line: opts.activeEditor.startLine ?? opts.activeEditor.line ?? 0 },
+              end: { line: opts.activeEditor.endLine ?? opts.activeEditor.line ?? 0 },
             },
             document: {
               getText: (range?: unknown) =>
@@ -453,6 +477,15 @@ function makeFixture(opts: {
     isTrusted: opts.isTrusted ?? true,
     workspaceFolders: opts.workspaceFolders,
     textDocuments: [],
+    openTextDocument: (fsPath: string) => {
+      const text = opts.fileContents?.[fsPath];
+      return text === undefined
+        ? Promise.reject(new Error("not implemented in test double"))
+        : Promise.resolve({ getText: () => text, uri: { fsPath } });
+    },
+    findFiles: vi.fn((_include: string, _exclude: string | undefined, _max: number) =>
+      Promise.resolve([...(opts.findFilesResult ?? [])]),
+    ),
   };
 
   const commands: CommandsApi = {
@@ -518,6 +551,7 @@ function makeFixture(opts: {
     configChangeHandlers,
     cfgValues,
     webviewMessageHandlers,
+    postedToWebview,
     get panelRevealedCount(): number {
       return panelRevealed;
     },
@@ -539,6 +573,25 @@ function cmd(f: Captured, id: string): (...args: unknown[]) => unknown {
   const h = f.commandHandlers.get(id);
   if (h === undefined) throw new Error(`command ${id} not registered`);
   return h;
+}
+
+interface WireChip {
+  id: string;
+  label: string;
+  detail: string;
+  state: string;
+  chars: number;
+}
+
+// The most recent "attachments" message posted to the (fake) chat panel — the
+// only observable trace of an attach command's effect from outside
+// extension.ts's closure, since ChatController itself is never exposed.
+function lastAttachments(f: Captured): { chips: readonly WireChip[] } | undefined {
+  const msgs = f.postedToWebview.filter(
+    (m): m is { type: "attachments"; chips: readonly WireChip[] } =>
+      typeof m === "object" && m !== null && (m as { type?: unknown }).type === "attachments",
+  );
+  return msgs.at(-1);
 }
 
 // An askStream handle that immediately yields a terminal "done" event, so a
@@ -1009,6 +1062,435 @@ describe("activateWithDeps", () => {
     await waitForConnect();
     await cmd(f, "nimbus.askAboutIndexItem")({ label: "x", contextValue: "nimbusIndexItem" });
     expect(askStream).not.toHaveBeenCalled();
+  });
+
+  test("nimbus.attachContext excludes node_modules and primes+attaches the chosen file", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      fileContents: { "/home/dev/proj/src/a.ts": "console.log('hi');\n" },
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+      quickPickAnswers: [{ label: "$(file) src/a.ts", kind: "file", path: "src/a.ts" }],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    const findFiles = f.deps.workspace.findFiles as ReturnType<typeof vi.fn>;
+    expect(findFiles).toHaveBeenCalledWith(
+      "**/*",
+      "**/{node_modules,dist,out,build,.git,coverage}/**",
+      200,
+    );
+
+    const posted = lastAttachments(f);
+    expect(posted?.chips).toHaveLength(1);
+    expect(posted?.chips[0]?.label).toBe("src/a.ts");
+    // Primed BEFORE attach: had cacheFile never been awaited, this would read
+    // "unreadable · not sent" even though the file is perfectly readable.
+    expect(posted?.chips[0]?.state).toBe("sent");
+  });
+
+  test("nimbus.attachContext lists both files and index hits, each with its own icon", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      openClient: makeFakeClient({
+        searchRanked: async () => [
+          { name: "Q3 Deck", service: "gdrive", indexPrimaryKey: "gdrive:1", itemType: "file" },
+        ],
+      } as never),
+      quickPickAnswers: [undefined],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    const showQuickPick = f.deps.window.showQuickPick as ReturnType<typeof vi.fn>;
+    const items = showQuickPick.mock.calls[0]?.[0] as Array<{ label: string }>;
+    expect(items.some((i) => i.label === "$(file) src/a.ts")).toBe(true);
+    expect(items.some((i) => i.label === "$(database) Q3 Deck")).toBe(true);
+  });
+
+  // Degraded state the spec's table requires: "searchRanked throws while
+  // picking → the picker shows files only, with a row explaining the index
+  // is unavailable." Before this fix, a thrown searchRanked only produced a
+  // `log.warn` — a user with the Gateway down saw a files-only picker
+  // indistinguishable from "your index is empty".
+  test("nimbus.attachContext shows a status row (not silence) when searchRanked throws", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      openClient: makeFakeClient({
+        searchRanked: async () => {
+          throw new Error("index down");
+        },
+      } as never),
+      quickPickAnswers: [undefined],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    const showQuickPick = f.deps.window.showQuickPick as ReturnType<typeof vi.fn>;
+    const items = showQuickPick.mock.calls[0]?.[0] as Array<{
+      label: string;
+      kind?: string;
+    }>;
+    expect(items.some((i) => i.label === "$(file) src/a.ts")).toBe(true);
+    const status = items.find((i) => i.kind === "status");
+    expect(status?.label).toContain("Index unavailable");
+  });
+
+  // Selecting the status row must be a no-op — it exists to explain absence,
+  // not to be attached.
+  test("nimbus.attachContext's status row cannot itself be attached", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({
+        searchRanked: async () => {
+          throw new Error("index down");
+        },
+      } as never),
+      quickPickAnswers: [{ label: "$(warning) Index unavailable", kind: "status" }],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+
+  test("nimbus.attachContext refuses a secret-shaped index hit with a warning instead of attaching it", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+      quickPickAnswers: [
+        {
+          label: "$(database) .env",
+          kind: "index",
+          item: { id: "x", name: ".env", service: "gdrive" },
+          snippet: "SECRET=1",
+        },
+      ],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    expect(f.warnMessages.some((m) => m.includes(".env") && m.includes("secret"))).toBe(true);
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+
+  // A row whose semanticSnippet already came back from the browse
+  // (searchRanked({limit})) call must not trigger a SECOND, per-attach
+  // lookup — attachIndexItem's fetch is a fallback for an absent snippet,
+  // not an unconditional re-query.
+  test("nimbus.attachContext's index rows skip the snippet lookup when one is already known", async () => {
+    const askStream = doneAskStream();
+    const searchRanked = vi.fn(async (_p: { name?: string; limit?: number }) => []);
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({ askStream, searchRanked } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+      quickPickAnswers: [
+        {
+          label: "$(database) Report",
+          kind: "index",
+          item: { id: "x", name: "Report", service: "github" },
+          snippet: "Already-known snippet content.",
+        },
+      ],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    // Exactly one call: the browse that built the picker's rows. A second
+    // call (the named lookup) would mean the known snippet was ignored.
+    expect(searchRanked).toHaveBeenCalledTimes(1);
+    expect(searchRanked).toHaveBeenCalledWith({ limit: expect.any(Number) });
+
+    await cmd(f, "nimbus.ask")();
+    const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
+    expect(sent).toContain("Already-known snippet content.");
+  });
+
+  test("nimbus.attachSelectionToAsk captures the selection text and 1-based line range", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      activeEditor: {
+        text: "line0\nline1\nline2\nline3\n",
+        selectionText: "line1\nline2",
+        empty: false,
+        startLine: 1,
+        endLine: 2,
+        fileName: "/home/dev/proj/src/a.ts",
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.attachSelectionToAsk")();
+    await waitForConnect();
+
+    const posted = lastAttachments(f);
+    expect(posted?.chips[0]?.label).toBe("src/a.ts");
+    expect(posted?.chips[0]?.detail).toContain("lines 2-3");
+  });
+
+  test("nimbus.attachSelectionToAsk errors when there is no selection", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.attachSelectionToAsk")();
+    expect(f.errorMessages.some((m) => m.includes("select text first"))).toBe(true);
+  });
+
+  // The tree row never carries a snippet at all (NimbusItem has no such
+  // field) — attachIndexItem must fetch one via a NAMED searchRanked lookup,
+  // matched on indexPrimaryKey, before falling back to metadata. Proven at
+  // the CONTENT level (not just chip state) by actually sending a turn and
+  // reading what askStream received — the wire "attachments" message never
+  // carries the raw block, only label/detail/state/chars.
+  test("nimbus.attachIndexItemToAsk fetches a semantic snippet via a named searchRanked lookup", async () => {
+    const askStream = doneAskStream();
+    const searchRanked = vi.fn(async (p: { name?: string; limit?: number }) => {
+      if (p.name === "Q3 Deck") {
+        return [
+          {
+            name: "Q3 Deck",
+            service: "gdrive",
+            indexPrimaryKey: "a",
+            itemType: "file",
+            semanticSnippet: "Quarterly revenue is up 12% year over year.",
+          },
+        ];
+      }
+      return [];
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ askStream, searchRanked } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(
+      f,
+      "nimbus.attachIndexItemToAsk",
+    )({
+      label: "Q3 Deck",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
+    });
+
+    expect(searchRanked).toHaveBeenCalledWith({ name: "Q3 Deck", limit: expect.any(Number) });
+    const posted = lastAttachments(f);
+    expect(posted?.chips[0]?.label).toBe("Q3 Deck");
+    expect(posted?.chips[0]?.state).toBe("sent");
+
+    // The fetched snippet, not a metadata block, is what actually left.
+    await cmd(f, "nimbus.ask")();
+    const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
+    expect(sent).toContain("Quarterly revenue is up 12% year over year.");
+  });
+
+  // Nothing in the index matches by name (or the match has no
+  // semanticSnippet either) — attachIndexItem must fall back to a NEUTRAL
+  // metadata block rather than attaching emptiness. Proven by checking the
+  // block that actually reaches askStream contains the item's own name and
+  // service, so "we attached something" cannot pass while the block is
+  // blank — and that it carries no imperative, since it is prepended AHEAD
+  // of the user's own typed question and must not upstage it.
+  test("nimbus.attachIndexItemToAsk falls back to a metadata block when no snippet can be found", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({
+        askStream,
+        searchRanked: async () => [],
+      } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(
+      f,
+      "nimbus.attachIndexItemToAsk",
+    )({
+      label: "Q3 Deck",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: "Q3 Deck", service: "gdrive", itemType: "file" },
+    });
+
+    const posted = lastAttachments(f);
+    expect(posted?.chips[0]?.label).toBe("Q3 Deck");
+    // A metadata block is real content, not emptiness — the assembler sends
+    // it, it does not refuse it as unreadable.
+    expect(posted?.chips[0]?.state).toBe("sent");
+
+    await cmd(f, "nimbus.ask")();
+    const sent = (askStream.mock.calls[0]?.[0] as string | undefined) ?? "";
+    expect(sent).toContain("Q3 Deck");
+    expect(sent).toContain("gdrive");
+    // Not buildAskPrompt's imperative: the user's own typed question ("hi")
+    // must read as the instruction, not have one prepended ahead of it.
+    expect(sent).not.toContain("Tell me about");
+  });
+
+  test("nimbus.attachIndexItemToAsk refuses a secret-shaped item with a warning, never attaching it", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(
+      f,
+      "nimbus.attachIndexItemToAsk",
+    )({
+      label: ".env.production",
+      contextValue: "nimbusIndexItem",
+      payload: { id: "a", name: ".env.production", service: "local_files" },
+    });
+    await waitForConnect();
+
+    expect(f.warnMessages.some((m) => m.includes(".env.production") && m.includes("secret"))).toBe(
+      true,
+    );
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+
+  test("nimbus.attachIndexItemToAsk is a no-op for a node without a payload", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.attachIndexItemToAsk")({ label: "x", contextValue: "nimbusIndexItem" });
+    await waitForConnect();
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+
+  test("openAttachPicker and detachContext webview messages route to the attach picker and detach", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      fileContents: { "/home/dev/proj/src/a.ts": "console.log('hi');\n" },
+      openClient: makeFakeClient({
+        askStream: doneAskStream(),
+        searchRanked: async () => [],
+      } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+      quickPickAnswers: [{ label: "$(file) src/a.ts", kind: "file", path: "src/a.ts" }],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    // Ask first, so the panel exists and registers its onMessage handler.
+    await cmd(f, "nimbus.ask")();
+    const fire = f.webviewMessageHandlers[0];
+    if (fire === undefined) throw new Error("no webview message handler registered");
+
+    // `fire` mirrors panel.onMessage's real signature — void, fire-and-forget —
+    // so its async work (findFiles/searchRanked/showQuickPick/cacheFile) is
+    // only OBSERVABLE after letting the microtask queue drain, same as the
+    // "route every known message type" test above does for submitAsk.
+    fire({ type: "openAttachPicker" });
+    await waitForConnect();
+    await waitForConnect();
+    const afterAttach = lastAttachments(f);
+    const id = afterAttach?.chips[0]?.id;
+    expect(id).toBeTruthy();
+
+    fire({ type: "detachContext", id });
+    await waitForConnect();
+    const afterDetach = lastAttachments(f);
+    expect(afterDetach?.chips).toHaveLength(0);
+  });
+
+  // Before this fix, `openAttachPicker: () => attachPicker()` had no
+  // try/catch, and panel.onMessage's caller `void`-s the handler's promise —
+  // a thrown findFiles (a very large or virtual workspace can throw rather
+  // than reject gracefully) left the Attach button doing nothing at all: no
+  // message, no log. `onSubmitAsk` right next door already guards this;
+  // mirrored here.
+  test("openAttachPicker webview message logs rather than swallowing when the picker throws", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({
+        askStream: doneAskStream(),
+        searchRanked: async () => [],
+      } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.ask")();
+    const fire = f.webviewMessageHandlers[0];
+    if (fire === undefined) throw new Error("no webview message handler registered");
+
+    (f.deps.workspace.findFiles as ReturnType<typeof vi.fn>).mockImplementationOnce(async () => {
+      throw new Error("workspace too large to enumerate");
+    });
+
+    expect(() => fire({ type: "openAttachPicker" })).not.toThrow();
+    await waitForConnect();
+    await waitForConnect();
+    expect(
+      f.outputAppendLines.some(
+        (l) => l.includes("openAttachPicker failed") && l.includes("too large"),
+      ),
+    ).toBe(true);
+  });
+
+  // `attachments.ts` promises a secret-shaped path is "never even read" — the
+  // picker's file branch called cacheFile() BEFORE attaching, reading a
+  // picked .env's bytes into the extension host even though the assembler
+  // would refuse to send them. No bytes left the process, but the comment
+  // and the behaviour disagreed; this proves the read itself is skipped.
+  test("nimbus.attachContext never reads a secret-shaped file picked from the list", async () => {
+    const openTextDocument = vi.fn(async () => ({
+      getText: () => "SECRET=1",
+      uri: { fsPath: "/home/dev/proj/.env" },
+    }));
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/.env" }],
+      openClient: makeFakeClient({ searchRanked: async () => [] } as never),
+      quickPickAnswers: [{ label: "$(file) .env", kind: "file", path: ".env" }],
+    });
+    f.deps.workspace.openTextDocument = openTextDocument;
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+
+    expect(openTextDocument).not.toHaveBeenCalled();
+    // Still attached (and still correctly refused by the assembler) — this
+    // is about the READ, not about whether the chip shows up.
+    const posted = lastAttachments(f);
+    expect(posted?.chips[0]?.label).toBe(".env");
+    expect(posted?.chips[0]?.state).toBe("refused");
+  });
+
+  // When a chat controller already exists, ensureChatController() returns it
+  // WITHOUT calling createOrReveal() — so an attach from the editor context
+  // menu, with the Nimbus tab in a background group, used to look like
+  // nothing happened.
+  test("nimbus.attachSelectionToAsk reveals the panel even when the controller already exists", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({ askStream: doneAskStream() } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["hi"],
+      activeEditor: {
+        text: "line0\nline1\n",
+        selectionText: "line1",
+        empty: false,
+        startLine: 1,
+        endLine: 1,
+        fileName: "/home/dev/proj/src/a.ts",
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.ask")(); // creates the controller (and reveals once)
+    const revealedAfterCreate = f.panelRevealedCount;
+
+    cmd(f, "nimbus.attachSelectionToAsk")();
+    await waitForConnect();
+
+    expect(f.panelRevealedCount).toBeGreaterThan(revealedAfterCreate);
   });
 
   test("falls back to the real read-only JSON opener when none is injected", async () => {
@@ -1845,11 +2327,20 @@ describe("activateWithDeps", () => {
       fire({ type: "stopStream" });
       fire({ type: "hitlResponse", requestId: "x", decision: "approve" });
       fire({ type: "openExternal", url: "https://example.com" });
+      fire({ type: "openAttachPicker" });
+      fire({ type: "detachContext", id: "a1" });
       fire({ type: "unknownType" });
       fire("not an object");
       fire(null);
       fire({ noType: true });
     }).not.toThrow();
+
+    // `startGateway` above kicks off a fire-and-forget reconnect
+    // (closeClient -> tryConnect); let it fully settle before relying on the
+    // connection again, or submitAsk can land in the brief disconnected
+    // window and skip the askStream call it's here to prove happens.
+    await waitForConnect();
+    await waitForConnect();
 
     await fire({ type: "submitAsk", text: "follow-up" });
     expect(askStream.mock.calls.length).toBeGreaterThanOrEqual(2);

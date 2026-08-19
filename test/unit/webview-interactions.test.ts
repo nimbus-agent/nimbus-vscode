@@ -11,6 +11,10 @@ const CHAT_SHELL = `
   <footer id="footer">
     <ul id="subtask-list"></ul>
     <span id="status"></span>
+    <div id="attach-row">
+      <div id="attach-mount"></div>
+      <button type="button" id="attach-btn">Attach…</button>
+    </div>
     <form id="input-form">
       <textarea id="input-text"></textarea>
       <button type="submit" id="input-send">Send</button>
@@ -132,6 +136,43 @@ describe("webview applyMessage", () => {
     expect(() => dispatch({ type: "themeChange" })).not.toThrow();
   });
 
+  test("attachments replaces the composer chip container on every post", () => {
+    dispatch({
+      type: "attachments",
+      chips: [{ id: "a1", label: "src/a.ts", detail: "", state: "sent", chars: 20 }],
+      totalChars: 20,
+      provisional: true,
+    });
+    expect($("#attach-mount").innerHTML).toContain("src/a.ts");
+    expect($("#attach-mount").innerHTML).toContain("estimated");
+    // A later post fully replaces the previous render — no leftover chip.
+    dispatch({ type: "attachments", chips: [], totalChars: 0, provisional: true });
+    expect($("#attach-mount").innerHTML).toBe("");
+  });
+
+  test("turnAttachments is spliced into the user turn userMessage creates next, as a non-removable record", () => {
+    dispatch({
+      type: "turnAttachments",
+      chips: [{ label: "src/a.ts", detail: "", state: "sent", chars: 20 }],
+    });
+    dispatch({ type: "userMessage", text: "explain this" });
+    const turn = document.querySelector("article.turn-user");
+    expect(turn?.innerHTML).toContain("src/a.ts");
+    expect(turn?.querySelector(".turn-chips")).not.toBeNull();
+  });
+
+  test("turnAttachmentsFailed discards the pending manifest before it is ever rendered", () => {
+    dispatch({
+      type: "turnAttachments",
+      chips: [{ label: "src/a.ts", detail: "", state: "sent", chars: 20 }],
+    });
+    dispatch({ type: "turnAttachmentsFailed" });
+    dispatch({ type: "userMessage", text: "explain this" });
+    const turn = document.querySelector("article.turn-user");
+    expect(turn?.innerHTML).not.toContain("src/a.ts");
+    expect(turn?.querySelector(".turn-chips")).toBeNull();
+  });
+
   test("cancelled finalizes the streaming turn, marks it Stopped, and re-enables send", () => {
     dispatch({ type: "userMessage", text: "q" });
     dispatch({ type: "token", text: "partial" });
@@ -212,6 +253,37 @@ describe("webview interactions", () => {
     click($("#input-stop"));
     expect($("#status").textContent).toBe("Stopping…");
     expect(btn("#input-stop").disabled).toBe(true);
+  });
+
+  test("clicking Attach posts openAttachPicker", () => {
+    click($("#attach-btn"));
+    expect(posted.at(-1)).toEqual({ type: "openAttachPicker" });
+  });
+
+  test("clicking a composer chip's remove button posts detachContext with its id", () => {
+    dispatch({
+      type: "attachments",
+      chips: [{ id: "a3", label: "src/a.ts", detail: "", state: "sent", chars: 20 }],
+      totalChars: 20,
+      provisional: true,
+    });
+    const removeBtn = document.querySelector<HTMLButtonElement>("#attach-mount button.chip-remove");
+    if (removeBtn === null) throw new Error("no chip-remove button");
+    click(removeBtn);
+    expect(posted.at(-1)).toEqual({ type: "detachContext", id: "a3" });
+  });
+
+  test("a sent-turn chip carries the turn-chips class styles.css hides its remove control under", () => {
+    dispatch({
+      type: "turnAttachments",
+      chips: [{ label: "src/a.ts", detail: "", state: "sent", chars: 20 }],
+    });
+    dispatch({ type: "userMessage", text: "q" });
+    const removeBtn = document.querySelector<HTMLButtonElement>(
+      "article.turn-user .turn-chips button.chip-remove",
+    );
+    if (removeBtn === null) throw new Error("no chip-remove button");
+    expect(removeBtn.closest(".turn-chips")).not.toBeNull();
   });
 
   test("empty-state action buttons post their commands", () => {

@@ -46,10 +46,32 @@ const DEPRIORITIZED_PATTERNS: readonly RegExp[] = [
   /\.snap$/,
 ];
 
+// Every pattern above that cares about position anchors on `(^|\/)` — a
+// forward slash. The SCM trio only ever calls this with a repo-relative path
+// (posix-joined by the git extension), so that was enough. The chat
+// attachment surface does not have that guarantee: a path outside the
+// workspace root (or with no workspace open at all) passes through
+// `toRepoRelative` UNCHANGED, backslashes and all, on Windows. Left
+// unnormalized, "C:\Users\me\keys\.env" never matches `(^|\/)\.env(\.|$)` —
+// the check silently passes a secret file through.
+function basename(path: string): string {
+  const normalized = path.replaceAll("\\", "/");
+  const idx = normalized.lastIndexOf("/");
+  return idx < 0 ? normalized : normalized.slice(idx + 1);
+}
+
 // A staged .env reaching a cloud LLM is the one unrecoverable mistake this
-// feature makes available, so the match is on the whole repo-relative path.
+// feature makes available. Matched two ways: the whole path, separators
+// normalized to `/` so a Windows backslash path can't evade the `(^|\/)`
+// anchors above; and the basename alone, so a secret file is caught even
+// when it lives outside any workspace root the anchored patterns could key
+// off of.
 export function isSecretPath(path: string): boolean {
-  return SECRET_PATTERNS.some((re) => re.test(path));
+  const normalized = path.replaceAll("\\", "/");
+  return (
+    SECRET_PATTERNS.some((re) => re.test(normalized)) ||
+    SECRET_PATTERNS.some((re) => re.test(basename(path)))
+  );
 }
 
 // Not excluded — just sent last. A 4000-line lockfile diff would otherwise eat

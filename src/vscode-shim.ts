@@ -105,7 +105,15 @@ export interface TextEditorLike {
   };
   // `active` is the cursor end of the selection — zero-based, straight from
   // vscode.Selection. agentsWhy({ref, line}) needs it; nothing else does yet.
-  selection: { isEmpty: boolean; active: { line: number } };
+  // `start`/`end` are the ordered range endpoints — zero-based too — that the
+  // attach-selection command needs to stamp a selection Attachment's
+  // startLine/endLine (`active` alone is just the cursor end, not the range).
+  selection: {
+    isEmpty: boolean;
+    active: { line: number };
+    start: { line: number };
+    end: { line: number };
+  };
 }
 
 export interface MessageOptionsLike {
@@ -198,6 +206,19 @@ export interface WorkspaceApi {
    * moves around while a request is in flight — so lookups here match on path.
    */
   textDocuments: readonly OpenTextDocumentLike[];
+  /**
+   * Reads a file that need not be open. `textDocuments` above only covers what
+   * VS Code already holds; an attachment usually names a file that is not open.
+   * Real VS Code returns the live buffer when the path is already open, so this
+   * alone is enough to prefer unsaved edits over the on-disk bytes.
+   */
+  openTextDocument(fsPath: string): Thenable<OpenTextDocumentLike>;
+  /** Workspace file search for the attach picker. `max` caps the result set. */
+  findFiles(
+    include: string,
+    exclude: string | undefined,
+    max: number,
+  ): Thenable<Array<{ fsPath: string }>>;
 }
 
 export interface MementoLike {

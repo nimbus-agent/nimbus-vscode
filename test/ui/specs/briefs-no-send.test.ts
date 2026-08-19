@@ -52,6 +52,24 @@ async function sendSentinel(): Promise<void> {
   await (await waitForModal()).pushButton("Send");
 }
 
+// The status bar's connector-health and egress-ledger polls (pollStatusBar in
+// src/extension.ts) run on their own timer regardless of anything a spec
+// does, and can land inside the window between a case's own action and its
+// sendSentinel() call. Both reach no model and are already outside the
+// pre-flight egress gate — same class as searchRanked/agents.whyPeek — so
+// seeing them here is expected background traffic, not a leak. Filtering
+// them out keeps the "sends nothing but the sentinel" guarantee honest: any
+// genuine gate-relevant (model-bound) call still shows up and fails the
+// assertion below loudly.
+const UNGATED_BACKGROUND_METHODS = new Set(["connector.listStatus", "egress.head"]);
+
+function gateRelevantMethods(): string[] {
+  return fake()
+    .requests()
+    .map((r) => r.method)
+    .filter((m) => !UNGATED_BACKGROUND_METHODS.has(m));
+}
+
 describe("briefs that never send", () => {
   before(async () => {
     await VSBrowser.instance.waitForWorkbench();
@@ -89,16 +107,19 @@ describe("briefs that never send", () => {
   });
 
   it("prefills the janitor prompt with the active file's relative ref", async () => {
+    // Re-focus the fixture file before doing anything else: on a retried
+    // attempt, a PRIOR attempt's own sendSentinel() left a read-only result
+    // tab focused (afterEach doesn't close editors), which is not the
+    // fixture file — without this, the retry sees no active file editor and
+    // the prefill assertion below fails for a reason that has nothing to do
+    // with what this case is testing.
+    await VSBrowser.instance.openResources(FIXTURE_FILE);
     await runCommand("Nimbus: Is this idle?");
     const input = await InputBox.create();
     expect(await input.getText()).to.equal("src/session.ts");
     await input.cancel();
     await sendSentinel();
-    expect(
-      fake()
-        .requests()
-        .map((r) => r.method),
-    ).to.deep.equal(["agents.ghost"]);
+    expect(gateRelevantMethods()).to.deep.equal(["agents.ghost"]);
   });
 
   it("rejects a negative idle-days value with an inline message", async () => {
@@ -112,11 +133,7 @@ describe("briefs that never send", () => {
     expect(message).to.contain("whole number of days");
     await days.cancel();
     await sendSentinel();
-    expect(
-      fake()
-        .requests()
-        .map((r) => r.method),
-    ).to.deep.equal(["agents.ghost"]);
+    expect(gateRelevantMethods()).to.deep.equal(["agents.ghost"]);
   });
 
   it("accepts a blank idle-days value", async () => {
@@ -144,11 +161,7 @@ describe("briefs that never send", () => {
     const days = await InputBox.create();
     await days.cancel();
     await sendSentinel();
-    expect(
-      fake()
-        .requests()
-        .map((r) => r.method),
-    ).to.deep.equal(["agents.ghost"]);
+    expect(gateRelevantMethods()).to.deep.equal(["agents.ghost"]);
   });
 
   it("cancels preflight when the namespace is left empty", async () => {
@@ -160,10 +173,6 @@ describe("briefs that never send", () => {
     await ns.setText("");
     await ns.confirm();
     await sendSentinel();
-    expect(
-      fake()
-        .requests()
-        .map((r) => r.method),
-    ).to.deep.equal(["agents.ghost"]);
+    expect(gateRelevantMethods()).to.deep.equal(["agents.ghost"]);
   });
 });

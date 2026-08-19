@@ -21,7 +21,34 @@ export type ExtensionToWebview =
       sub: "no-transcript" | "disconnected" | "permission-denied";
       socketPath?: string;
     }
-  | { type: "themeChange" };
+  | { type: "themeChange" }
+  | {
+      type: "attachments";
+      chips: ReadonlyArray<{
+        id: string;
+        label: string;
+        detail: string;
+        state: "sent" | "clamped" | "refused";
+        chars: number;
+      }>;
+      totalChars: number;
+      provisional: boolean;
+    }
+  | {
+      type: "turnAttachments";
+      chips: ReadonlyArray<{
+        label: string;
+        detail: string;
+        state: "sent" | "clamped" | "refused";
+        chars: number;
+      }>;
+    }
+  | {
+      // Retracts a "turnAttachments" the extension posted for a turn whose
+      // askStream() call then threw synchronously — the request never left,
+      // so the record it announced must not survive into the transcript.
+      type: "turnAttachmentsFailed";
+    };
 
 export type WebviewToExtension =
   | { type: "submitAsk"; text: string }
@@ -31,4 +58,6 @@ export type WebviewToExtension =
   | { type: "ready" }
   | { type: "openLogs" }
   | { type: "startGateway" }
-  | { type: "openExternal"; url: string };
+  | { type: "openExternal"; url: string }
+  | { type: "detachContext"; id: string }
+  | { type: "openAttachPicker" };

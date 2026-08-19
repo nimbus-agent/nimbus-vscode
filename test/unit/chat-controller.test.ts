@@ -104,6 +104,7 @@ function baseDeps(
     registerStreamWithHitl: () => undefined,
     unregisterStreamWithHitl: () => undefined,
     log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+    readFile: () => undefined,
     ...over,
   };
 }
@@ -138,7 +139,11 @@ describe("ChatController", () => {
     );
     await ctrl.resume("s9", 50);
     expect(set).toHaveBeenCalledWith("s9");
-    expect(postedTypes(posted)).toEqual(["reset", "hydrate"]);
+    // "attachments" (empty) first: attachments are session-scoped, so
+    // resuming a DIFFERENT session clears them, exactly as newConversation()
+    // already does — a stale chip from the session being left would
+    // otherwise be sent on the next turn in session s9.
+    expect(postedTypes(posted)).toEqual(["attachments", "reset", "hydrate"]);
     expect(getSessionTranscript).toHaveBeenCalledWith({ sessionId: "s9", limit: 50 });
   });
 
@@ -258,7 +263,8 @@ describe("ChatController", () => {
       ),
     );
     await ctrl.resume("s3", 5);
-    expect(postedTypes(posted)).toEqual(["reset", "emptyState"]);
+    // "attachments" (empty) first — see the matching comment above.
+    expect(postedTypes(posted)).toEqual(["attachments", "reset", "emptyState"]);
   });
 
   test("askStream messages get translated to webview postMessage", async () => {
@@ -280,6 +286,7 @@ describe("ChatController", () => {
       registerStreamWithHitl: () => undefined,
       unregisterStreamWithHitl: () => undefined,
       log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+      readFile: () => undefined,
     });
     await ctrl.start("hi");
     const types = posted.map((m) => (m as { type: string }).type);
@@ -391,6 +398,7 @@ describe("ChatController", () => {
       registerStreamWithHitl: () => undefined,
       unregisterStreamWithHitl: () => undefined,
       log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+      readFile: () => undefined,
     });
     const p = ctrl.start("first");
     await expect(ctrl.start("second")).rejects.toThrow(/in progress/i);
@@ -417,10 +425,25 @@ describe("ChatController", () => {
       registerStreamWithHitl: () => undefined,
       unregisterStreamWithHitl: () => undefined,
       log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+      readFile: () => undefined,
     });
     await ctrl.newConversation();
     expect(cleared).toHaveBeenCalled();
     expect(posted.some((m) => (m as { type: string }).type === "reset")).toBe(true);
+  });
+
+  test("newConversation posts an empty attachments manifest, so the composer stops showing dropped chips", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(baseDeps(fakeChatClient(), { panel }));
+    ctrl.attach({ kind: "selection", path: "a.ts", startLine: 1, endLine: 2, text: "hello" });
+    posted.length = 0; // discard the attach()-triggered post
+    await ctrl.newConversation();
+    const attachmentsMsgs = posted.filter(
+      (m) => (m as { type: string }).type === "attachments",
+    ) as Array<{ chips: readonly unknown[] }>;
+    expect(attachmentsMsgs).toHaveLength(1);
+    expect(attachmentsMsgs[0]?.chips).toEqual([]);
+    expect(ctrl.attachments()).toEqual([]);
   });
 
   test("stop() cancels the in-flight stream and clears the streaming flag", async () => {
@@ -700,6 +723,54 @@ describe("ChatController", () => {
     expect(err?.message).toContain("ENOENT: nimbus binary not found");
     expect(log.error).toHaveBeenCalledWith(expect.stringContaining("askStream failed to start"));
     expect(ctrl.isStreaming()).toBe(false);
+  });
+
+  test("a synchronous askStream failure retracts the turn's attachment manifest instead of leaving it standing", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () => {
+            throw new Error("boom");
+          },
+        }),
+        { panel },
+      ),
+    );
+    // Give the turn something to attach, so a turnAttachments manifest is
+    // actually posted before the synchronous throw.
+    ctrl.attach({ kind: "selection", path: "a.ts", startLine: 1, endLine: 2, text: "hello" });
+    posted.length = 0; // discard the attach()-triggered "attachments" post
+    await ctrl.start("hi");
+    // The manifest was posted BEFORE askStream (required — the resolved
+    // preview must reach the webview before the request leaves), then
+    // retracted in the catch path once the request turned out never to have
+    // gone out. The webview must never be left claiming attachments were sent
+    // on a turn that failed to start.
+    expect(postedTypes(posted)).toEqual([
+      "attachments",
+      "turnAttachments",
+      "attachments",
+      "turnAttachmentsFailed",
+      "userMessage",
+      "error",
+    ]);
+  });
+
+  test("a synchronous askStream failure with nothing attached posts no manifest to retract", async () => {
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () => {
+            throw new Error("boom");
+          },
+        }),
+        { panel },
+      ),
+    );
+    await ctrl.start("hi");
+    expect(postedTypes(posted)).toEqual(["userMessage", "error"]);
   });
 
   test("rehydrateIfNeeded falls back to emptyState when the transcript fetch fails", async () => {

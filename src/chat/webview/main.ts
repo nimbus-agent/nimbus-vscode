@@ -1,5 +1,12 @@
 import type { ExtensionToWebview, WebviewToExtension } from "../chat-protocol.js";
-import { renderEmptyState, renderHitlCard, renderSubTaskRow, renderTurn } from "./render.js";
+import {
+  renderChips,
+  renderEmptyState,
+  renderHitlCard,
+  renderSubTaskRow,
+  renderTurn,
+  renderTurnChips,
+} from "./render.js";
 
 interface VsCodeApi {
   postMessage(msg: WebviewToExtension): void;
@@ -21,6 +28,8 @@ interface Refs {
   send: HTMLButtonElement;
   stop: HTMLButtonElement;
   status: HTMLElement;
+  attachMount: HTMLElement;
+  attachBtn: HTMLButtonElement;
 }
 
 function refs(): Refs {
@@ -34,6 +43,8 @@ function refs(): Refs {
     send: must<HTMLButtonElement>("#input-send"),
     stop: must<HTMLButtonElement>("#input-stop"),
     status: must("#status"),
+    attachMount: must("#attach-mount"),
+    attachBtn: must<HTMLButtonElement>("#attach-btn"),
   };
 }
 
@@ -46,11 +57,18 @@ function must<T extends Element = HTMLElement>(sel: string): T {
 interface State {
   streamingText: string;
   streaming: boolean;
+  // A resolved "turnAttachments" record arrives BEFORE the "userMessage" that
+  // creates its turn bubble (the manifest must reach the webview before the
+  // request leaves — see chat-controller.ts). Buffered here until that turn
+  // bubble exists, so it can be spliced into the right article; a
+  // "turnAttachmentsFailed" clears it unrendered when the send never went out.
+  pendingTurnChipsHtml: string | undefined;
 }
 
 const state: State = {
   streamingText: "",
   streaming: false,
+  pendingTurnChipsHtml: undefined,
 };
 
 // Finalize the in-flight turn and append a "Stopped" marker. Extracted from
@@ -77,6 +95,7 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
       r.emptyMount.replaceChildren();
       r.emptyMount.insertAdjacentHTML("beforeend", renderEmptyState({ sub: "no-transcript" }));
       state.streamingText = "";
+      state.pendingTurnChipsHtml = undefined;
       setStreaming(r, false);
       return;
     case "hydrate":
@@ -93,6 +112,14 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
         "beforeend",
         renderTurn({ role: "user", text: msg.text, timestamp: Date.now() }),
       );
+      // Splice the buffered turn manifest, if any, into the bubble just
+      // created — the manifest belongs to THIS turn, not the general
+      // transcript, and never to a turn that failed to start (see
+      // "turnAttachmentsFailed").
+      if (state.pendingTurnChipsHtml !== undefined) {
+        r.transcript.lastElementChild?.insertAdjacentHTML("beforeend", state.pendingTurnChipsHtml);
+        state.pendingTurnChipsHtml = undefined;
+      }
       state.streamingText = "";
       r.transcript.insertAdjacentHTML(
         "beforeend",
@@ -164,6 +191,18 @@ function applyMessage(r: Refs, msg: ExtensionToWebview): void {
         }),
       );
       return;
+    case "attachments":
+      // Full replace, not a patch — this container renders exactly what the
+      // host resolved, on every post, and computes nothing itself.
+      r.attachMount.innerHTML = renderChips(msg.chips, msg.totalChars, msg.provisional);
+      return;
+    case "turnAttachments":
+      // Buffered, not rendered yet — see State.pendingTurnChipsHtml.
+      state.pendingTurnChipsHtml = renderTurnChips(msg.chips);
+      return;
+    case "turnAttachmentsFailed":
+      state.pendingTurnChipsHtml = undefined;
+      return;
     case "themeChange":
       return;
   }
@@ -234,10 +273,17 @@ function bootstrap(): void {
     vscode.postMessage({ type: "stopStream" });
   });
 
+  // Wired here on the host's behalf; the host command it triggers lands in a
+  // later task, so this posts into what is currently a no-op.
+  r.attachBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "openAttachPicker" });
+  });
+
   document.addEventListener("click", (e) => {
     const target = e.target as HTMLElement | null;
     if (target === null) return;
     if (handleHitlButtonClick(target)) return;
+    if (handleChipRemoveClick(target)) return;
     handleEmptyStateActionClick(target);
   });
 
@@ -281,6 +327,20 @@ function handleHitlButtonClick(target: HTMLElement): boolean {
     const verb = decision === "approve" ? "approved" : "rejected";
     card.replaceWith(mkStub(`Decision recorded: ${verb}`));
   }
+  return true;
+}
+
+// Live composer chips carry a remove control; sent-turn chips carry the same
+// markup but are hidden via `.turn-chips .chip-remove { display: none; }`, so
+// they are inert to a real click. A stray post here (e.g. a synthesized turn
+// chip id that matches nothing in the live attachment set) is a harmless
+// no-op on the host side.
+function handleChipRemoveClick(target: HTMLElement): boolean {
+  const removeBtn = target.closest<HTMLButtonElement>("button.chip-remove");
+  if (removeBtn === null) return false;
+  const id = removeBtn.dataset["id"];
+  if (typeof id !== "string") return true;
+  vscode.postMessage({ type: "detachContext", id });
   return true;
 }
 

@@ -17,6 +17,8 @@ function makeWorkspace(values: Record<string, unknown>): WorkspaceApi {
     isTrusted: true,
     workspaceFolders: undefined,
     textDocuments: [],
+    openTextDocument: () => Promise.reject(new Error("not implemented in test double")),
+    findFiles: () => Promise.resolve([]),
   };
 }
 

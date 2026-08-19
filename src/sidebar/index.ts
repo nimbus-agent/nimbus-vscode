@@ -195,3 +195,20 @@ export function buildAskPrompt(item: IndexItem): string {
   if (item.url !== undefined) lines.push(`- URL: ${item.url}`);
   return lines.join("\n");
 }
+
+// A NEUTRAL metadata block for an index attachment that has no fetchable
+// snippet — name, service, type, URL, and nothing else. Deliberately not
+// `buildAskPrompt`: that one opens with an imperative ("Tell me about this
+// indexed item:") written to seed a fresh chat turn on its own, and an
+// attachment block is prepended AHEAD of whatever the user actually typed —
+// the spec's whole point is that the user's own text reads last, as the
+// instruction. No verb, no "Tell me" — just the facts the item carries.
+export function buildIndexMetadataBlock(item: IndexItem): string {
+  const lines = [
+    `Name: ${item.name}`,
+    `Service: ${item.service.length > 0 ? item.service : "unknown"}`,
+    `Type: ${item.itemType ?? "unknown"}`,
+  ];
+  if (item.url !== undefined) lines.push(`URL: ${item.url}`);
+  return lines.join("\n");
+}

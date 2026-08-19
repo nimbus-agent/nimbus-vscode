@@ -1,6 +1,12 @@
 import type { AskStreamHandle, AskStreamOptions, StreamEvent } from "@nimbus-dev/client";
 
 import { errMsg, type Logger } from "../logging.js";
+import {
+  type AttachedContext,
+  type Attachment,
+  buildAttachedContext,
+  type ResolvedAttachment,
+} from "./attachments.js";
 import type { ChatPanel } from "./chat-panel.js";
 import type { ExtensionToWebview } from "./chat-protocol.js";
 import type { SessionStore } from "./session-store.js";
@@ -23,6 +29,8 @@ export interface ChatControllerDeps {
   unregisterStreamWithHitl(streamId: string): void;
   log: Logger;
   agent?: () => string;
+  /** Reads a repo-relative path, or undefined when it cannot be read. */
+  readFile(path: string): string | undefined;
 }
 
 export interface ChatController {
@@ -32,6 +40,9 @@ export interface ChatController {
   rehydrateIfNeeded(limit: number): Promise<void>;
   resume(sessionId: string, limit: number): Promise<void>;
   isStreaming(): boolean;
+  attach(attachment: Attachment): void;
+  detach(id: string): void;
+  attachments(): readonly Attachment[];
 }
 
 function buildAskStreamOptions(
@@ -71,8 +82,68 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
   // switched away from, and a started stream invalidates a pending hydrate.
   let generation = 0;
 
+  // Session-scoped, not turn-scoped: "now explain the other half" is the normal
+  // second question, so a turn must not consume its own context.
+  const attached = new Map<string, Attachment>();
+  let attachSeq = 0;
+
   const post = (m: ExtensionToWebview): void => {
     void deps.panel.postMessage(m);
+  };
+
+  // The one place a ResolvedAttachment becomes a wire chip, shared by the
+  // "attachments" (with id) and "turnAttachments" (without) posts below, so
+  // there is exactly one mapping to keep in sync with AttachmentOutcome.
+  const wireChipFields = (
+    c: ResolvedAttachment,
+  ): {
+    label: string;
+    detail: string;
+    state: ResolvedAttachment["outcome"]["state"];
+    chars: number;
+  } => ({
+    label: c.label,
+    detail: c.detail,
+    state: c.outcome.state,
+    chars: c.outcome.state === "refused" ? 0 : c.outcome.chars,
+  });
+
+  // Posts an "attachments" message from an ALREADY-BUILT AttachedContext, so a
+  // caller that just resolved `built` for the prompt can reuse that exact
+  // traversal for the preview instead of triggering a second, possibly
+  // divergent read of the same files. `entries` must be the same
+  // attached-map snapshot `built` was built from (same order), since the id
+  // lookup below zips by identity against it.
+  const postAttachmentsFrom = (
+    built: AttachedContext,
+    entries: ReadonlyArray<readonly [string, Attachment]>,
+    provisional: boolean,
+  ): void => {
+    // Zip by IDENTITY, not by index. Index alignment holds only while
+    // buildAttachedContext returns exactly one chip per input in order — true
+    // today, and a silent mis-mapping tomorrow if it ever filters. A chip whose
+    // id belongs to a different attachment means the remove button deletes the
+    // wrong one, which is the kind of bug nobody suspects the zip for.
+    post({
+      type: "attachments",
+      provisional,
+      totalChars: built.totalChars,
+      chips: built.chips.map((c) => ({
+        id: entries.find(([, a]) => a === c.attachment)?.[0] ?? "",
+        ...wireChipFields(c),
+      })),
+    });
+  };
+
+  // Attach/detach have no already-built context to reuse: build one from the
+  // live attachment set and post it.
+  const postAttachments = (provisional: boolean): void => {
+    const entries = [...attached.entries()];
+    const built = buildAttachedContext(
+      entries.map(([, a]) => a),
+      deps.readFile,
+    );
+    postAttachmentsFrom(built, entries, provisional);
   };
 
   const hydrate = async (sessionId: string, limit: number): Promise<void> => {
@@ -150,12 +221,55 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
         throw new Error("Stream in progress; click Stop or wait for it to finish.");
       }
       generation += 1; // a new live turn supersedes any in-flight hydrate
+      // Built BEFORE any post: buildAskStreamOptions() invokes the
+      // caller-supplied deps.agent() closure, which can throw. If that threw
+      // after the manifest below had already been posted, the manifest would
+      // stand with no retraction (no synchronous askStream() throw to catch
+      // it) and the buffered turn chips would leak into the NEXT turn's
+      // bubble instead of this one's.
       const opts = buildAskStreamOptions(deps.sessionStore, deps.agent);
+      // Resolve now, not at attach time, so a file edited since attaching sends
+      // what the user is actually looking at. The manifest is posted BEFORE the
+      // request goes out: the composer is this surface's pre-flight preview, so
+      // it must show the resolved bytes rather than a stale estimate.
+      //
+      // ONE traversal for the prompt, the resolved-chip post, the permanent
+      // turn record, and the provisional-chip post below — reusing `built`
+      // and `entries` throughout (nothing attaches/detaches synchronously in
+      // between) is what keeps the chips from drifting from the bytes that
+      // actually leave: a second call to buildAttachedContext here could
+      // re-read a file that changed between the two reads.
+      const entries = [...attached.entries()];
+      const built = buildAttachedContext(
+        entries.map(([, a]) => a),
+        deps.readFile,
+      );
+      if (built.chips.length > 0) {
+        postAttachmentsFrom(built, entries, false);
+        post({
+          type: "turnAttachments",
+          chips: built.chips.map(wireChipFields),
+        });
+      }
+      const prompt = built.blocks.length > 0 ? `${built.blocks}\n${input}` : input;
+      // The resolved numbers belong to the turn just sent, and the turn keeps
+      // them. For the composer they are already history: the attachments carry
+      // into the follow-up, where they will be re-read, so anything shown now
+      // is an estimate again. Posting this here rather than on stream-end keeps
+      // it in the same tick as the send, so the chips never visibly flicker.
+      if (built.chips.length > 0) postAttachmentsFrom(built, entries, true);
       let handle: AskStreamHandle;
       try {
-        handle = deps.client.askStream(input, opts);
+        handle = deps.client.askStream(prompt, opts);
       } catch (e) {
         deps.log.error(`ask: askStream failed to start: ${errMsg(e)}`);
+        // The turn manifest above was posted BEFORE this call so the resolved
+        // preview would reach the webview ahead of the request — but the
+        // request never actually left. Retract it, or the transcript ends up
+        // claiming attachments were sent on a turn that never started.
+        if (built.chips.length > 0) {
+          post({ type: "turnAttachmentsFailed" });
+        }
         post({ type: "userMessage", text: input });
         post({ type: "error", message: `Nimbus couldn't start the request: ${errMsg(e)}` });
         return;
@@ -204,6 +318,14 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await handle.cancel();
     },
     async newConversation(): Promise<void> {
+      attached.clear();
+      // The composer's chips are the pre-flight preview for this surface — a
+      // stale chip after "New conversation" would show an attachment that
+      // will not actually be sent. "reset" clears the transcript and the
+      // pending turn-manifest buffer, but never the composer's own
+      // #attach-mount (see main.ts), so the (now empty) attachment state must
+      // be posted explicitly rather than assumed to follow from the reset.
+      postAttachments(true);
       generation += 1; // clearing the conversation supersedes any in-flight hydrate
       if (active !== undefined) {
         const handle = active;
@@ -228,6 +350,15 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await hydrate(sid, limit);
     },
     async resume(sessionId, limit): Promise<void> {
+      // Attachments are session-scoped, exactly like newConversation()
+      // already treats them — resuming a DIFFERENT session must not carry the
+      // previous session's chips along. They would genuinely be sent (this is
+      // not a display-only bug), which is worse than the stale-chip case
+      // newConversation() guards against: nothing untrue is shown, but
+      // "session-scoped" stops meaning that the moment a resume forgets to
+      // clear them.
+      attached.clear();
+      postAttachments(true);
       generation += 1; // switching sessions supersedes any in-flight hydrate
       if (active !== undefined) {
         const handle = active;
@@ -239,5 +370,17 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await hydrate(sessionId, limit);
     },
     isStreaming: () => active !== undefined,
+    attach(attachment): void {
+      attachSeq += 1;
+      attached.set(`a${attachSeq}`, attachment);
+      postAttachments(true);
+    },
+    detach(id): void {
+      attached.delete(id);
+      postAttachments(true);
+    },
+    attachments(): readonly Attachment[] {
+      return [...attached.values()];
+    },
   };
 }
