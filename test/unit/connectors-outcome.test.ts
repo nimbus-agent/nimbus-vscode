@@ -115,13 +115,20 @@ describe("describeOutcome", () => {
 describe("denial detection stays linear in the message length", () => {
   // The pattern this replaced paired two `(?=.*\b…\b)` lookaheads. `test`
   // retries every start offset and each retry re-scanned the rest of the line,
-  // so the cost grew with the SQUARE of the length: measured against that
-  // pattern, this exact input took 9.8s, and four times that for every
-  // doubling. No correctness assertion can see backtracking — only a clock
-  // can, which is why this test is wall-clock bounded. The budget sits far
-  // from both ends: ~300x the slowest observed linear run (1.6ms, cold) and
-  // ~1/20th of the quadratic one, so a loaded CI runner has room and the
-  // regression it exists to catch still cannot slip through.
+  // so the cost grew with the SQUARE of the length — measured at four times
+  // the cost for every doubling of the input. No correctness assertion can
+  // see backtracking; only a clock can, which is why this test is wall-clock
+  // bounded.
+  //
+  // Both ends of the budget are measured, and they are measured very
+  // differently, so both are quoted rather than folded into one ratio.
+  // Reverting the fix and re-running THIS test pins the upper end: it reports
+  // 4.85s, i.e. ~10x the budget. (A standalone run of the same input on a
+  // colder path measured 9.8s and 22.4s; the in-process 4.85s is the
+  // conservative number and the one to trust.) The lower end is the passing
+  // run: ~1.6ms at its slowest, cold. So the budget sits ~300x above a
+  // healthy run and ~10x below the regression it exists to catch — room for
+  // a loaded CI runner, without letting the regression through.
   test("a ~120 KB non-matching message is classified well inside a wall-clock budget", () => {
     const message = `denied ${"a ".repeat(60_000)}`;
     const started = performance.now();
