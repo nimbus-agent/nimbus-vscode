@@ -14,6 +14,14 @@ permissions:
   contents: read
   pull-requests: read
 
+# Two pushes landing close together would otherwise run release-please twice
+# against the same release PR, and the second can be mid-flight while the first
+# is still writing. Serialize instead: **never** cancel-in-progress here — a
+# cancelled run is one that may have created the tag but not the release.
+concurrency:
+  group: release-please
+  cancel-in-progress: false
+
 jobs:
   release-please:
     runs-on: ubuntu-24.04

@@ -2,11 +2,11 @@
 name: nimbus-vscode-seams
 description: >
   The boundaries and duplicated sites in nimbus-vscode that a change has to
-  respect: which `vscode` imports are actually allowed (the "shim only" rule in
-  five docs is not what the code does), what the egress choke-point test
-  enforces, which test layer runs where and why the ExTester UI suite cannot run
-  in CI, the exact 18 files that ship in the .vsix and why one directory ships
-  with no guard at all, and the five places the Quick Ask preset list is copied.
+  respect: which `vscode` imports are actually allowed (eight files, and nothing
+  enforces the list), what the egress choke-point test enforces, which test layer
+  runs where and why the ExTester UI suite cannot run in CI, the exact 18 files
+  that ship in the .vsix and why one directory ships with no guard at all, and
+  the five places the Quick Ask preset list is copied.
   Use when asking "does this ship to users", "why didn't my UI test run in CI",
   "what else do I have to update", "can I call the Gateway directly", "where do
   I put a new vscode API call", or when touching .vscodeignore, vitest.config.ts,
@@ -21,10 +21,11 @@ facts behind it — what each gate does not cover, and which sites move together
 
 ## 1. IPC-only: the part that isn't in CLAUDE.md
 
-`CLAUDE.md` and `CONTRIBUTING.md` already state the rule (no monorepo imports, no
-`workspace:*`, no direct cloud calls, no raw SQL — the last enforced by
-`test/unit/no-raw-sql-guard.test.ts`, which fails on the string `querySql(`
-anywhere under `src/`). Two consequences they don't spell out:
+`CLAUDE.md` and `CONTRIBUTING.md` already state the rule: no monorepo imports, no
+`workspace:*`, no direct cloud calls. A fourth is enforced but stated only here
+and in `CLAUDE.md`'s non-negotiables — **no raw SQL**: prefer the typed client
+method over `querySql`, and `test/unit/no-raw-sql-guard.test.ts` fails on the
+string `querySql(` anywhere under `src/`. Two consequences they don't spell out:
 
 - **`@nimbus-dev/client` sits in `devDependencies`, and that is not a bug.**
   `esbuild.mjs` inlines everything except `vscode`, and both `bun run package` and
@@ -42,16 +43,20 @@ for `require("…")` and fails on any specifier outside node builtins + `vscode`
 **It is meaningless without a fresh `bun run build` first**: it reads whatever
 `dist/` happens to contain, so on a stale `dist/` it reports on the last build.
 
-## 2. The `vscode` boundary is NOT "only `vscode-shim.ts`"
+## 2. The `vscode` boundary: eight files, not one
 
-Five places say it is:
+Five places used to say the `vscode` API was touched "only through
+`src/vscode-shim.ts`" — `CLAUDE.md`, `CONTRIBUTING.md`, `docs/architecture.md`
+§3, `docs/development.md` (*Tests*) and `.coderabbit.yaml`'s `src/**/*.ts`
+instruction. Taken literally all five were false, and following them sent you
+refactoring code that was already correct. **All five were corrected
+together** in the quality sweep; if you find a sixth restatement, correct it too
+rather than half the set — the remaining copies keep sending the next reader the
+same way. (`docs/superpowers/plans|specs/` still carry the old wording and are
+left alone on purpose: those are dated records of what a plan said at the time,
+not live guidance.)
 
-`CLAUDE.md:48` · `CONTRIBUTING.md:61` · `docs/architecture.md:66` ("touched
-**only** through") · `docs/development.md:95-96` ("routing all `vscode` access
-through") · `.coderabbit.yaml:27`
-
-Taken literally all five are **false**, and following them sends you refactoring
-code that is already correct. The real shape:
+The real shape, which is what the five now say:
 
 - `src/vscode-shim.ts` imports **nothing** from `vscode` — zero occurrences. It is
   `*Like` interfaces plus `PROGRESS_LOCATION_NOTIFICATION = 15` (the concrete enum
@@ -61,16 +66,14 @@ code that is already correct. The real shape:
   `chat/real-chat-panel.ts`, `chat-participant/real-participant.ts`,
   `context/real-context-view.ts`, `diagnostics/real-provider.ts`,
   `lm-tools/real-lm-tools.ts`, `scm/real-git.ts`.
-- What the docs *mean* is the useful rule: **logic modules take a narrow `*Like`
-  interface; the `vscode` API itself lives in a `real-*.ts` adapter.** New
-  `vscode` surface goes in an adapter. Nothing enforces the seven-file list — it
-  is convention, not a gate.
-- `vitest.config.ts:31` aliases `vscode` → `test/unit/vscode-stub.ts`, so a
+- The useful rule: **logic modules take a narrow `*Like` interface; the `vscode`
+  API itself lives in a `real-*.ts` adapter.** New `vscode` surface goes in an
+  adapter. Nothing enforces the eight-file list — it is convention, not a gate,
+  so re-derive it (`grep -rl 'from "vscode"' src/`) rather than trusting this
+  paragraph's count.
+- `vitest.config.ts` aliases `vscode` → `test/unit/vscode-stub.ts`, so a
   `real-*.ts` file *can* be unit-tested; `test/unit/diagnostics-provider.test.ts`
-  does exactly that.
-
-Correcting the five docs is a worthwhile PR. Correcting three of them is worse
-than none — the remaining two keep sending the next reader the same way.
+  and `test/unit/briefs-real-hover.test.ts` do exactly that.
 
 ## 3. The one enforced architectural gate: the egress choke point
 
@@ -98,30 +101,26 @@ agent-bound:
 | Layer | Runner / config | Runs in CI? |
 | --- | --- | --- |
 | `test/unit/**/*.test.ts` | vitest, `vitest.config.ts` | **Yes** — Ubuntu + a lean Windows job |
-| `test/ui/**` (6 specs) | mocha via `scripts/run-ui-tests.mjs` + `.mocharc.ui.js` | **No** |
+| `test/ui/**` (8 specs) | mocha via `scripts/run-ui-tests.mjs` + `.mocharc.ui.js` | **No** |
 
 `test/ui` is **typechecked and linted in CI but never executed there**: the root
-`tsconfig.json` includes `test/**/*` (12 `test/ui` files enter the program), and
-`biome check .` covers the whole repo. A UI spec is compile-gated, not run-gated —
-green CI says nothing about whether it passes.
+`tsconfig.json` includes `test/**/*` (all 16 `test/ui` files enter the program),
+and `biome check .` covers the whole repo. A UI spec is compile-gated, not
+run-gated — green CI says nothing about whether it passes.
 
 Why it can't run in CI: ExTester's `openResources` relies on a CLI "reuse window"
 handshake that never reaches the chromedriver-launched VS Code under headless
 Linux — unfixed upstream (`vscode-extension-tester#506`), see
-`docs/development.md:75-81`.
+`docs/development.md` → *UI tests*.
 
-**Two comments in that script describe CI wiring that does not exist.** No
-workflow in `.github/` or `.gitlab-ci.yml` mentions `test:ui` or `VSCODE_VERSION`
-at all:
-
-- `scripts/run-ui-tests.mjs:4-5` — "CI keys its download cache on the same value".
-- `scripts/run-ui-tests.mjs:22-26` — "CI's own `Build` step (ci.yml), which still
-  runs immediately before `test:ui` there". This one asserts CI *runs the suite*,
-  which is the more misleading of the two.
-- Adjacent third, different file: `esbuild.mjs:6` names `CI/publish-vscode.yml`.
-  That workflow does not exist; it is `publish.yml`.
-
-Believe the workflows, not these comments.
+**Three comments used to describe CI wiring that does not exist** — two in
+`run-ui-tests.mjs` (a CI download cache keyed on `VSCODE_VERSION`; a CI `Build`
+step running "immediately before `test:ui` there", which asserts CI *runs the
+suite*) and `esbuild.mjs`'s reference to a `CI/publish-vscode.yml` that was never
+a file here. All three were corrected in the quality sweep. The rule that
+produced them still stands: **no workflow in `.github/` or `.gitlab-ci.yml`
+mentions `test:ui` or `VSCODE_VERSION` at all** — believe the workflows, not a
+comment about them.
 
 Four things in `run-ui-tests.mjs` that each cost an afternoon to rediscover:
 
@@ -137,7 +136,8 @@ Four things in `run-ui-tests.mjs` that each cost an afternoon to rediscover:
   personal path in a commit (`177ba5f`), and a workspace-scope value would
   override the user-scope one anyway.
 - **`"window.dialogStyle": "custom"`** is written into those settings. ExTester
-  already defaults it to `"custom"` (see the note at `run-ui-tests.mjs:84-86`), so
+  already defaults it to `"custom"` (see the `defaultSettings` note beside
+  `settingsPath` in `run-ui-tests.mjs`), so
   it is defence against an upstream default change, not something load-bearing
   today — but if it ever stops being set, a modal `showWarningMessage` renders as a
   **native OS dialog** that Selenium cannot see, and every modal-gate spec hangs to
@@ -182,38 +182,38 @@ a `!` line in `.vscodeignore` *and* an entry in `ALLOWED_FILES`. But
 (line 31), and `.vscodeignore` already carries `!resources/**` — so **a new file
 dropped anywhere under `resources/` ships to users with zero edits and zero guard
 failures.** That is exactly the walkthrough directory. Its only presence check is
-the `missing` list at line 60 — `dist/extension.js`, `media/webview.js`,
-`media/context.js`, `media/context.css`, `package.json`, there so an empty
-payload cannot satisfy an allowlist trivially (the ambient context panel added
-the two `media/context.*` entries; it is the one artifact pair whose *presence*
-is guarded, since `media/webview.css` still is not) — so the guard also cannot
-tell you a walkthrough markdown
-file went *missing*: delete or rename one
-and it simply stops shipping, silently, leaving a broken walkthrough step. Nothing
-validates that the `media.markdown` paths in `package.json` resolve. Only
-`quick-ask.md` has any content guard at all (§6).
+the `missing` list (six entries: `dist/extension.js`, `media/webview.js`,
+`media/webview.css`, `media/context.js`, `media/context.css`, `package.json`),
+there so an empty payload cannot satisfy an allowlist trivially — it covers every
+build output but `dist/extension.js.map`, which production never emits. What it
+does **not** cover is anything under `resources/`: the guard cannot tell you a
+walkthrough markdown file went *missing*: delete or rename one and it simply
+stops shipping, silently, leaving a broken walkthrough step. Nothing validates
+that the `media.markdown` paths in `package.json` resolve. Only `quick-ask.md`
+has any content guard at all (§6).
 
 Also: `**/*.map` is the **last** line of `.vscodeignore` (last match wins), so
 sourcemaps are excluded even from the re-included `dist/**`.
 
 ## 6. `DEFAULT_QUICK_ASK_PRESETS` — one list, five copies
 
-SSoT: `src/quick-ask-presets.ts:14`. Pinned by
-`test/unit/quick-ask-presets.test.ts:115-136` across five sites:
+SSoT: `DEFAULT_QUICK_ASK_PRESETS` in `src/quick-ask-presets.ts`. Pinned by the
+`test.each` in `test/unit/quick-ask-presets.test.ts` across five sites — find each
+one by its anchor, not by a line number, since every one of these has moved:
 
 | Site | Anchor the test requires | Ships to users? |
 | --- | --- | --- |
 | `package.json` settings description | `Empty uses the built-in defaults (` | **Yes** — the VS Code Settings UI |
-| `README.md:58` | `live as **Quick Ask presets**` | **Yes** — Marketplace / Open VSX listing |
-| `docs/settings.md:73` | `Empty shows the built-in defaults (` | No |
-| `docs/architecture.md:85` | `Resolves the configurable quick-ask preset actions (` | No |
+| `README.md` (Chat-participant bullet) | `live as **Quick Ask presets**` | **Yes** — Marketplace / Open VSX listing |
+| `docs/settings.md` (`nimbus.quickAsk.presets`) | `Empty shows the built-in defaults (` | No |
+| `docs/architecture.md` (module map row) | `Resolves the configurable quick-ask preset actions (` | No |
 | `resources/walkthrough/quick-ask.md` | `then pick a preset (` | **Yes** — in the .vsix |
 
-Plus a sixth assertion over the copy-this-block jsonc at `docs/settings.md:83-89`.
+Plus a sixth assertion over the copy-this-block jsonc in `docs/settings.md`.
 
 Three things to know before touching the list:
 
-- **`resolvePresets` replaces; it does not merge** (`src/quick-ask-presets.ts:70-85`).
+- **`resolvePresets` replaces; it does not merge** (`src/quick-ask-presets.ts`).
   A non-array, or a list whose every entry is invalid, falls back to the defaults —
   but a list with even one valid entry replaces them **wholesale**. That is why
   `docs/settings.md` offers a full five-entry starter block: anyone who copies a
@@ -221,7 +221,7 @@ Three things to know before touching the list:
   them. Adding a default means editing that block too.
 - **The guard's strength is per-label, not per-file.** The anchor proves the
   *sentence* still exists, but the label check is `src.includes(label)` over the
-  **whole file** (lines 132–135). So whether a dropped label is caught depends on
+  **whole file**. So whether a dropped label is caught depends on
   the label: outside the enumeration sentence, `Write tests` occurs **0** times in
   `package.json` and **0** in `docs/architecture.md` (dropping it there really does
   fail), while `Explain` occurs **4** times in `package.json` (dropping it there
@@ -234,28 +234,37 @@ Two adjacent facts: the ops presets (`Blast radius` / `Ownership` /
 `Recent changes`, via `filePresetsFor`) are prepended **on infra files only** and
 cannot then be configured away — Terraform, Dockerfiles, `.github/workflows/*.yml`,
 or YAML that looks like Kubernetes/Helm; `filePresetsFor` returns `[]` for anything
-else (`src/quick-ask-presets.ts:47-63`, wired at `src/extension.ts:1054-1059`). And
-`bun run check-settings-docs` catches **none** of this — for each of the 16
-`nimbus.*` properties it asserts only that a `### \`nimbus.x\`` heading exists in
-`docs/settings.md` and a `| \`nimbus.x\` |` row exists in `README.md`. Presence,
-never content.
+else (`filePresetsFor` in `src/quick-ask-presets.ts`, wired at the `opsPresets`
+call in `src/extension.ts`). And `bun run check-settings-docs` catches **none** of
+this — for each of the 17 `nimbus.*` properties it asserts only that a
+`### \`nimbus.x\`` heading exists in `docs/settings.md` and a `| \`nimbus.x\` |`
+row exists in `README.md` — and, since the quality sweep, that no `### \`nimbus.x\``
+heading or README row names a setting `package.json` does **not** contribute, so a
+rename can no longer leave a stale half behind. Presence in both directions,
+never **content**: the default in the README table, the range in `docs/settings.md`,
+and every word of prose are unchecked.
 
-## 7. Coverage exclusions live in two files, and have drifted
+## 7. Coverage exclusions live in two files, and drift is now gated
 
-`vitest.config.ts:15-23` (`coverage.exclude`) and `sonar-project.properties`
-(`sonar.coverage.exclusions`) are independent lists. A file must be in **both** to
-leave both denominators. Current state:
+`coverage.exclude` in `vitest.config.ts` and `sonar.coverage.exclusions` in
+`sonar-project.properties` are independent lists. A file must be in **both** to
+leave both denominators. Two divergences exist, both deliberate, both now named
+with a reason in `test/unit/coverage-exclusions.test.ts` — which fails on a
+**third**, in either direction:
 
-- `src/scm/real-git.ts` — excluded in vitest, **not** in Sonar (and undocumented).
+- `src/scm/real-git.ts` — excluded in vitest, **not** in Sonar. So vitest emits no
+  lcov record and Sonar scores it 0.0%. That row is an artifact of the asymmetry,
+  not a coverage gap; read it that way before "fixing" it. Adding it to
+  `sonar.coverage.exclusions` would hide the number rather than earn it.
 - `src/chat/webview/main.ts` — excluded in Sonar, deliberately measured by vitest
-  under jsdom (documented in the properties file).
-- `src/briefs/real-hover.ts` — a `vscode`-touching adapter in **neither** list and
-  with no test of its own.
+  under jsdom.
+- `src/briefs/real-hover.ts` is in **neither** list — it is measured by both, and
+  now has a test of its own (`test/unit/briefs-real-hover.test.ts`).
 
 Sonar's gate blocks via `sonar.qualitygate.wait=true`, but the whole analysis step
 is `if: env.SONAR_TOKEN != ''` — so **a green Sonar check does not prove a scan
-ran.** (The 80%-on-new-code figure comes from `vitest.config.ts:25`, not from
-SonarCloud's own configuration; treat it as the local intent.)
+ran.** (The 80%-on-new-code figure comes from a comment in `vitest.config.ts`, not
+from SonarCloud's own configuration; treat it as the local intent.)
 
 ## 8. Release: the PR title, the tag identity, and one dated credential
 
@@ -298,7 +307,14 @@ Full runbook is `docs/releasing.md`. The parts that bite:
   three).
 - New default Quick Ask preset → `src/quick-ask-presets.ts` **and** all five sites
   in §6 **and** the jsonc starter block.
-- New coverage exclusion → `vitest.config.ts` **and** `sonar-project.properties`.
+- New coverage exclusion → `vitest.config.ts` **and** `sonar-project.properties`;
+  one without the other reds `test/unit/coverage-exclusions.test.ts` unless you
+  record the reason in its `KNOWN_DIVERGENCES` (§7).
+- New `esbuild.mjs` output (`outfile` or a copied asset) → `scripts/clean.mjs`'s
+  `targets` **and**, if it must be present in the `.vsix`, the `missing` list in
+  `scripts/check-vsix-contents.mjs`. `media/context.*` was missing from `clean.mjs`
+  from `0.18.0` through `0.21.0` — nothing fails, the stale artifact just survives
+  a clean.
 - New contributed command / view / LM tool → `package.json` **and** the matching
   `test/unit/manifest-*.test.ts`, which pin the manifest against the source SSoT
   (`BRIEF_CATALOG`, `DIAGNOSTIC_COMMANDS`, …).

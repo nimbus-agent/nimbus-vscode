@@ -39,13 +39,37 @@ for (const key of settings) {
   }
 }
 
+// The other direction: a setting RENAMED or REMOVED from package.json leaves its
+// documentation standing, and the loop above stays green because it only ever
+// asks "is every current setting documented?". Documented-but-nonexistent is the
+// worse half of settings drift — a reader who copies it into settings.json gets
+// a value VS Code silently ignores, with nothing anywhere to say why.
+const known = new Set(settings);
+const documented = [
+  ...[...settingsDoc.matchAll(/^###\s+.*`(nimbus\.[\w.]+)`/gm)].map((m) => ({
+    key: m[1],
+    where: "docs/settings.md has a section for",
+  })),
+  ...[...readme.matchAll(/^\|\s*`(nimbus\.[\w.]+)`\s*\|/gm)].map((m) => ({
+    key: m[1],
+    where: "README.md's settings table has a row for",
+  })),
+];
+for (const { key, where } of documented) {
+  if (!known.has(key)) {
+    failures.push(`${where} a setting package.json does not contribute: ${key}`);
+  }
+}
+
 if (failures.length > 0) {
-  console.error("check-settings-docs: FAILED — undocumented settings:\n");
+  console.error("check-settings-docs: FAILED — settings and docs disagree:\n");
   for (const f of failures) console.error(`  - ${f}`);
   console.error(
-    "\nDocument each nimbus.* setting in docs/settings.md (a `### `nimbus.x`` section)\nand add it to the README settings table.",
+    "\nDocument each nimbus.* setting in docs/settings.md (a `### `nimbus.x`` section)\nand add it to the README settings table — and when a setting is renamed or\nremoved, delete both.",
   );
   process.exit(1);
 }
 
-console.log(`check-settings-docs: OK — all ${settings.length} nimbus.* settings documented.`);
+console.log(
+  `check-settings-docs: OK — all ${settings.length} nimbus.* settings documented, and nothing documented that isn't contributed.`,
+);

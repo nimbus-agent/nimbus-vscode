@@ -1,8 +1,10 @@
 // Compiles the UI specs, starts the fake Gateway, runs ExTester against the
 // fixture workspace, and always stops the fake.
 //
-// The VS Code version is pinned HERE and nowhere else. CI keys its download
-// cache on the same value, so local and CI cannot silently diverge.
+// The VS Code version is pinned HERE and nowhere else — there is nothing to
+// keep it in step with, because no workflow runs this suite: it is local-only
+// (see docs/development.md → "UI tests" for the upstream ExTester limitation).
+// The pin still matters locally, so two developers download the same editor.
 import { spawnSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -20,10 +22,8 @@ const run = (cmd, args) => {
 // The extension under test is what `dist/extension.js` (package.json's
 // `main`) actually contains — esbuild has to run before the specs do, or the
 // suite silently exercises whatever was last built rather than the code
-// under test. This is separate from CI's own `Build` step (ci.yml), which
-// still runs immediately before `test:ui` there — redundant in CI, but that
-// keeps the job readable, and it is the only thing that makes this script
-// correct when run locally.
+// under test. No CI job builds ahead of this one (nothing runs `test:ui` at
+// all), so this line is the only thing that makes the run honest.
 run("node", ["esbuild.mjs"]);
 
 // tsc does not remove outputs for sources that were since deleted or renamed,

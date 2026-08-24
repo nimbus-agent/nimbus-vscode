@@ -23,7 +23,9 @@ reviews:
         the published @nimbus-dev/client package. Flag: any direct cloud/network
         calls; any use of `any` (prefer `unknown`); any `console.*` in src (logging
         must go through the output channel in logging.ts); and any import from the
-        Nimbus gateway source. The `vscode` API should only be touched via
-        src/vscode-shim.ts.
+        Nimbus gateway source. A logic module should take a narrow `*Like`
+        interface from src/vscode-shim.ts rather than import `vscode`; the real
+        `vscode` module belongs only in src/extension.ts and the real-*.ts
+        adapters, so flag a new `import * as vscode from "vscode"` anywhere else.
 chat:
   auto_reply: true

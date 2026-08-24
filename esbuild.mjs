@@ -3,7 +3,7 @@ import { build, context } from "esbuild";
 
 const isWatch = process.argv.includes("--watch");
 // Production = anything that's not an explicit dev/watch invocation.
-// CI/publish-vscode.yml leaves NODE_ENV unset → minified, no sourcemaps.
+// ci.yml and publish.yml leave NODE_ENV unset → minified, no sourcemaps.
 // Local `bun run build --watch` → unminified + sourcemaps for debugging.
 const isDev = isWatch || process.env.NODE_ENV === "development";
 

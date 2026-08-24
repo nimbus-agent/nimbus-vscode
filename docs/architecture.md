@@ -14,7 +14,7 @@ Nimbus **Gateway**. The extension never calls a cloud API itself.
 │  │  ├ connection/           │          │   render.ts       │   │
 │  │  ├ hitl/                 │          │   styles.css      │   │
 │  │  ├ status-bar/           │          └───────────────────┘   │
-│  │  └ vscode-shim.ts ───────┼─▶ vscode API                     │
+│  │  └ real-*.ts adapters ───┼─▶ vscode API                     │
 │  └────────────┬─────────────┘                                  │
 └───────────────┼────────────────────────────────────────────────┘
                 │ JSON-RPC over IPC (@nimbus-dev/client)
@@ -64,19 +64,33 @@ CI runs it on every push/PR. If a dependency ever leaked out as a runtime
 
 ### 3. The `vscode` seam
 
-The `vscode` API is touched **only** through [`src/vscode-shim.ts`](../src/vscode-shim.ts).
-Everything else depends on the narrow interfaces it declares (e.g. `WorkspaceApi`,
-consumed by [`src/settings.ts`](../src/settings.ts)) rather than the global
-`vscode` module. That keeps the logic unit-testable: tests alias `vscode` to a
-stub (`test/unit/vscode-stub.ts`, wired in `vitest.config.ts`) and exercise the
-real code paths without a running editor. Keep `src/` and `test/` self-contained.
+Logic modules depend on the narrow `*Like` interfaces
+[`src/vscode-shim.ts`](../src/vscode-shim.ts) declares (e.g. `WorkspaceApi`,
+consumed by [`src/settings.ts`](../src/settings.ts)) rather than on the global
+`vscode` module. The shim is pure: it imports **nothing** from `vscode` itself —
+it is interfaces plus `PROGRESS_LOCATION_NOTIFICATION = 15`, the one enum value a
+pure module cannot import.
+
+`import * as vscode from "vscode"` appears in exactly **eight** files:
+`src/extension.ts`, which wires everything together, and the seven `real-*.ts`
+adapters — `briefs/real-hover.ts`, `chat/real-chat-panel.ts`,
+`chat-participant/real-participant.ts`, `context/real-context-view.ts`,
+`diagnostics/real-provider.ts`, `lm-tools/real-lm-tools.ts`, `scm/real-git.ts`.
+**New `vscode` surface goes in an adapter**, and the logic that uses it takes an
+interface. Nothing enforces that eight-file list — it is convention, not a gate.
+
+That is what keeps the logic unit-testable: tests alias `vscode` to a stub
+(`test/unit/vscode-stub.ts`, wired in `vitest.config.ts`) and exercise the real
+code paths without a running editor — including, where it is worth it, a
+`real-*.ts` adapter itself (`test/unit/diagnostics-provider.test.ts`,
+`test/unit/briefs-real-hover.test.ts`). Keep `src/` and `test/` self-contained.
 
 ## Module map
 
 | Area | Responsibility |
 | --- | --- |
 | `src/extension.ts` | Activation entry: registers commands, wires the connection manager, status bar, and HITL router. |
-| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free. `tree-view.ts`'s `createDataView` is also what `src/connectors/connectors-view.ts` builds on, for the eighth container view, Connectors — Workflows and Connectors are the two views with lazily-loaded children (`loadChildren`), because eager children would cost one round trip per row on every open. |
+| `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free, over shared helpers in `parse-helpers.ts` (`nodePayload`, which digs a row's payload out of a tree node — remembering that `typeof null === "object"` — and `parseAll`, the filter-map that drops unparseable rows) and one `NOT_CONNECTED_ROW` exported from `tree-view.ts`, so "not connected" cannot come to mean two different things in two panels of the same sidebar. `tree-view.ts`'s `createDataView` is also what `src/connectors/connectors-view.ts` builds on, for the eighth container view, Connectors — Workflows and Connectors are the two views with lazily-loaded children (`loadChildren`), because eager children would cost one round trip per row on every open. |
 | `src/workflows/` | The run surface: pure `run.ts` (pre-flight manifest, outcome wording, run report) plus `commands.ts`, which holds the injected seams. The run is gated under the `"workflow"` kind; `workflowCancel` is deliberately **not** gated, since it stops egress rather than causing any. |
 | `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). Attachments live here too: `attachments.ts` is the pure, `vscode`-free core — the `Attachment` union (`file` / `selection` / `index`), refusal precedence (secret beats non-textual beats too-large), line-boundary clamping, and `buildAttachedContext`, the single traversal that produces both the prompt blocks and the chips from one pass — the property that lets Ask keep recording instead of prompting (see the egress section below). `attachment-paths.ts` converts between the repo-relative paths chips and block headers show and the absolute paths the `vscode` shim reads by, and checks workspace containment. `attachment-cache.ts` is the synchronous read cache behind it: files are primed into the cache when attached and re-primed for every currently-attached file immediately before each send — resolution happens **at send, not at attach**, so a file edited after attaching sends what's on screen now, while a `selection` attachment's text was already captured at attach and is never re-read. |
 | `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. |
@@ -88,7 +102,9 @@ real code paths without a running editor. Keep `src/` and `test/` self-contained
 | `src/hitl/` | Human-in-the-loop consent: router + modal / toast / details surfaces. |
 | `src/status-bar/` | The egress badge, plus the status-bar item that renders `summarizeConnectorHealth` (now in `src/connectors/health.ts`, below). |
 | `src/connectors/` | The Connectors view (`nimbus.connectorsView`): pure `health.ts` (`summarizeConnectorHealth`, moved here from `src/status-bar/` once it gained a third consumer — the status bar, this view, and the context panel's Sources row all read it), `catalog.ts` (the credential-field catalog, sourced from the pinned client's JSDoc and documented as apt to drift in `docs/connectors.md`), `rows.ts` (status → icon/description/tooltip/`contextValue`, severity-then-id sort), `outcome.ts` (the `ConnectorOutcome` union — the adapter normalising four different RPC failure shapes, two of which mean *denied* rather than *broken*), `interval.ts` (human interval strings ↔ milliseconds) — plus `connector-client.ts` (the `ConnectorClientLike` seam and the outcome adapter) and `connectors-view.ts` (the `createDataView` wrapper with on-expand `loadChildren` for telemetry and health history, the same pattern `src/sidebar/`'s Workflows view established). `commands.ts` is the one file here holding injected `vscode`-shaped deps (`window`, the ops seam), mirroring `src/scm/commands.ts`. None of the twelve `connector*` RPCs takes a prompt or returns a completion, so this surface reaches no model and sits outside the pre-flight gate exactly as `searchRanked` does — see `docs/connectors.md`. |
+| `src/context/` | The ambient context panel (`nimbus.contextView`), the container's one `WebviewView`. Pure core — `snapshot.ts` (what is on screen, as plain data), `signals.ts` (the five sections: problems, git, blame, related, connector *Sources*), `offers.ts` (which briefs are satisfiable right now, derived from `BRIEF_CATALOG` so a new brief is offered for free), `debounce.ts` (selection 300 ms / editor 150 ms / diagnostics 500 ms), `controller.ts` (per-signal LRU caching, coalescing and invalidation epochs) and `protocol.ts` (the host↔webview contract **plus** its validation: a webview is untrusted input, so a posted command must pass both a catalog-derived id allowlist and a per-command argument check before any `executeCommand`) — plus `webview/` (the `media/context.js` browser bundle) and `real-context-view.ts`, the only file here touching `vscode`. Its two Gateway-backed signals reach no model, so the panel sits outside the pre-flight gate; `test/unit/egress-choke-point.test.ts` fails if that ever changes. |
 | `src/logging.ts` | Output-channel logger. **Never** `console` in `src/` (Biome's `noConsole`). |
+| `src/command-failure.ts` | `reportCommandFailure` — what a throw out of a command handler means, in one place: an `EgressCancelled` from the pre-flight preview is a normal outcome and stays silent; anything else is logged *and* surfaced. Shared by the SCM and diagnostics command families, which each held a byte-identical copy, so the two cannot drift into disagreeing about what a cancellation is. |
 | `src/settings.ts` | Typed accessors over `nimbus.*` configuration. |
 | `src/scm/` | Dev-workflow trio (Generate Commit Message, Review Changes, Generate Tests, Generate Docstrings): pure diff/commit-message/review/generate modules behind a `GitApiLike` seam, plus `commands.ts` and `real-git.ts` (see below). |
 | `src/egress/` | The pre-flight gate: every agent-bound call routes through `gated-client.ts` (see below). Pure `leak-check.ts` / `preflight.ts`, the `gate.ts` decision table, and the `skip-store.ts` memento wrapper. |

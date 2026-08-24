@@ -65,8 +65,10 @@ jobs:
       - name: Lint
         run: bun run lint
 
-      # Same six pre-build gates ci.yml runs. A release must not be able to
-      # publish something a PR would have been blocked for.
+      # The same four pre-build gates ci.yml runs — typecheck, lint,
+      # check-settings-docs, test — followed after the build by the same two
+      # artifact guards. A release must not be able to publish something a PR
+      # would have been blocked for.
       - name: Check settings docs
         run: bun run check-settings-docs
 
