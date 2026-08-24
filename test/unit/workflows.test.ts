@@ -274,3 +274,104 @@ describe("createWorkflowsView", () => {
     expect((await view.getChildren())[0]?.command?.command).toBe("nimbus.reconnect");
   });
 });
+describe("createWorkflowsView: rows this view did not build", () => {
+  function client(onListRuns: () => void) {
+    return {
+      workflowList: async () => ({ workflows: [] }),
+      workflowListRuns: async () => {
+        onListRuns();
+        return { runs: [] };
+      },
+    };
+  }
+
+  // `loadChildren` is called for EVERY expandable row, including the run rows
+  // this view itself produced and any row another view contributed. Only a row
+  // carrying a workflowName has anything to fetch against; the rest must fall
+  // back to whatever children they already carry, not fire an RPC keyed on
+  // nothing.
+  test.each([
+    ["no payload at all", { label: "some other row" }, []],
+    ["a non-object payload", { label: "row", payload: "nightly-sync" }, []],
+    [
+      "a payload whose workflowName is not a string",
+      { label: "row", payload: { workflowName: 7 } },
+      [],
+    ],
+    [
+      "its own pre-built children",
+      { label: "row", children: [{ label: "kid" }] },
+      [{ label: "kid" }],
+    ],
+  ])("%s fetches nothing and yields its own children", async (_case, row, expected) => {
+    let calls = 0;
+    const view = createWorkflowsView({
+      connection: makeConnection(),
+      getClient: () => client(() => (calls += 1)),
+      now: () => NOW,
+    });
+    expect(await view.getChildren(row)).toEqual(expected);
+    expect(calls).toBe(0);
+  });
+
+  test("losing the client between load and expand offers a reconnect row, not an empty branch", async () => {
+    let live = true;
+    const view = createWorkflowsView({
+      connection: makeConnection(),
+      getClient: () =>
+        live
+          ? {
+              workflowList: async () => ({ workflows: [workflow()] }),
+              workflowListRuns: async () => ({ runs: [run()] }),
+            }
+          : undefined,
+      now: () => NOW,
+    });
+    const [parent] = await view.getChildren();
+    if (parent === undefined) throw new Error("expected a workflow row");
+    live = false;
+    const rows = await view.getChildren(parent);
+    expect(rows[0]?.command?.command).toBe("nimbus.reconnect");
+  });
+
+  test("the run limit is overridable, and defaults to one screenful", async () => {
+    const seen: number[] = [];
+    const build = (runLimit?: number) =>
+      createWorkflowsView({
+        connection: makeConnection(),
+        getClient: () => ({
+          workflowList: async () => ({ workflows: [workflow()] }),
+          workflowListRuns: async (p: { workflowName: string; limit: number }) => {
+            seen.push(p.limit);
+            return { runs: [run()] };
+          },
+        }),
+        now: () => NOW,
+        ...(runLimit === undefined ? {} : { runLimit }),
+      });
+    for (const view of [build(), build(5)]) {
+      const [parent] = await view.getChildren();
+      if (parent === undefined) throw new Error("expected a workflow row");
+      await view.getChildren(parent);
+    }
+    expect(seen).toEqual([20, 5]);
+  });
+
+  // The clock is injectable so the relative-time assertions above can be exact.
+  // Without an injected one the view must fall back to the real Date.now rather
+  // than calling `undefined` — which would throw on the first render.
+  test("with no clock injected it renders against the real one", async () => {
+    const view = createWorkflowsView({
+      connection: makeConnection(),
+      getClient: () => ({
+        workflowList: async () => ({ workflows: [workflow()] }),
+        workflowListRuns: async () => ({ runs: [run()] }),
+      }),
+    });
+    const rows = await view.getChildren();
+    expect(rows[0]?.label).toBe("nightly-sync");
+    const [parent] = rows;
+    if (parent === undefined) throw new Error("expected a workflow row");
+    expect(await view.getChildren(parent)).toHaveLength(1);
+  });
+});

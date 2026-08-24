@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
+
+import { manifest, welcome } from "./helpers/manifest.js";
 
 const VIEW_IDS = [
   "nimbus.auditView",
@@ -9,20 +9,6 @@ const VIEW_IDS = [
   "nimbus.indexView",
   "nimbus.sessionsView",
 ];
-
-type WelcomeEntry = { view: string; contents: string; when?: string };
-
-const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
-  extensionKind?: string[];
-  capabilities?: {
-    untrustedWorkspaces?: {
-      supported?: string;
-      description?: string;
-      restrictedConfigurations?: string[];
-    };
-  };
-  contributes?: { viewsWelcome?: WelcomeEntry[] };
-};
 
 // Undeclared, VS Code disables the extension ENTIRELY in a Restricted-Mode
 // workspace, with no explanation — a silent bug, not a feature gap. These
@@ -42,7 +28,7 @@ describe("extension manifest: restricted-mode + remote + welcome declarations", 
   });
 
   test("every sidebar view has a not-connected welcome with start/troubleshoot actions", () => {
-    const entries = manifest.contributes?.viewsWelcome ?? [];
+    const entries = welcome;
     for (const id of VIEW_IDS) {
       const entry = entries.find((e) => e.view === id);
       expect(entry, `viewsWelcome missing for ${id}`).toBeDefined();

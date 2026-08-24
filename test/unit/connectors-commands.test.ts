@@ -316,6 +316,9 @@ describe("interval", () => {
       }
     ).validateInput;
     expect(validate("30s")).toBe("The Gateway enforces a minimum of 60s.");
+    // …and a value at or above the floor is accepted, so the box is not simply
+    // refusing everything typed into it.
+    expect(validate("15m")).toBeUndefined();
     expect(h.ops.setConfig).not.toHaveBeenCalled();
   });
 });
@@ -432,4 +435,251 @@ test("every applied mutation refreshes the view", async () => {
   const h = harness();
   await h.commands["nimbus.pauseConnector"]!(node());
   expect(h.refresh).toHaveBeenCalled();
+});
+describe("configure", () => {
+  // A two-step command: the first Quick Pick chooses WHICH setting, and
+  // "Sync interval" / "Index depth" each open a second prompt. `queued` answers
+  // them in order, so a test reads as the sequence the user actually sees.
+  function queued(...answers: Array<{ label: string } | undefined>) {
+    const rest = [...answers];
+    return vi.fn(async (..._args: unknown[]) => rest.shift());
+  }
+
+  test("a dismissed setting picker calls nothing", async () => {
+    const h = harness({ window: { showQuickPick: queued(undefined) } });
+    await h.commands["nimbus.configureConnector"]!(node());
+    expect(h.ops.setConfig).not.toHaveBeenCalled();
+  });
+
+  test("a valid interval reaches the Gateway as milliseconds, not as the typed text", async () => {
+    const h = harness({
+      window: {
+        showQuickPick: queued({ label: "Sync interval" }),
+        showInputBox: vi.fn(async () => "15m"),
+      },
+    });
+    await h.commands["nimbus.configureConnector"]!(node());
+    expect(h.ops.setConfig).toHaveBeenCalledWith({ serviceId: "github", intervalMs: 900_000 });
+  });
+
+  test("dismissing the interval box calls nothing", async () => {
+    const h = harness({
+      window: {
+        showQuickPick: queued({ label: "Sync interval" }),
+        showInputBox: vi.fn(async () => undefined),
+      },
+    });
+    await h.commands["nimbus.configureConnector"]!(node());
+    expect(h.ops.setConfig).not.toHaveBeenCalled();
+  });
+
+  // validateInput is the first line of defence, but it is the HOST that enforces
+  // it. A value that reaches us anyway must still not be sent: the floor is the
+  // Gateway's, and shipping an unparseable duration would just move the
+  // rejection one hop away.
+  test("an unparseable interval that gets past the box is still not sent", async () => {
+    const h = harness({
+      window: {
+        showQuickPick: queued({ label: "Sync interval" }),
+        showInputBox: vi.fn(async () => "whenever"),
+      },
+    });
+    await h.commands["nimbus.configureConnector"]!(node());
+    expect(h.ops.setConfig).not.toHaveBeenCalled();
+  });
+
+  test("index depth sends the chosen depth", async () => {
+    const h = harness({
+      window: { showQuickPick: queued({ label: "Index depth" }, { label: "summary" }) },
+    });
+    await h.commands["nimbus.configureConnector"]!(node());
+    expect(h.ops.setConfig).toHaveBeenCalledWith({ serviceId: "github", depth: "summary" });
+  });
+
+  test("dismissing the depth picker calls nothing", async () => {
+    const h = harness({
+      window: { showQuickPick: queued({ label: "Index depth" }, undefined) },
+    });
+    await h.commands["nimbus.configureConnector"]!(node());
+    expect(h.ops.setConfig).not.toHaveBeenCalled();
+  });
+
+  // `false` is a REQUEST to disable, not an absent field: a truthiness test
+  // anywhere on this path would drop it and silently leave the connector on.
+  test.each([
+    ["Enable", true],
+    ["Disable", false],
+  ] as const)("%s sends enabled: %s", async (label, enabled) => {
+    const h = harness({ window: { showQuickPick: queued({ label }) } });
+    await h.commands["nimbus.configureConnector"]!(node());
+    expect(h.ops.setConfig).toHaveBeenCalledWith({ serviceId: "github", enabled });
+  });
+});
+
+describe("reindex: dismissal", () => {
+  test("a dismissed depth picker calls nothing", async () => {
+    const h = harness({ window: { showQuickPick: vi.fn(async () => undefined) } });
+    await h.commands["nimbus.reindexConnector"]!(node());
+    expect(h.ops.reindex).not.toHaveBeenCalled();
+  });
+});
+
+describe("credentials: a provider that authenticates in the browser", () => {
+  // google_drive is the catalog's OAuth (PKCE) shape: an EMPTY field list, which
+  // means "call with serviceId alone". Prompting for a token there would ask for
+  // something that does not exist.
+  test("prompts for nothing, says what will happen, and still calls auth", async () => {
+    const h = harness();
+    await h.commands["nimbus.authenticateConnector"]!(node("google_drive", 0));
+    expect(h.window.showInputBox).not.toHaveBeenCalled();
+    expect(h.window.showInformationMessage.mock.calls[0]?.[0]).toContain("browser");
+    expect(h.ops.auth).toHaveBeenCalledWith("google_drive", {});
+  });
+
+  test("the log says 'no fields' rather than trailing an empty list", async () => {
+    const h = harness();
+    await h.commands["nimbus.authenticateConnector"]!(node("google_drive", 0));
+    expect(h.logged.join("\n")).toContain("connector auth: google_drive (no fields)");
+  });
+});
+
+describe("credentials: prompt shape", () => {
+  // exactOptionalPropertyTypes forbids an explicit `placeHolder: undefined`, so
+  // the key is spread in only when the field carries one. A field WITHOUT a
+  // placeholder must therefore not carry the key at all.
+  test("a placeholder is passed only for the field that has one", async () => {
+    const h = harness();
+    await h.commands["nimbus.authenticateConnector"]!(node("jira", 7));
+    const opts = h.window.showInputBox.mock.calls.map(
+      (c) => c[0] as { prompt: string; placeHolder?: string },
+    );
+    expect(opts[0]).not.toHaveProperty("placeHolder");
+    expect(opts[1]?.placeHolder).toBe("https://your-team.atlassian.net");
+  });
+
+  test("an empty extra-field NAME is rejected in the box, so no unnamed field is sent", async () => {
+    const answers: Array<string | undefined> = [SENTINEL, undefined];
+    const h = harness({
+      window: { showInputBox: vi.fn(async (..._args: unknown[]) => answers.shift()) },
+    });
+    // "aws" is deliberately absent from the catalog, so the add-another-field
+    // loop is offered and its name prompt is the second box.
+    await h.commands["nimbus.authenticateConnector"]!(node("aws", 0));
+    const nameOpts = h.window.showInputBox.mock.calls[1]?.[0] as {
+      validateInput: (v: string) => string | undefined;
+    };
+    expect(nameOpts.validateInput("   ")).toBe("Field name cannot be empty.");
+    expect(nameOpts.validateInput("awsAccessKeyId")).toBeUndefined();
+  });
+});
+
+describe("addMcp: the command line", () => {
+  test("cannot be blank", async () => {
+    const answers = ["mcp_acme", "npx -y @acme/mcp-server"];
+    const h = harness({
+      window: { showInputBox: vi.fn(async (..._args: unknown[]) => answers.shift()) },
+    });
+    await h.commands["nimbus.addMcpConnector"]!(undefined);
+    const cmdOpts = h.window.showInputBox.mock.calls[1]?.[0] as {
+      validateInput: (v: string) => string | undefined;
+    };
+    expect(cmdOpts.validateInput("  ")).toBe("This field is required.");
+    expect(cmdOpts.validateInput("npx -y @acme/mcp-server")).toBeUndefined();
+  });
+
+  test("dismissing it registers nothing, even though the id was already accepted", async () => {
+    const answers: Array<string | undefined> = ["mcp_acme", undefined];
+    const h = harness({
+      window: { showInputBox: vi.fn(async (..._args: unknown[]) => answers.shift()) },
+    });
+    await h.commands["nimbus.addMcpConnector"]!(undefined);
+    expect(h.ops.addMcp).not.toHaveBeenCalled();
+  });
+});
+
+describe("reporting", () => {
+  test("a failure is an error dialog, not an information one", async () => {
+    const h = harness({
+      ops: { pause: vi.fn(async () => ({ kind: "failed", message: "socket hang up" }) as const) },
+    });
+    await h.commands["nimbus.pauseConnector"]!(node());
+    expect(h.window.showErrorMessage).toHaveBeenCalledWith("Pausing github failed: socket hang up");
+    expect(h.window.showInformationMessage).not.toHaveBeenCalled();
+    // A failure still refreshes: the row's state may have moved anyway.
+    expect(h.refresh).toHaveBeenCalled();
+  });
+
+  test("the palette picker labels a disabled connector as disabled, not by its stale status", async () => {
+    const h = harness({
+      ops: {
+        list: vi.fn(async () => [
+          {
+            serviceId: "github",
+            status: "ok" as const,
+            lastSyncAt: null,
+            nextSyncAt: null,
+            intervalMs: 60_000,
+            itemCount: 1204,
+            lastError: null,
+            consecutiveFailures: 0,
+            depth: "summary" as const,
+            enabled: false,
+          },
+        ]),
+      },
+    });
+    await h.commands["nimbus.pauseConnector"]!(undefined);
+    const items = h.window.showQuickPick.mock.calls[0]?.[0] as Array<{ description: string }>;
+    expect(items[0]?.description).toBe("disabled · 1,204 items");
+  });
+});
+describe("no target, no call", () => {
+  // Every one of these is palette-visible, so each can be invoked with no row
+  // and each then opens the picker. Dismissing it must abandon that command —
+  // proceeding with an undefined target would build "Syncing undefined" at best.
+  test.each([
+    ["nimbus.syncConnector", "sync"],
+    ["nimbus.fullResyncConnector", "fullSync"],
+    ["nimbus.pauseConnector", "pause"],
+    ["nimbus.resumeConnector", "resume"],
+    ["nimbus.configureConnector", "setConfig"],
+    ["nimbus.reindexConnector", "reindex"],
+    ["nimbus.authenticateConnector", "auth"],
+    ["nimbus.removeConnector", "remove"],
+  ] as const)("%s calls nothing when the picker is dismissed", async (commandId, op) => {
+    const h = harness({ window: { showQuickPick: vi.fn(async () => undefined) } });
+    await h.commands[commandId]!(undefined);
+    expect(h.ops[op]).not.toHaveBeenCalled();
+  });
+
+  // A row from another view, or one of our own non-connector rows: it IS an
+  // object, so the typeof guard passes, but it carries no serviceId. Falling
+  // through to the picker beats acting on a connector called "undefined".
+  test("a row whose payload is not a connector falls through to the picker", async () => {
+    const h = harness({ window: { showQuickPick: vi.fn(async () => undefined) } });
+    await h.commands["nimbus.pauseConnector"]!({ label: "some row", payload: { name: "x" } });
+    expect(h.window.showQuickPick).toHaveBeenCalled();
+    expect(h.ops.pause).not.toHaveBeenCalled();
+  });
+});
+
+describe("confirmations that are declined", () => {
+  test("declining the full-depth re-index warning never reaches the consent wait", async () => {
+    const h = harness({
+      window: {
+        showQuickPick: vi.fn(async () => ({ label: "full" })),
+        showWarningMessage: vi.fn(async () => undefined),
+      },
+    });
+    await h.commands["nimbus.reindexConnector"]!(node());
+    expect(h.ops.reindex).not.toHaveBeenCalled();
+    expect(h.window.withProgress).not.toHaveBeenCalled();
+  });
+
+  test("dismissing the connector-id prompt never asks for a command line", async () => {
+    const h = harness({ window: { showInputBox: vi.fn(async () => undefined) } });
+    await h.commands["nimbus.addMcpConnector"]!(undefined);
+    expect(h.window.showInputBox).toHaveBeenCalledTimes(1);
+    expect(h.ops.addMcp).not.toHaveBeenCalled();
+  });
 });

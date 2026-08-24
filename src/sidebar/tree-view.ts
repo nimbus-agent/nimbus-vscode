@@ -195,3 +195,12 @@ export function createPlaceholderView(deps: {
     loadData: async () => [{ label: deps.emptyLabel }],
   });
 }
+
+// Shown by every data view that has a connection but no client yet — one row,
+// worded and wired identically everywhere, so "not connected" never means two
+// different things in two panels of the same sidebar.
+export const NOT_CONNECTED_ROW: SidebarItem = {
+  label: "Not connected — click to reconnect",
+  iconId: "debug-disconnect",
+  command: { command: "nimbus.reconnect", title: "Reconnect to Gateway" },
+};

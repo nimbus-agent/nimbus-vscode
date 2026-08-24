@@ -23,7 +23,13 @@ const PROVIDED = [
 // { value, target } object, and `exactOptionalPropertyTypes` forbids passing an
 // explicit `undefined` for an optional field — hence the conditional spreads.
 function toLike(d: vscode.Diagnostic): DiagnosticLike {
-  const code = typeof d.code === "object" && d.code !== null ? d.code.value : d.code;
+  const raw = typeof d.code === "object" && d.code !== null ? d.code.value : d.code;
+  // A language server may send `code: null` over LSP — the guard above already
+  // keeps that out of the object branch, but left as-is it also passes the
+  // `=== undefined` test below and reaches the prompt as the literal "null"
+  // (context.ts and normalize.ts both String() it). Nullish only: a code of 0
+  // is a real code and must survive.
+  const code = raw ?? undefined;
   return {
     message: d.message,
     severity: d.severity,

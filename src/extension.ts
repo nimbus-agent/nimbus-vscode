@@ -99,6 +99,7 @@ import {
   parseIndexRow,
 } from "./sidebar/index.js";
 import { createIndexView } from "./sidebar/index-view.js";
+import { nodePayload, parseAll } from "./sidebar/parse-helpers.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
 import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
@@ -961,12 +962,7 @@ export function activateWithDeps(
     if (client === undefined) return [];
     try {
       const { items } = await client.queryItems({ limit: INDEX_LIMIT });
-      const result: IndexItem[] = [];
-      for (const row of items) {
-        const parsed = parseIndexRow(row);
-        if (parsed !== undefined) result.push(parsed);
-      }
-      return result;
+      return parseAll(items, parseIndexRow);
     } catch (e) {
       log.warn(`loadIndex queryItems failed: ${errMsg(e)}`);
       throw e;
@@ -1324,12 +1320,7 @@ export function activateWithDeps(
   register("nimbus.findRelatedFromIndex", (...args) => {
     // view/item/context command: args[0] is the tree NODE; the IndexItem rides
     // on node.payload (see itemToRow), mirroring nimbus.askAboutIndexItem.
-    const node = args[0];
-    const payload =
-      typeof node === "object" && node !== null
-        ? (node as { payload?: unknown }).payload
-        : undefined;
-    const item = parseIndexRow(payload);
+    const item = parseIndexRow(nodePayload(args[0]));
     if (item === undefined) return;
     const byName = sameName(item.name);
     const exclude = (r: RankedResult): boolean =>
@@ -1375,12 +1366,7 @@ export function activateWithDeps(
     // A view/item/context command receives the tree NODE element, not the
     // row's command.arguments — the IndexItem rides on node.payload (see
     // itemToRow), exactly as nimbus.askAboutIndexItem reads it.
-    const node = args[0];
-    const payload =
-      typeof node === "object" && node !== null
-        ? (node as { payload?: unknown }).payload
-        : undefined;
-    const item = parseIndexRow(payload);
+    const item = parseIndexRow(nodePayload(args[0]));
     if (item === undefined) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;
@@ -1715,12 +1701,7 @@ export function activateWithDeps(
     // NOT the row's command.arguments. The IndexItem rides along on node.payload
     // (see itemToRow). openIndexItem differs: it's the row's primary command, so
     // it gets command.arguments[0] (the IndexItem) directly.
-    const node = args[0];
-    const payload =
-      typeof node === "object" && node !== null
-        ? (node as { payload?: unknown }).payload
-        : undefined;
-    const item = parseIndexRow(payload);
+    const item = parseIndexRow(nodePayload(args[0]));
     if (item === undefined) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;

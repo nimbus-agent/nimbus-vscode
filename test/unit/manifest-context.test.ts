@@ -1,27 +1,10 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-type View = { id: string; name: string; type?: string; initialSize?: number; visibility?: string };
-
-const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
-  contributes?: { views?: { nimbus?: View[] } };
-};
-
-const views = manifest.contributes?.views?.nimbus ?? [];
-
-type Config = { properties?: Record<string, { type?: string; default?: unknown }> };
-const configManifest = manifest as unknown as {
-  contributes?: { configuration?: Config | Config[] };
-};
+import { configProperties, views } from "./helpers/manifest.js";
 
 describe("extension manifest: context setting", () => {
   test("contributes nimbus.context.enabled, defaulting to on", () => {
-    const raw = configManifest.contributes?.configuration;
-    const blocks = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw];
-    const property = blocks
-      .flatMap((b) => Object.entries(b.properties ?? {}))
-      .find(([key]) => key === "nimbus.context.enabled")?.[1];
+    const property = configProperties["nimbus.context.enabled"];
     expect(property?.type).toBe("boolean");
     expect(property?.default).toBe(true);
   });

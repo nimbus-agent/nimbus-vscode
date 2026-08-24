@@ -198,10 +198,22 @@ export interface CodeActionsProviderLike {
   ): CodeAction[] | undefined;
 }
 
+export interface HoverProviderLike {
+  provideHover(document: unknown, position: unknown, token: unknown): Promise<unknown>;
+}
+
 export const languages = {
-  registerHoverProvider: (_selector: unknown, _provider: unknown) => ({
-    dispose: () => undefined,
-  }),
+  // Captured for the same reason as lastCodeActionsProvider below: what
+  // real-hover.ts guarantees is that the MarkdownString it hands back carries
+  // `isTrusted` — without which the hover's "Why? →" command link is inert —
+  // and nothing could observe that while the provider went straight in the bin.
+  lastHoverProvider: undefined as HoverProviderLike | undefined,
+  lastHoverSelector: undefined as unknown,
+  registerHoverProvider: (selector: unknown, provider: unknown) => {
+    languages.lastHoverSelector = selector;
+    languages.lastHoverProvider = provider as HoverProviderLike;
+    return { dispose: () => undefined };
+  },
   // Captured, not discarded, so a test can DRIVE the registered provider.
   // real-provider.ts guarantees every action carries a command and no `edit`,
   // and never sets `isPreferred` — both guarantees are the ABSENCE of an

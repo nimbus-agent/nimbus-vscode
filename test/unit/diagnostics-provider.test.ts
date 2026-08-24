@@ -34,9 +34,16 @@ const diagnostic = {
   },
 };
 
-function drive(diagnostics: readonly unknown[]) {
+type Offer = Parameters<typeof registerDiagnosticCodeActions>[0]["offer"];
+
+const defaultOffer: Offer = (likes) =>
+  diagnosticActionsFor({ diagnostics: likes, connected: true, enabled: true });
+
+// `offer` is overridable so a test can watch what toLike produced, or hand back
+// an offer that came from somewhere other than the input list.
+function drive(diagnostics: readonly unknown[], offer: Offer = defaultOffer) {
   registerDiagnosticCodeActions({
-    offer: (likes) => diagnosticActionsFor({ diagnostics: likes, connected: true, enabled: true }),
+    offer,
     buildArg: (doc, like) => ({
       context: buildDiagnosticContext({
         fullText: doc.getText(),
@@ -128,5 +135,64 @@ describe("registerDiagnosticCodeActions", () => {
 
   test("offers nothing on a hint, so the lightbulb stays quiet", () => {
     expect(drive([{ ...diagnostic, severity: 3 }])).toBeUndefined();
+  });
+});
+describe("toLike: diagnostics that are not shaped like the happy path", () => {
+  beforeEach(() => {
+    languages.lastCodeActionsProvider = undefined;
+  });
+
+  // Watches what toLike handed on, which is otherwise invisible: the DiagnosticLike
+  // never leaves the provider except through `offer`.
+  function captureLikes(): { likes: Array<Record<string, unknown>>; offer: Offer } {
+    const likes: Array<Record<string, unknown>> = [];
+    return {
+      likes,
+      offer: (given) => {
+        likes.push(...(given as unknown as ReadonlyArray<Record<string, unknown>>));
+        return defaultOffer(given);
+      },
+    };
+  }
+
+  // `typeof null === "object"`, so a null code reaching the object branch would
+  // read `.value` off null and throw INSIDE a code-action provider — VS Code
+  // swallows that, and the lightbulb then silently stops appearing for every
+  // diagnostic in the file, not just this one.
+  test("a null code does not throw, and contributes no code field", () => {
+    const c = captureLikes();
+    const actions = drive([{ ...diagnostic, code: null }], c.offer) ?? [];
+    expect(actions.length).toBeGreaterThan(0);
+    expect(c.likes[0]).not.toHaveProperty("code");
+  });
+
+  // exactOptionalPropertyTypes forbids an explicit `undefined`, so an absent
+  // source/code must be an absent KEY — not a key holding undefined, which
+  // reads downstream as "the language server said its source was undefined".
+  test("a diagnostic with neither source nor code yields neither key", () => {
+    const c = captureLikes();
+    drive([{ message: "bare", severity: 0, range: diagnostic.range }], c.offer);
+    expect(c.likes[0]).not.toHaveProperty("source");
+    expect(c.likes[0]).not.toHaveProperty("code");
+    expect(c.likes[0]).toMatchObject({ message: "bare", severity: 0 });
+  });
+
+  // The provider recovers the real vscode.Diagnostic by index identity. An offer
+  // that did not come from the input list has no squiggle to attach to — the
+  // action must still be offered and runnable, just unattached, rather than
+  // carrying `[undefined]` into VS Code's own diagnostics array.
+  test("an offer that matches no input diagnostic still produces a runnable action", () => {
+    const actions =
+      drive([diagnostic], (likes) => {
+        const real = defaultOffer(likes);
+        if (real === undefined) return undefined;
+        // Same fields, different object: indexOf cannot find it.
+        return { ...real, diagnostic: { ...real.diagnostic } };
+      }) ?? [];
+    expect(actions.length).toBeGreaterThan(0);
+    for (const action of actions) {
+      expect(action.command).toBeDefined();
+      expect(action.diagnostics).toBeUndefined();
+    }
   });
 });

@@ -1,22 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { BRIEF_CATALOG, needsEditor } from "../../src/briefs/catalog.js";
-
-type Command = { command: string; title: string; category?: string };
-type MenuEntry = { command: string; when?: string; group?: string };
-
-const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
-  contributes?: {
-    commands?: Command[];
-    menus?: { "editor/context"?: MenuEntry[]; commandPalette?: MenuEntry[] };
-  };
-};
-
-const commands = manifest.contributes?.commands ?? [];
-const editorContext = manifest.contributes?.menus?.["editor/context"] ?? [];
-const palette = manifest.contributes?.menus?.commandPalette ?? [];
+import { commands, editorContext, palette } from "./helpers/manifest.js";
 
 describe("extension manifest: briefs", () => {
   test("every catalog brief is a contributed command under the Nimbus category", () => {

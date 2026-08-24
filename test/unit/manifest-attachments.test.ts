@@ -1,25 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-type Command = { command: string; title: string; category?: string; icon?: string };
-type MenuEntry = { command: string; when?: string; group?: string };
-
-const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
-  contributes?: {
-    commands?: Command[];
-    menus?: {
-      commandPalette?: MenuEntry[];
-      "editor/context"?: MenuEntry[];
-      "view/item/context"?: MenuEntry[];
-    };
-  };
-};
-
-const commands = manifest.contributes?.commands ?? [];
-const palette = manifest.contributes?.menus?.commandPalette ?? [];
-const editorContext = manifest.contributes?.menus?.["editor/context"] ?? [];
-const itemContext = manifest.contributes?.menus?.["view/item/context"] ?? [];
+import { commands, editorContext, itemContext, palette } from "./helpers/manifest.js";
 
 const ALL = ["nimbus.attachContext", "nimbus.attachSelectionToAsk", "nimbus.attachIndexItemToAsk"];
 

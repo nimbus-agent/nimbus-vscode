@@ -1,24 +1,9 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-type LmToolEntry = {
-  name: string;
-  displayName?: string;
-  modelDescription?: string;
-  userDescription?: string;
-  canBeReferencedInPrompt?: boolean;
-  toolReferenceName?: string;
-  tags?: string[];
-  inputSchema?: { type?: string; required?: string[]; properties?: Record<string, unknown> };
-};
+import { lmTools, type ManifestLmTool } from "./helpers/manifest.js";
 
-const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
-  contributes?: { languageModelTools?: LmToolEntry[] };
-};
-
-function toolNamed(name: string): LmToolEntry | undefined {
-  return (manifest.contributes?.languageModelTools ?? []).find((t) => t.name === name);
+function toolNamed(name: string): ManifestLmTool | undefined {
+  return lmTools.find((t) => t.name === name);
 }
 
 // The 2d multiplier: Copilot (or any LM extension) can call Nimbus for private
