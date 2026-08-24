@@ -133,13 +133,17 @@ export function createController(deps: ControllerDeps): ContextController {
     // Every signal: this path (invalidatePath / invalidateAll / a connection
     // state change) touches all of their caches, so all of their epochs move.
     for (const id of allSignalIds()) bumpEpoch(id);
+    // Iterated live, not over a copy: a Map iterator is defined to tolerate
+    // deleting the entry it is standing on (and any it has already passed),
+    // and `matches` is a pure predicate that inserts nothing, so there is no
+    // entry a snapshot would have protected.
     for (const cache of caches.values()) {
-      for (const [key, entry] of [...cache.entries()]) {
+      for (const [key, entry] of cache.entries()) {
         if (matches(entry.path)) cache.delete(key);
       }
     }
     for (const flight of inFlight.values()) {
-      for (const [key, entry] of [...flight.entries()]) {
+      for (const [key, entry] of flight.entries()) {
         if (matches(entry.path)) flight.delete(key);
       }
     }
@@ -196,7 +200,7 @@ export function createController(deps: ControllerDeps): ContextController {
         // Only reuse an entry from the CURRENT epoch of this signal. One that
         // predates an invalidation is normally already gone (invalidateWhere
         // deletes matching entries), but this is the belt to that suspenders.
-        if (existing !== undefined && existing.epoch === epochAtStart) pending = existing.promise;
+        if (existing?.epoch === epochAtStart) pending = existing.promise;
       }
       if (pending === undefined) {
         // Called INSIDE the try on purpose. A collector that throws
@@ -309,10 +313,9 @@ export function createController(deps: ControllerDeps): ContextController {
     // debounce tiers, cache hits, git churn — is otherwise unobservable,
     // which made four points of the PR 1 and PR 2 checklists unanswerable in
     // a real editor. Debug and not info: this fires on every cursor rest.
-    deps.log.debug(
-      `context collect #${mine} ${snapshot.path ?? "(no file)"}:${snapshot.line ?? "-"} ` +
-        `[${served.map((s) => `${s.id}=${s.how}`).join(" ")}]`,
-    );
+    const howServed = served.map((s) => `${s.id}=${s.how}`).join(" ");
+    const where = `${snapshot.path ?? "(no file)"}:${snapshot.line ?? "-"}`;
+    deps.log.debug(`context collect #${mine} ${where} [${howServed}]`);
 
     // Awaited only when there is something to await, so a collection with no
     // local work still posts its render in the same turn it was asked for.

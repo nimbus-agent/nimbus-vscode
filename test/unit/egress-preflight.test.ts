@@ -84,31 +84,15 @@ describe("summarizeEgress", () => {
     const s = summarizeEgress(payload({ files: [{ name: "logging.ts:11", note: "whole file" }] }));
     expect(s).toContain(REDACTION_NOTE);
   });
-  test("claims nothing at all for an absolute path", () => {
-    const s = summarizeEgress(
-      payload({ files: [{ name: "C:/Users/asaf/logging.ts", note: "whole file" }] }),
-    );
-    expect(s).not.toContain(REDACTION_NOTE);
-    expect(s).not.toContain(RELATIVE_PATH_NOTE);
-  });
-  test("claims nothing at all for a POSIX absolute path", () => {
-    const s = summarizeEgress(
-      payload({ files: [{ name: "/home/asaf/logging.ts", note: "whole file" }] }),
-    );
-    expect(s).not.toContain(REDACTION_NOTE);
-    expect(s).not.toContain(RELATIVE_PATH_NOTE);
-  });
-  test("claims nothing at all for a backslash drive-letter path", () => {
-    const s = summarizeEgress(
-      payload({ files: [{ name: "C:\\Users\\asaf\\logging.ts", note: "whole file" }] }),
-    );
-    expect(s).not.toContain(REDACTION_NOTE);
-    expect(s).not.toContain(RELATIVE_PATH_NOTE);
-  });
-  test("claims nothing at all for a UNC path", () => {
-    const s = summarizeEgress(
-      payload({ files: [{ name: "\\\\server\\share\\logging.ts", note: "whole file" }] }),
-    );
+  // An absolute path is neither bare-name nor repo-relative, so BOTH claims
+  // have to stay off the summary — in all four shapes a real machine produces.
+  test.each([
+    ["a drive-letter path", "C:/Users/asaf/logging.ts"],
+    ["a POSIX absolute path", "/home/asaf/logging.ts"],
+    ["a backslash drive-letter path", "C:\\Users\\asaf\\logging.ts"],
+    ["a UNC path", "\\\\server\\share\\logging.ts"],
+  ])("claims nothing at all for %s", (_shape, name) => {
+    const s = summarizeEgress(payload({ files: [{ name, note: "whole file" }] }));
     expect(s).not.toContain(REDACTION_NOTE);
     expect(s).not.toContain(RELATIVE_PATH_NOTE);
   });

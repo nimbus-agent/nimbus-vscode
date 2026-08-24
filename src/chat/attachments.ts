@@ -121,6 +121,104 @@ function blockFor(a: Attachment, body: string): string {
   return `${headerFor(a)}\n${body}${suffix}`;
 }
 
+// The text an attachment contributes, before any budget is applied. A `file`
+// is read here and nowhere else, which is what lets the secret check upstream
+// guarantee a secret file is never opened.
+function rawTextOf(
+  a: Attachment,
+  readFile: (path: string) => string | undefined,
+): string | undefined {
+  switch (a.kind) {
+    case "file":
+      return readFile(a.path);
+    case "selection":
+      return a.text;
+    case "index":
+      return a.snippet;
+  }
+}
+
+// The provenance half of a chip's detail line. A plain file carries none: its
+// label already says everything there is to say about where it came from.
+function provenanceOf(a: Attachment): string {
+  switch (a.kind) {
+    case "selection":
+      return `lines ${a.startLine}-${a.endLine} · captured at attach`;
+    case "index":
+      return "from index";
+    case "file":
+      return "";
+  }
+}
+
+function detailFor(a: Attachment, bodyChars: number, rawChars: number): string {
+  const clampNote = bodyChars < rawChars ? `clamped · ${bodyChars} of ${rawChars} chars` : "";
+  return [provenanceOf(a), clampNote].filter((s) => s.length > 0).join(" · ");
+}
+
+// The body this attachment may contribute, or undefined when the turn budget
+// leaves no room for even one whole line of it. `remaining` is what is left of
+// TOTAL_BUDGET; the three ways to run out are one verdict ("budget"), because
+// they are one fact from the user's side.
+function budgetedBody(a: Attachment, raw: string, remaining: number): string | undefined {
+  if (remaining <= 0) return undefined;
+
+  // `total` (and therefore `remaining`) accumulates block.length — header
+  // included — so the budget handed to the body must account for the
+  // header too, or the header bytes ride free and the block can land past
+  // what the caller was promised. Reserve the header's own line (its text
+  // plus the "\n" that always follows it) and one more char for the
+  // trailing newline blockFor pads on in the worst case (when the body
+  // doesn't already end with one), so `block.length` never exceeds budget.
+  const overhead = headerFor(a).length + 2;
+  const budget = Math.min(PER_ATTACHMENT_BUDGET, remaining) - overhead;
+  if (budget <= 0) return undefined;
+
+  const body = clampToLineBoundary(raw, budget);
+  return body.length === 0 ? undefined : body;
+}
+
+// One attachment's verdict, decided in the order the spec fixes: secret, then
+// unreadable, then non-textual, then budget. `remaining` is what is left of the
+// turn budget when this attachment's turn comes.
+function resolveAttachment(
+  a: Attachment,
+  readFile: (path: string) => string | undefined,
+  remaining: number,
+): ResolvedAttachment {
+  // Secret wins over every other verdict, and is decided from the path alone
+  // so a secret file is never even read. NOTE: isSecretPath matches names,
+  // not contents — an API key pasted into an ordinary source file is not
+  // caught here, and the docs say so.
+  if (a.kind !== "index" && isSecretPath(a.path)) {
+    return refuse(a, "secret", "possible secret · not sent");
+  }
+
+  const raw = rawTextOf(a, readFile);
+  // Empty counts as unreadable, not as a budget refusal: an index item with
+  // no semanticSnippet, or an empty file, has nothing to contribute, and
+  // "omitted · turn budget reached" would be a lie about why.
+  if (raw === undefined || raw.trim().length === 0) {
+    return refuse(a, "unreadable", "unreadable · not sent");
+  }
+  if (looksBinary(raw)) return refuse(a, "non-textual", "binary · not sent");
+
+  const body = budgetedBody(a, raw, remaining);
+  if (body === undefined) return refuse(a, "budget", "omitted · turn budget reached");
+
+  const block = blockFor(a, body);
+  return {
+    attachment: a,
+    label: labelOf(a),
+    detail: detailFor(a, body.length, raw.length),
+    outcome:
+      body.length < raw.length
+        ? { state: "clamped", chars: block.length, ofChars: raw.length }
+        : { state: "sent", chars: block.length },
+    block,
+  };
+}
+
 /**
  * The single pass that produces both what is sent and what the composer shows.
  * Two outputs from one traversal is the whole point: the chips cannot drift
@@ -136,78 +234,17 @@ export function buildAttachedContext(
   let total = 0;
 
   for (const a of attachments) {
-    // Secret wins over every other verdict, and is decided from the path alone
-    // so a secret file is never even read. NOTE: isSecretPath matches names,
-    // not contents — an API key pasted into an ordinary source file is not
-    // caught here, and the docs say so.
-    if (a.kind !== "index" && isSecretPath(a.path)) {
-      chips.push(refuse(a, "secret", "possible secret · not sent"));
-      continue;
+    // The remaining budget is recomputed per attachment, so an earlier one
+    // that landed at the ceiling refuses every later one — the order the user
+    // attached them in is the order they are honoured in.
+    const chip = resolveAttachment(a, readFile, TOTAL_BUDGET - total);
+    chips.push(chip);
+    // `block` is present exactly when the attachment was not refused, and it
+    // is the only thing that moves `total`: chips and payload cannot drift.
+    if (chip.block !== undefined) {
+      bodies.push(chip.block);
+      total += chip.block.length;
     }
-
-    const raw = a.kind === "file" ? readFile(a.path) : a.kind === "selection" ? a.text : a.snippet;
-    // Empty counts as unreadable, not as a budget refusal: an index item with
-    // no semanticSnippet, or an empty file, has nothing to contribute, and
-    // "omitted · turn budget reached" would be a lie about why.
-    if (raw === undefined || raw.trim().length === 0) {
-      chips.push(refuse(a, "unreadable", "unreadable · not sent"));
-      continue;
-    }
-    if (looksBinary(raw)) {
-      chips.push(refuse(a, "non-textual", "binary · not sent"));
-      continue;
-    }
-
-    const remaining = TOTAL_BUDGET - total;
-    if (remaining <= 0) {
-      chips.push(refuse(a, "budget", "omitted · turn budget reached"));
-      continue;
-    }
-
-    // `total` (and therefore `remaining`) accumulates block.length — header
-    // included — so the budget handed to the body must account for the
-    // header too, or the header bytes ride free and the block can land past
-    // what the caller was promised. Reserve the header's own line (its text
-    // plus the "\n" that always follows it) and one more char for the
-    // trailing newline blockFor pads on in the worst case (when the body
-    // doesn't already end with one), so `block.length` never exceeds budget.
-    const overhead = headerFor(a).length + 2;
-    const budget = Math.min(PER_ATTACHMENT_BUDGET, remaining) - overhead;
-    if (budget <= 0) {
-      chips.push(refuse(a, "budget", "omitted · turn budget reached"));
-      continue;
-    }
-
-    const body = clampToLineBoundary(raw, budget);
-    if (body.length === 0) {
-      chips.push(refuse(a, "budget", "omitted · turn budget reached"));
-      continue;
-    }
-
-    const block = blockFor(a, body);
-    bodies.push(block);
-    total += block.length;
-
-    const provenance =
-      a.kind === "selection"
-        ? `lines ${a.startLine}-${a.endLine} · captured at attach`
-        : a.kind === "index"
-          ? "from index"
-          : "";
-    const clampNote =
-      body.length < raw.length ? `clamped · ${body.length} of ${raw.length} chars` : "";
-    const detail = [provenance, clampNote].filter((s) => s.length > 0).join(" · ");
-
-    chips.push({
-      attachment: a,
-      label: labelOf(a),
-      detail,
-      outcome:
-        body.length < raw.length
-          ? { state: "clamped", chars: block.length, ofChars: raw.length }
-          : { state: "sent", chars: block.length },
-      block,
-    });
   }
 
   return { blocks: bodies.join(""), chips, totalChars: total };

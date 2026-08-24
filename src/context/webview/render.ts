@@ -39,6 +39,22 @@ function renderRow(label: string, detail: string | undefined): string {
   return `<li class="row"><span class="label">${escapeHtml(label)}</span>${sub}</li>`;
 }
 
+// What a section with no rows says instead. A section still loading says so
+// rather than claiming emptiness it has not established yet; one that has
+// finished falls back to its own wording, then to the generic line.
+function emptyTextOf(section: SignalSection): string {
+  if (section.loading === true) return "Loading…";
+  return section.empty ?? "Nothing to show.";
+}
+
+function renderSectionBody(section: SignalSection): string {
+  if (section.rows.length > 0) {
+    const rows = section.rows.map((r) => renderRow(r.label, r.detail)).join("");
+    return `<ul class="rows">${rows}</ul>`;
+  }
+  return `<p class="empty">${escapeHtml(emptyTextOf(section))}</p>`;
+}
+
 export function renderSections(sections: readonly SignalSection[]): string {
   return (
     sections
@@ -47,15 +63,9 @@ export function renderSections(sections: readonly SignalSection[]): string {
       // rule is one pure line with no state behind it.
       .filter((section) => !(section.suppressWhenEmpty === true && section.rows.length === 0))
       .map((section) => {
-        const body =
-          section.rows.length > 0
-            ? `<ul class="rows">${section.rows.map((r) => renderRow(r.label, r.detail)).join("")}</ul>`
-            : `<p class="empty">${escapeHtml(
-                section.loading === true ? "Loading…" : (section.empty ?? "Nothing to show."),
-              )}</p>`;
-        return `<section class="signal" data-signal="${escapeHtml(section.id)}"><h2>${escapeHtml(
-          section.title,
-        )}</h2>${body}</section>`;
+        const heading = escapeHtml(section.title);
+        const body = renderSectionBody(section);
+        return `<section class="signal" data-signal="${escapeHtml(section.id)}"><h2>${heading}</h2>${body}</section>`;
       })
       .join("")
   );

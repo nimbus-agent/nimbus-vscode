@@ -112,7 +112,7 @@ describe("remove", () => {
     expect(options).toMatchObject({ cancellable: false });
     // Two parameters: the reporter, then the cancellation token — the order
     // the real vscode.window.withProgress always calls with.
-    expect((task as (...args: unknown[]) => unknown).length).toBe(2);
+    expect(task as (...args: unknown[]) => unknown).toHaveLength(2);
   });
 
   test("a denial is reported as a decision, not as an error", async () => {

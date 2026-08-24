@@ -130,6 +130,19 @@ const INDEX_LIMIT = 100;
 const SEARCH_DEBOUNCE_MS = 200;
 const SELECTION_PREFILL_MAX = 150;
 
+// Drop a subscription that belongs to a connection we have already lost. The
+// client it came from may be gone, so `dispose()` throwing is expected rather
+// than exceptional — and must not stop the caller from installing the
+// replacement, which is the whole point of disposing the old one.
+function disposeQuietly(d: DisposableLike | undefined): void {
+  if (d === undefined) return;
+  try {
+    d.dispose();
+  } catch {
+    /* ignore */
+  }
+}
+
 // A quick-ask picker row: a preset action, or (no `preset`) the custom-question
 // row. The handler keys off the presence of `preset`, not the label text, so a
 // user-defined preset named "Custom question…" is never mistaken for the custom
@@ -836,52 +849,53 @@ export function activateWithDeps(
 
   let hitlSubscription: DisposableLike | undefined;
   let connectorConfigSubscription: DisposableLike | undefined;
+  // Re-point the push subscriptions at the client this connection produced.
+  // Both are torn down first: the old ones belong to a client that is gone, and
+  // leaving them attached would double-deliver every request after a reconnect.
+  const resubscribe = (): void => {
+    const c = nimbus();
+    if (c === undefined) return;
+    disposeQuietly(hitlSubscription);
+    hitlSubscription = c.subscribeHitl((req) => {
+      void hitlRouter.handle(req);
+    });
+    disposeQuietly(connectorConfigSubscription);
+    connectorConfigSubscription = c.subscribeConnectorConfigChanged(() =>
+      connectorRefresh.trigger(),
+    );
+  };
+
+  // Fire-and-forget: the caller is a state listener and must not be held open
+  // by a spawn. `autoStartInFlight` is cleared in the `finally` so a failed
+  // spawn does not wedge every later disconnect out of ever retrying.
+  const beginAutoStart = (socketPath: string): void => {
+    autoStartInFlight = true;
+    void (async (): Promise<void> => {
+      try {
+        const r = await autoStart.spawn(socketPath);
+        if (r.kind === "ok") {
+          await connection.reconnectNow();
+        } else if (r.kind === "spawn-error") {
+          log.error(`Auto-start failed: ${r.message}`);
+        } else {
+          log.warn(`Auto-start timeout waiting for ${r.socketPath}`);
+        }
+      } finally {
+        autoStartInFlight = false;
+      }
+    })();
+  };
+
   const stateSub = connection.onState((s) => {
     renderStatusBar(s);
     void deps.commands.executeCommand("setContext", "nimbus.connected", s.kind === "connected");
     if (s.kind === "connected") {
-      const c = nimbus();
-      if (c !== undefined) {
-        if (hitlSubscription !== undefined) {
-          try {
-            hitlSubscription.dispose();
-          } catch {
-            /* ignore */
-          }
-        }
-        hitlSubscription = c.subscribeHitl((req) => {
-          void hitlRouter.handle(req);
-        });
-        if (connectorConfigSubscription !== undefined) {
-          try {
-            connectorConfigSubscription.dispose();
-          } catch {
-            /* ignore */
-          }
-        }
-        connectorConfigSubscription = c.subscribeConnectorConfigChanged(() =>
-          connectorRefresh.trigger(),
-        );
-      }
+      resubscribe();
       log.info(`Nimbus connected to Gateway at ${s.socketPath}`);
       return;
     }
     if (s.kind === "disconnected" && settings.autoStartGateway() && !autoStartInFlight) {
-      autoStartInFlight = true;
-      void (async (): Promise<void> => {
-        try {
-          const r = await autoStart.spawn(s.socketPath);
-          if (r.kind === "ok") {
-            await connection.reconnectNow();
-          } else if (r.kind === "spawn-error") {
-            log.error(`Auto-start failed: ${r.message}`);
-          } else {
-            log.warn(`Auto-start timeout waiting for ${r.socketPath}`);
-          }
-        } finally {
-          autoStartInFlight = false;
-        }
-      })();
+      beginAutoStart(s.socketPath);
     }
   });
   ctx.subscriptions.push(

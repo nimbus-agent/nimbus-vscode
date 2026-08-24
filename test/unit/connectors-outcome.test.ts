@@ -111,3 +111,36 @@ describe("describeOutcome", () => {
     ).toBe("Syncing github failed: socket hang up");
   });
 });
+
+describe("denial detection stays linear in the message length", () => {
+  // The pattern this replaced paired two `(?=.*\b…\b)` lookaheads. `test`
+  // retries every start offset and each retry re-scanned the rest of the line,
+  // so the cost grew with the SQUARE of the length: measured against that
+  // pattern, this exact input took 9.8s, and four times that for every
+  // doubling. No correctness assertion can see backtracking — only a clock
+  // can, which is why this test is wall-clock bounded. The budget sits far
+  // from both ends: ~300x the slowest observed linear run (1.6ms, cold) and
+  // ~1/20th of the quadratic one, so a loaded CI runner has room and the
+  // regression it exists to catch still cannot slip through.
+  test("a ~120 KB non-matching message is classified well inside a wall-clock budget", () => {
+    const message = `denied ${"a ".repeat(60_000)}`;
+    const started = performance.now();
+    const outcome = fromThrown(new Error(message));
+    const elapsed = performance.now() - started;
+    expect(outcome.kind).toBe("failed");
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  // The lookaheads could never span a line terminator, because `.` does not
+  // match one. Splitting the check into separate patterns must not quietly
+  // widen it into a whole-message search.
+  test("a denial word and a consent word on DIFFERENT lines is not a denial", () => {
+    const message = "upstream rejected\nawaiting owner approval elsewhere";
+    expect(fromThrown(new Error(message))).toEqual({ kind: "failed", message });
+  });
+
+  test("both halves on ONE line of a multi-line message is still a denial", () => {
+    const message = "request failed\nHITL: owner denied the request\n  at connectorReindex";
+    expect(fromThrown(new Error(message))).toEqual({ kind: "denied", reason: message });
+  });
+});
