@@ -10,6 +10,14 @@ on:
 permissions:
   contents: read
 
+# `edited` fires on every title keystroke-save, so fixing a malformed title
+# queues a run per attempt against the same PR. Only the newest verdict can be
+# right — cancel the rest. Keyed on the PR number, not the ref, because this is
+# the one workflow whose input is the PR's metadata rather than its tree.
+concurrency:
+  group: pr-title-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   lint-pr-title:
     name: Validate PR title

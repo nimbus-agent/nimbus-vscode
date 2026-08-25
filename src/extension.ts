@@ -99,6 +99,7 @@ import {
   parseIndexRow,
 } from "./sidebar/index.js";
 import { createIndexView } from "./sidebar/index-view.js";
+import { nodePayload, parseAll } from "./sidebar/parse-helpers.js";
 import { createQuickActions } from "./sidebar/quick-actions.js";
 import type { SessionSummary } from "./sidebar/sessions.js";
 import { createSessionsView } from "./sidebar/sessions-view.js";
@@ -129,6 +130,19 @@ const INDEX_LIMIT = 100;
 // Type-to-search debounce.
 const SEARCH_DEBOUNCE_MS = 200;
 const SELECTION_PREFILL_MAX = 150;
+
+// Drop a subscription that belongs to a connection we have already lost. The
+// client it came from may be gone, so `dispose()` throwing is expected rather
+// than exceptional — and must not stop the caller from installing the
+// replacement, which is the whole point of disposing the old one.
+function disposeQuietly(d: DisposableLike | undefined): void {
+  if (d === undefined) return;
+  try {
+    d.dispose();
+  } catch {
+    /* ignore */
+  }
+}
 
 // A quick-ask picker row: a preset action, or (no `preset`) the custom-question
 // row. The handler keys off the presence of `preset`, not the label text, so a
@@ -836,52 +850,53 @@ export function activateWithDeps(
 
   let hitlSubscription: DisposableLike | undefined;
   let connectorConfigSubscription: DisposableLike | undefined;
+  // Re-point the push subscriptions at the client this connection produced.
+  // Both are torn down first: the old ones belong to a client that is gone, and
+  // leaving them attached would double-deliver every request after a reconnect.
+  const resubscribe = (): void => {
+    const c = nimbus();
+    if (c === undefined) return;
+    disposeQuietly(hitlSubscription);
+    hitlSubscription = c.subscribeHitl((req) => {
+      void hitlRouter.handle(req);
+    });
+    disposeQuietly(connectorConfigSubscription);
+    connectorConfigSubscription = c.subscribeConnectorConfigChanged(() =>
+      connectorRefresh.trigger(),
+    );
+  };
+
+  // Fire-and-forget: the caller is a state listener and must not be held open
+  // by a spawn. `autoStartInFlight` is cleared in the `finally` so a failed
+  // spawn does not wedge every later disconnect out of ever retrying.
+  const beginAutoStart = (socketPath: string): void => {
+    autoStartInFlight = true;
+    void (async (): Promise<void> => {
+      try {
+        const r = await autoStart.spawn(socketPath);
+        if (r.kind === "ok") {
+          await connection.reconnectNow();
+        } else if (r.kind === "spawn-error") {
+          log.error(`Auto-start failed: ${r.message}`);
+        } else {
+          log.warn(`Auto-start timeout waiting for ${r.socketPath}`);
+        }
+      } finally {
+        autoStartInFlight = false;
+      }
+    })();
+  };
+
   const stateSub = connection.onState((s) => {
     renderStatusBar(s);
     void deps.commands.executeCommand("setContext", "nimbus.connected", s.kind === "connected");
     if (s.kind === "connected") {
-      const c = nimbus();
-      if (c !== undefined) {
-        if (hitlSubscription !== undefined) {
-          try {
-            hitlSubscription.dispose();
-          } catch {
-            /* ignore */
-          }
-        }
-        hitlSubscription = c.subscribeHitl((req) => {
-          void hitlRouter.handle(req);
-        });
-        if (connectorConfigSubscription !== undefined) {
-          try {
-            connectorConfigSubscription.dispose();
-          } catch {
-            /* ignore */
-          }
-        }
-        connectorConfigSubscription = c.subscribeConnectorConfigChanged(() =>
-          connectorRefresh.trigger(),
-        );
-      }
+      resubscribe();
       log.info(`Nimbus connected to Gateway at ${s.socketPath}`);
       return;
     }
     if (s.kind === "disconnected" && settings.autoStartGateway() && !autoStartInFlight) {
-      autoStartInFlight = true;
-      void (async (): Promise<void> => {
-        try {
-          const r = await autoStart.spawn(s.socketPath);
-          if (r.kind === "ok") {
-            await connection.reconnectNow();
-          } else if (r.kind === "spawn-error") {
-            log.error(`Auto-start failed: ${r.message}`);
-          } else {
-            log.warn(`Auto-start timeout waiting for ${r.socketPath}`);
-          }
-        } finally {
-          autoStartInFlight = false;
-        }
-      })();
+      beginAutoStart(s.socketPath);
     }
   });
   ctx.subscriptions.push(
@@ -947,12 +962,7 @@ export function activateWithDeps(
     if (client === undefined) return [];
     try {
       const { items } = await client.queryItems({ limit: INDEX_LIMIT });
-      const result: IndexItem[] = [];
-      for (const row of items) {
-        const parsed = parseIndexRow(row);
-        if (parsed !== undefined) result.push(parsed);
-      }
-      return result;
+      return parseAll(items, parseIndexRow);
     } catch (e) {
       log.warn(`loadIndex queryItems failed: ${errMsg(e)}`);
       throw e;
@@ -1310,12 +1320,7 @@ export function activateWithDeps(
   register("nimbus.findRelatedFromIndex", (...args) => {
     // view/item/context command: args[0] is the tree NODE; the IndexItem rides
     // on node.payload (see itemToRow), mirroring nimbus.askAboutIndexItem.
-    const node = args[0];
-    const payload =
-      typeof node === "object" && node !== null
-        ? (node as { payload?: unknown }).payload
-        : undefined;
-    const item = parseIndexRow(payload);
+    const item = parseIndexRow(nodePayload(args[0]));
     if (item === undefined) return;
     const byName = sameName(item.name);
     const exclude = (r: RankedResult): boolean =>
@@ -1361,12 +1366,7 @@ export function activateWithDeps(
     // A view/item/context command receives the tree NODE element, not the
     // row's command.arguments — the IndexItem rides on node.payload (see
     // itemToRow), exactly as nimbus.askAboutIndexItem reads it.
-    const node = args[0];
-    const payload =
-      typeof node === "object" && node !== null
-        ? (node as { payload?: unknown }).payload
-        : undefined;
-    const item = parseIndexRow(payload);
+    const item = parseIndexRow(nodePayload(args[0]));
     if (item === undefined) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;
@@ -1701,12 +1701,7 @@ export function activateWithDeps(
     // NOT the row's command.arguments. The IndexItem rides along on node.payload
     // (see itemToRow). openIndexItem differs: it's the row's primary command, so
     // it gets command.arguments[0] (the IndexItem) directly.
-    const node = args[0];
-    const payload =
-      typeof node === "object" && node !== null
-        ? (node as { payload?: unknown }).payload
-        : undefined;
-    const item = parseIndexRow(payload);
+    const item = parseIndexRow(nodePayload(args[0]));
     if (item === undefined) return;
     const ctl = ensureChatController();
     if (ctl === undefined) return;

@@ -1,6 +1,6 @@
-import { isEgressCancelled } from "../egress/gated-client.js";
+import { reportCommandFailure } from "../command-failure.js";
 import type { EgressMeta } from "../egress/preflight.js";
-import { errMsg, type Logger } from "../logging.js";
+import type { Logger } from "../logging.js";
 import { extractReply, QUICK_ASK_MAX_CONTEXT_CHARS } from "../quick-ask.js";
 import { extractCode, isWholeFileRewrite, spliceSelection } from "../scm/generate.js";
 import type { WindowApi } from "../vscode-shim.js";
@@ -112,12 +112,12 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
       try {
         await body(arg);
       } catch (e) {
-        if (isEgressCancelled(e)) {
-          deps.log.debug(`nimbus.${internalName} cancelled at the pre-flight preview`);
-          return;
-        }
-        deps.log.error(`nimbus.${internalName} failed: ${errMsg(e)}`);
-        void deps.window.showErrorMessage(`Nimbus ${humanName} failed: ${errMsg(e)}`);
+        reportCommandFailure(e, {
+          internalName,
+          humanName,
+          window: deps.window,
+          log: deps.log,
+        });
       }
     };
 

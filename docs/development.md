@@ -29,7 +29,7 @@ bun install
 | `bun run watch` | `build --watch` — rebuild on save |
 | `bun run check-bundle` | assert the bundle keeps `vscode` as its only external (run after `build`) |
 | `bun run check-vsix-contents` | assert the `.vsix` ships only allowlisted files (run after `build`) |
-| `bun run check-settings-docs` | assert every `nimbus.*` setting is documented |
+| `bun run check-settings-docs` | assert every `nimbus.*` setting is documented, and that nothing documented has since been removed |
 | `bun run clean` | remove build artifacts |
 | `bun run package` | produce a `.vsix` via `vsce` (`--no-dependencies`) |
 
@@ -92,14 +92,18 @@ unit level (`src/chat-participant/` tests) instead.
 Unit tests live in `test/unit/` and run under Vitest. The `vscode` module is
 aliased to a stub (`test/unit/vscode-stub.ts`) in
 [`vitest.config.ts`](../vitest.config.ts), so tests exercise the real `src/`
-logic without a running editor — this is the payoff of routing all `vscode`
-access through [`src/vscode-shim.ts`](../src/vscode-shim.ts). Webview tests run
-under jsdom.
+logic without a running editor — this is the payoff of keeping the logic behind
+the narrow `*Like` interfaces in [`src/vscode-shim.ts`](../src/vscode-shim.ts)
+and confining the real `vscode` import to `src/extension.ts` and the seven
+`real-*.ts` adapters. Because the alias applies to every test, an adapter *can*
+be unit-tested too where that is worth it
+(`test/unit/diagnostics-provider.test.ts`). Webview tests run under jsdom.
 
 When adding code:
 
 - Depend on a narrow interface (like `WorkspaceApi`) rather than importing
-  `vscode` directly, so the unit can be driven by the stub.
+  `vscode` directly, so the unit can be driven by the stub; put the `vscode`
+  call itself in a `real-*.ts` adapter.
 - Include tests for behavior changes; keep PRs focused.
 
 ## Conventions

@@ -118,7 +118,7 @@ export function registerContextView(deps: {
   let collectSeq = 0;
 
   const collect = async (): Promise<void> => {
-    if (view === undefined || !view.visible) return;
+    if (view?.visible !== true) return;
     // The setting is read per collection, not captured: it can change under a
     // long-lived view, and the config listener below only exists to repaint
     // promptly, not to be the authority.

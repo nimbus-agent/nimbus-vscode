@@ -22,8 +22,32 @@ export type ConnectorOutcome =
 // context (consent/HITL/approval/owner), or accept standalone "not approved".
 // Not yet calibrated against a real Gateway's denial messages — that is
 // pending, in the F5 pass this surface has not had yet.
-const DENIAL =
-  /\bnot approved\b|(?=.*\b(?:denied|rejected|expired|timed out)\b)(?=.*\b(?:consent|HITL|approval|owner)\b)/i;
+//
+// Three independent literal alternations, never one regex with lookaheads. The
+// pattern this replaced paired two `(?=.*\b…\b)` lookaheads, and `test` retries
+// every start offset: each retry re-scanned the remainder of the line, so the
+// cost grew with the SQUARE of the message length. A 120 KB rejection message —
+// a stack trace, a proxy body echoed back — took ~10s to classify and blocked
+// the extension host for all of it. Each pattern below is a bounded literal
+// alternation: linear, with no ambiguity to backtrack over.
+const NOT_APPROVED = /\bnot approved\b/i;
+const DENIAL_WORD = /\b(?:denied|rejected|expired|timed out)\b/i;
+const CONSENT_WORD = /\b(?:consent|HITL|approval|owner)\b/i;
+
+// The two halves must meet on the SAME line, which is exactly what the
+// lookaheads enforced: `.` never matches a line terminator, so a "rejected" on
+// one line and an "approval" on another was never evidence of one denial, and
+// must not become one now. These four are precisely the terminators `.`
+// excludes in JavaScript.
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/;
+
+function isDenial(message: string): boolean {
+  if (NOT_APPROVED.test(message)) return true;
+  for (const line of message.split(LINE_TERMINATOR)) {
+    if (DENIAL_WORD.test(line) && CONSENT_WORD.test(line)) return true;
+  }
+  return false;
+}
 
 export function fromOk(r: { ok: boolean }, detail?: string): ConnectorOutcome {
   if (!r.ok) return { kind: "failed", message: "The Gateway did not apply the change." };
@@ -42,7 +66,7 @@ export function fromGated<T extends { ok: true }>(
 
 export function fromThrown(e: unknown): ConnectorOutcome {
   const message = errMsg(e);
-  return DENIAL.test(message) ? { kind: "denied", reason: message } : { kind: "failed", message };
+  return isDenial(message) ? { kind: "denied", reason: message } : { kind: "failed", message };
 }
 
 /** `verb` is the gerund of the action: "Removing", "Pausing", "Syncing". */

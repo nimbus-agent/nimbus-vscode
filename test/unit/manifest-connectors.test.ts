@@ -1,27 +1,8 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { CONNECTOR_CONTEXT } from "../../src/connectors/rows.js";
+import { commands, itemContext, palette, views, viewTitle, welcome } from "./helpers/manifest.js";
 
-type Command = { command: string; title: string; category?: string; icon?: string };
-type MenuEntry = { command: string; when?: string; group?: string };
-type View = { id: string; name: string };
-
-const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
-  contributes?: {
-    commands?: Command[];
-    views?: { nimbus?: View[] };
-    viewsWelcome?: Array<{ view: string; contents: string; when?: string }>;
-    menus?: { "view/title"?: MenuEntry[]; "view/item/context"?: MenuEntry[] };
-  };
-};
-
-const commands = manifest.contributes?.commands ?? [];
-const views = manifest.contributes?.views?.nimbus ?? [];
-const welcome = manifest.contributes?.viewsWelcome ?? [];
-const viewTitle = manifest.contributes?.menus?.["view/title"] ?? [];
-const itemContext = manifest.contributes?.menus?.["view/item/context"] ?? [];
 const VIEW = "nimbus.connectorsView";
 
 const ALL = [
@@ -109,9 +90,6 @@ describe("extension manifest: connectors", () => {
   });
 
   test("no connector command is hidden from the palette — each prompts when it has no row", () => {
-    const palette =
-      (manifest.contributes?.menus as { commandPalette?: MenuEntry[] } | undefined)
-        ?.commandPalette ?? [];
     for (const id of ALL) {
       expect(palette.find((m) => m.command === id)?.when, id).not.toBe("false");
     }

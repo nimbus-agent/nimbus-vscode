@@ -1,27 +1,7 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { WORKFLOW_CONTEXT_VALUE } from "../../src/sidebar/workflows.js";
-
-type Command = { command: string; title: string; category?: string; icon?: string };
-type MenuEntry = { command: string; when?: string; group?: string };
-type View = { id: string; name: string };
-
-const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
-  contributes?: {
-    commands?: Command[];
-    views?: { nimbus?: View[] };
-    viewsWelcome?: Array<{ view: string; contents: string; when?: string }>;
-    menus?: { "view/title"?: MenuEntry[]; "view/item/context"?: MenuEntry[] };
-  };
-};
-
-const commands = manifest.contributes?.commands ?? [];
-const views = manifest.contributes?.views?.nimbus ?? [];
-const welcome = manifest.contributes?.viewsWelcome ?? [];
-const viewTitle = manifest.contributes?.menus?.["view/title"] ?? [];
-const itemContext = manifest.contributes?.menus?.["view/item/context"] ?? [];
+import { commands, itemContext, views, viewTitle, welcome } from "./helpers/manifest.js";
 
 const RUN = "nimbus.runWorkflow";
 const DRY = "nimbus.dryRunWorkflow";

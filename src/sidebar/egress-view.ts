@@ -1,9 +1,10 @@
 import { type EgressRow, egressRowToItem, parseEgressRow } from "./egress.js";
+import { parseAll } from "./parse-helpers.js";
 import {
   createDataView,
   errorRow,
+  NOT_CONNECTED_ROW,
   type SidebarConnection,
-  type SidebarItem,
   type SidebarView,
 } from "./tree-view.js";
 
@@ -21,12 +22,6 @@ export interface EgressClientLike {
 // lower to keep the tree responsive (cf. INDEX_LIMIT).
 const EGRESS_LIMIT = 200;
 
-const NOT_CONNECTED_ROW: SidebarItem = {
-  label: "Not connected — click to reconnect",
-  iconId: "debug-disconnect",
-  command: { command: "nimbus.reconnect", title: "Reconnect to Gateway" },
-};
-
 // Egress ledger viewer. Lists recent rows from client.egressList(), one row per
 // entry (destination.method + relative time, icon by resultStatus). Clicking a
 // row opens its detail via nimbus.openEgressEntry.
@@ -43,11 +38,7 @@ export function createEgressView(deps: {
       if (client === undefined) return [NOT_CONNECTED_ROW];
       try {
         const { rows } = await client.egressList({ limit: deps.limit ?? EGRESS_LIMIT });
-        const parsed: EgressRow[] = [];
-        for (const raw of rows) {
-          const row = parseEgressRow(raw);
-          if (row !== undefined) parsed.push(row);
-        }
+        const parsed: EgressRow[] = parseAll(rows, parseEgressRow);
         if (parsed.length === 0) return [{ label: "No egress entries yet" }];
         const now = (deps.now ?? Date.now)();
         return parsed.map((row) => egressRowToItem(row, now));

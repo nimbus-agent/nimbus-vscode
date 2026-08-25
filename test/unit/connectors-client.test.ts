@@ -170,3 +170,92 @@ test("the client is resolved per call, never captured", async () => {
   current = stub();
   expect(await ops.pause("github")).toEqual({ kind: "applied" });
 });
+describe("setConfig detail wording", () => {
+  // `undefined` means "not part of this call" and drops out of the sentence;
+  // `false` is a request to DISABLE and must survive as a word. A truthiness
+  // test here would report a disable as if nothing had been asked for.
+  test.each([
+    [{ enabled: true }, "enabled"],
+    [{ enabled: false }, "disabled"],
+    [{ depth: "full" as const }, "depth full"],
+    [{ intervalMs: 900_000, depth: "summary" as const }, "interval 15m, depth summary"],
+    [
+      { intervalMs: 3_600_000, depth: "metadata_only" as const, enabled: false },
+      "interval 1h, depth metadata_only, disabled",
+    ],
+  ])("%o reports %s", async (params, detail) => {
+    const client = stub();
+    const ops = createConnectorOps(() => client);
+    expect(await ops.setConfig({ serviceId: "github", ...params })).toEqual({
+      kind: "applied",
+      detail,
+    });
+    expect(client.connectorSetConfig).toHaveBeenCalledWith({ serviceId: "github", ...params });
+  });
+});
+
+describe("the remaining mutations", () => {
+  test("a plain sync says it started, without claiming the cursor was cleared", async () => {
+    const client = stub();
+    const ops = createConnectorOps(() => client);
+    expect(await ops.sync("github")).toEqual({ kind: "applied", detail: "sync started" });
+    expect(client.connectorSync).toHaveBeenCalledWith({ serviceId: "github" });
+  });
+
+  test("resume carries no detail — there is nothing to report beyond 'done'", async () => {
+    const client = stub();
+    const ops = createConnectorOps(() => client);
+    expect(await ops.resume("github")).toEqual({ kind: "applied" });
+    expect(client.connectorResume).toHaveBeenCalledWith({ serviceId: "github" });
+  });
+
+  test("a Gateway that resolves ok:false is a failure, not a silent success", async () => {
+    const ops = createConnectorOps(() =>
+      stub({ connectorPause: vi.fn(async () => ({ ok: false })) }),
+    );
+    expect(await ops.pause("github")).toEqual({
+      kind: "failed",
+      message: "The Gateway did not apply the change.",
+    });
+  });
+
+  test("addMcp names what it added", async () => {
+    const client = stub();
+    const ops = createConnectorOps(() => client);
+    expect(await ops.addMcp("mcp_acme", "npx -y @acme/mcp-server")).toEqual({
+      kind: "applied",
+      detail: "added mcp_acme",
+    });
+    expect(client.connectorAddMcp).toHaveBeenCalledWith({
+      serviceId: "mcp_acme",
+      commandLine: "npx -y @acme/mcp-server",
+    });
+  });
+
+  test("a denied addMcp is a decision carrying the Gateway's reason, not a failure", async () => {
+    const ops = createConnectorOps(() =>
+      stub({
+        connectorAddMcp: vi.fn(async () => ({
+          status: "rejected" as const,
+          reason: "owner declined the new server",
+        })),
+      }),
+    );
+    expect(await ops.addMcp("mcp_acme", "npx -y @acme/mcp-server")).toEqual({
+      kind: "denied",
+      reason: "owner declined the new server",
+    });
+  });
+});
+
+describe("reads", () => {
+  test("detail asks for stats — the row's item count comes from them", async () => {
+    const client = stub();
+    const ops = createConnectorOps(() => client);
+    await ops.detail("github");
+    expect(client.connectorStatus).toHaveBeenCalledWith({
+      serviceId: "github",
+      includeStats: true,
+    });
+  });
+});

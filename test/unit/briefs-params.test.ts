@@ -115,3 +115,34 @@ describe("params", () => {
     });
   });
 });
+// UNC shares are the OTHER case-insensitive shape, alongside a drive letter.
+// A file opened as //nas/Share/... and a workspace folder recorded as
+// //NAS/share/... are the same directory, and treating them as different roots
+// sends the whole absolute path to the Gateway instead of a relative ref.
+describe("UNC roots", () => {
+  test("rootFor matches a UNC root case-insensitively, in its original casing", () => {
+    expect(rootFor("//nas/share/proj/src/a.ts", ["//NAS/Share/proj"])).toBe("//NAS/Share/proj");
+  });
+
+  test("toRelativeRef relativises against a UNC root", () => {
+    expect(toRelativeRef("\\\\nas\\Share\\proj\\src\\a.ts", ["//NAS/share/proj"])).toBe("src/a.ts");
+  });
+
+  test("a different share is not a match", () => {
+    expect(rootFor("//nas/other/proj/a.ts", ["//nas/share/proj"])).toBeUndefined();
+  });
+});
+
+// A workspace folder can arrive with a trailing separator. Without normalising
+// it the prefix test would look for "/a/b//", match nothing, and every file in
+// that folder would fall back to its bare basename.
+describe("a root with a trailing separator", () => {
+  test("still contains its files", () => {
+    expect(rootFor("/a/b/x.ts", ["/a/b/"])).toBe("/a/b/");
+    expect(toRelativeRef("/a/b/src/x.ts", ["/a/b/"])).toBe("src/x.ts");
+  });
+
+  test("is still a boundary — a sibling folder sharing the prefix does not match", () => {
+    expect(rootFor("/a/bc/x.ts", ["/a/b/"])).toBeUndefined();
+  });
+});

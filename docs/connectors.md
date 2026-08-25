@@ -11,8 +11,10 @@ leaves" pre-flight gate exactly as `searchRanked` and the blame hover do.
 
 ## The view
 
-`nimbus.connectorsView` is the eighth view in the Nimbus activity-bar
-container, placed after Index: "what is indexed" then "where it comes from".
+`nimbus.connectorsView` is the eighth and newest of the Nimbus activity-bar
+container's views. In the manifest it sits sixth, directly after Index: "what is
+indexed" then "where it comes from" — the eight views are Context, Audit,
+Egress, Agents, Index, Connectors, Sessions, Workflows, in that order.
 Rows come from `connectorListStatus()` and sort **unhealthy first** — `error`,
 then `backoff`, `paused`, `syncing`, `ok`, ties broken by `serviceId` — so a
 health surface puts the connector that needs attention on top rather than

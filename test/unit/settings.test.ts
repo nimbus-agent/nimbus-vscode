@@ -36,6 +36,13 @@ describe("Settings", () => {
     expect(s.showHoverBlame()).toBe(true);
     expect(s.hitlAlwaysModal()).toBe(false);
     expect(s.logLevel()).toBe("info");
+    // The three that decide what leaves the machine, or what offers to. Their
+    // DEFAULTS are the contract: secret files are skipped unless the user says
+    // otherwise, and the proof trailer is opt-in — a default of `false` on the
+    // first or `true` on the second would send something nobody asked to send.
+    expect(s.scmSkipSecretFiles()).toBe(true);
+    expect(s.scmEgressProofTrailer()).toBe(false);
+    expect(s.showDiagnosticCodeActions()).toBe(true);
   });
 
   test("returns user-set values", () => {
@@ -50,6 +57,9 @@ describe("Settings", () => {
         "quickAsk.presets": [{ label: "Test", prompt: "Write tests." }],
         "egress.showStatusBarBadge": false,
         "briefs.showHoverBlame": false,
+        "scm.skipSecretFiles": false,
+        "scm.egressProofTrailer": true,
+        "diagnostics.showCodeActions": false,
         hitlAlwaysModal: true,
         logLevel: "debug",
       }),
@@ -63,6 +73,9 @@ describe("Settings", () => {
     expect(s.quickAskPresets()).toEqual([{ label: "Test", prompt: "Write tests." }]);
     expect(s.showEgressStatusBarBadge()).toBe(false);
     expect(s.showHoverBlame()).toBe(false);
+    expect(s.scmSkipSecretFiles()).toBe(false);
+    expect(s.scmEgressProofTrailer()).toBe(true);
+    expect(s.showDiagnosticCodeActions()).toBe(false);
     expect(s.hitlAlwaysModal()).toBe(true);
     expect(s.logLevel()).toBe("debug");
   });

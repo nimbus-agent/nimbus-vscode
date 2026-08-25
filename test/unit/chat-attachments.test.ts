@@ -155,7 +155,7 @@ describe("buildAttachedContext", () => {
         .map((c) => c.block)
         .join(""),
     ).toBe(built.blocks);
-    expect(built.blocks.length).toBe(built.totalChars);
+    expect(built.blocks).toHaveLength(built.totalChars);
   });
 
   test("a secret path is refused outright and reads nothing", () => {
@@ -179,23 +179,13 @@ describe("buildAttachedContext", () => {
   // normalization, no basename check): the BACKSLASH case fails there — the
   // reader gets asked and the block would carry the key. The forward-slash
   // case already passed; it stays as the fence around the one that did not.
-  test("a secret file behind a Windows backslash absolute path outside the workspace is refused", () => {
-    const r = reader({ "C:\\Users\\me\\keys\\.env": "TOKEN=abc\n" });
-    const built = buildAttachedContext([file("C:\\Users\\me\\keys\\.env")], r.read);
-    expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "secret" });
-    expect(r.asked).toEqual([]);
-  });
-
-  test("a secret file behind a forward-slash absolute path outside the workspace is refused", () => {
-    const r = reader({ "/Users/me/keys/.env": "TOKEN=abc\n" });
-    const built = buildAttachedContext([file("/Users/me/keys/.env")], r.read);
-    expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "secret" });
-    expect(r.asked).toEqual([]);
-  });
-
-  test("a secret file inside the workspace, repo-relative, is refused", () => {
-    const r = reader({ "keys/.env": "TOKEN=abc\n" });
-    const built = buildAttachedContext([file("keys/.env")], r.read);
+  test.each([
+    ["a Windows backslash absolute path outside the workspace", "C:\\Users\\me\\keys\\.env"],
+    ["a forward-slash absolute path outside the workspace", "/Users/me/keys/.env"],
+    ["a repo-relative path inside the workspace", "keys/.env"],
+  ])("a secret file behind %s is refused", (_shape, path) => {
+    const r = reader({ [path]: "TOKEN=abc\n" });
+    const built = buildAttachedContext([file(path)], r.read);
     expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "secret" });
     expect(r.asked).toEqual([]);
   });

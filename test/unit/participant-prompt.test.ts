@@ -57,3 +57,38 @@ describe("buildParticipantPrompt", () => {
     expect(out).toContain("(truncated)");
   });
 });
+describe("attachments that carry no code", () => {
+  // A fenced block with nothing in it costs tokens and says nothing. Two ways to
+  // arrive at one: an empty (or whitespace-only) file, and a file whose share of
+  // the shared budget is so small that the clamp leaves only its indentation.
+  test("a whitespace-only attachment contributes no block", () => {
+    const out = buildParticipantPrompt(
+      req({
+        prompt: "q",
+        attachments: [
+          { path: "blank.ts", languageId: "typescript", code: "   \n\t\n" },
+          { path: "real.ts", languageId: "typescript", code: "const x = 1;" },
+        ],
+      }),
+    );
+    expect(out).not.toContain("blank.ts");
+    expect(out).toContain("real.ts");
+  });
+
+  test("an attachment clamped down to whitespace is dropped, not fenced empty", () => {
+    // The first file leaves 2 characters of budget; the second one's first two
+    // characters are newlines, so its clamped share is whitespace only.
+    const filler = "x".repeat(PARTICIPANT_MAX_TOTAL_CONTEXT_CHARS - 2);
+    const out = buildParticipantPrompt(
+      req({
+        prompt: "q",
+        attachments: [
+          { path: "filler.ts", languageId: "typescript", code: filler },
+          { path: "crumbs.ts", languageId: "typescript", code: "\n\nconst y = 2;" },
+        ],
+      }),
+    );
+    expect(out).toContain("filler.ts");
+    expect(out).not.toContain("crumbs.ts");
+  });
+});

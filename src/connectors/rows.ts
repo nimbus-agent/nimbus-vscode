@@ -108,7 +108,7 @@ export function telemetryToItem(t: ConnectorSyncTelemetry, now: number): Sidebar
   const failed = t.errorMsg !== null;
   return {
     label: `${formatRelativeTime(now, t.startedAt)} · ${(t.durationMs / 1000).toFixed(1)}s`,
-    description: t.errorMsg !== null ? t.errorMsg : `+${t.itemsUpserted} / -${t.itemsDeleted}`,
+    description: t.errorMsg ?? `+${t.itemsUpserted} / -${t.itemsDeleted}`,
     iconId: failed ? "error" : "pass",
   };
 }

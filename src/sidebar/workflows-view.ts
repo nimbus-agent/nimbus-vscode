@@ -4,9 +4,11 @@ import type {
   WorkflowListRunsResult,
 } from "@nimbus-dev/client";
 
+import { nodePayload } from "./parse-helpers.js";
 import {
   createDataView,
   errorRow,
+  NOT_CONNECTED_ROW,
   type SidebarConnection,
   type SidebarItem,
   type SidebarView,
@@ -21,19 +23,11 @@ export interface WorkflowsClientLike {
   workflowListRuns(params: WorkflowListRunsParams): Promise<WorkflowListRunsResult>;
 }
 
-const NOT_CONNECTED_ROW: SidebarItem = {
-  label: "Not connected — click to reconnect",
-  iconId: "debug-disconnect",
-  command: { command: "nimbus.reconnect", title: "Reconnect to Gateway" },
-};
-
 /** The Gateway clamps to 1..500; this is what one screenful of history costs. */
 const DEFAULT_RUN_LIMIT = 20;
 
 function payloadOf(item: SidebarItem): WorkflowPayload | undefined {
-  const p = item.payload;
-  if (typeof p !== "object" || p === null) return undefined;
-  const name = (p as { workflowName?: unknown }).workflowName;
+  const name = (nodePayload(item) as { workflowName?: unknown } | undefined)?.workflowName;
   return typeof name === "string" ? { workflowName: name } : undefined;
 }
 

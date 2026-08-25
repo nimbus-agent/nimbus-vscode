@@ -1,14 +1,6 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
-type MenuEntry = { command: string; when?: string };
-
-const manifest = JSON.parse(readFileSync(join(__dirname, "..", "..", "package.json"), "utf8")) as {
-  contributes?: { menus?: { commandPalette?: MenuEntry[] } };
-};
-
-const paletteEntries = manifest.contributes?.menus?.commandPalette ?? [];
+import { palette as paletteEntries } from "./helpers/manifest.js";
 
 // Opening the Command Palette moves keyboard focus off the editor, so a
 // focus-dependent clause can evaluate false exactly when the palette is being

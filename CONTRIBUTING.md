@@ -58,8 +58,10 @@ settings, and the release runbook.
 - This extension is **IPC-only**: it talks to the Gateway through the published
   [`@nimbus-dev/client`](https://www.npmjs.com/package/@nimbus-dev/client) package.
   Do not add direct cloud/network calls or import from the Nimbus gateway source.
-- The `vscode` API is touched only through `src/vscode-shim.ts` (stubbed in tests),
-  which keeps the logic unit-testable.
+- Logic modules program against the narrow `*Like` interfaces in
+  `src/vscode-shim.ts` (aliased to a stub in tests), which keeps them
+  unit-testable. The real `vscode` module is imported only by `src/extension.ts`
+  and the seven `real-*.ts` adapters — new `vscode` surface goes in an adapter.
 - TypeScript strict; **no `any`**. Biome enforces the rules in `biome.json`
   (including `noConsole` in `src/` — log via the output channel in `logging.ts`).
 

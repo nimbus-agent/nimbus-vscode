@@ -80,7 +80,7 @@ const REINDEX_MODE_WORDING: Record<ConnectorReindexResult["mode"], string> = {
 // connectorHealthHistory takes built-in connector ids only — the client says so,
 // and the Gateway rejects a user MCP id. Skipping beats surfacing an error the
 // user cannot act on.
-const MCP_ID = /^mcp_/;
+const MCP_ID_PREFIX = "mcp_";
 
 export function createConnectorOps(getClient: () => ConnectorClientLike | undefined): ConnectorOps {
   // Resolved per call, never captured: a Gateway restart replaces the client,
@@ -99,11 +99,19 @@ export function createConnectorOps(getClient: () => ConnectorClientLike | undefi
     }
   };
 
+  // `undefined` means "not part of this call" and drops out below; `false` is a
+  // request to disable and must survive as a word, which is why this is not a
+  // truthiness test.
+  const enabledDetail = (enabled: boolean | undefined): string | undefined => {
+    if (enabled === undefined) return undefined;
+    return enabled ? "enabled" : "disabled";
+  };
+
   const configDetail = (p: ConnectorSetConfigParams): string =>
     [
       p.intervalMs === undefined ? undefined : `interval ${formatInterval(p.intervalMs)}`,
       p.depth === undefined ? undefined : `depth ${p.depth}`,
-      p.enabled === undefined ? undefined : p.enabled ? "enabled" : "disabled",
+      enabledDetail(p.enabled),
     ]
       .filter((s): s is string => s !== undefined)
       .join(", ");
@@ -112,7 +120,7 @@ export function createConnectorOps(getClient: () => ConnectorClientLike | undefi
     list: async () => await need().connectorListStatus(),
     detail: async (serviceId) => await need().connectorStatus({ serviceId, includeStats: true }),
     history: async (serviceId) =>
-      MCP_ID.test(serviceId)
+      serviceId.startsWith(MCP_ID_PREFIX)
         ? []
         : await need().connectorHealthHistory({ service: serviceId, limit: HISTORY_LIMIT }),
 

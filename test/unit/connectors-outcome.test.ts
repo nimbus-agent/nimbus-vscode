@@ -111,3 +111,43 @@ describe("describeOutcome", () => {
     ).toBe("Syncing github failed: socket hang up");
   });
 });
+
+describe("denial detection stays linear in the message length", () => {
+  // The pattern this replaced paired two `(?=.*\b…\b)` lookaheads. `test`
+  // retries every start offset and each retry re-scanned the rest of the line,
+  // so the cost grew with the SQUARE of the length — measured at four times
+  // the cost for every doubling of the input. No correctness assertion can
+  // see backtracking; only a clock can, which is why this test is wall-clock
+  // bounded.
+  //
+  // Both ends of the budget are measured, and they are measured very
+  // differently, so both are quoted rather than folded into one ratio.
+  // Reverting the fix and re-running THIS test pins the upper end: it reports
+  // 4.85s, i.e. ~10x the budget. (A standalone run of the same input on a
+  // colder path measured 9.8s and 22.4s; the in-process 4.85s is the
+  // conservative number and the one to trust.) The lower end is the passing
+  // run: ~1.6ms at its slowest, cold. So the budget sits ~300x above a
+  // healthy run and ~10x below the regression it exists to catch — room for
+  // a loaded CI runner, without letting the regression through.
+  test("a ~120 KB non-matching message is classified well inside a wall-clock budget", () => {
+    const message = `denied ${"a ".repeat(60_000)}`;
+    const started = performance.now();
+    const outcome = fromThrown(new Error(message));
+    const elapsed = performance.now() - started;
+    expect(outcome.kind).toBe("failed");
+    expect(elapsed).toBeLessThan(500);
+  });
+
+  // The lookaheads could never span a line terminator, because `.` does not
+  // match one. Splitting the check into separate patterns must not quietly
+  // widen it into a whole-message search.
+  test("a denial word and a consent word on DIFFERENT lines is not a denial", () => {
+    const message = "upstream rejected\nawaiting owner approval elsewhere";
+    expect(fromThrown(new Error(message))).toEqual({ kind: "failed", message });
+  });
+
+  test("both halves on ONE line of a multi-line message is still a denial", () => {
+    const message = "request failed\nHITL: owner denied the request\n  at connectorReindex";
+    expect(fromThrown(new Error(message))).toEqual({ kind: "denied", reason: message });
+  });
+});

@@ -226,3 +226,136 @@ describe("recovering from a Gateway restart", () => {
     expect((stale as FakeClient).closed).toBe(true);
   });
 });
+// Guards on the edges of the reconnect machinery: a manager that keeps
+// reconnecting after dispose reopens a socket the extension has already let go
+// of, and one that resets its backoff on every failing poll turns a dead
+// Gateway into a reconnect storm.
+describe("reconnect edges", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("reconnectNow after dispose opens nothing", async () => {
+    let opens = 0;
+    const { deps } = makeDeps({ openSequence: ["ok", "ok"] });
+    const mgr = createConnectionManager({
+      ...deps,
+      open: async (p) => {
+        opens += 1;
+        return await deps.open(p);
+      },
+    });
+    await mgr.start();
+    expect(opens).toBe(1);
+    await mgr.dispose();
+
+    await mgr.reconnectNow();
+
+    expect(opens).toBe(1);
+    expect(mgr.client()).toBeUndefined();
+  });
+
+  // A second failure report while already disconnected must not re-enter the
+  // backoff: a poll that keeps firing would otherwise reset the timer forever
+  // and the reconnect would never come due.
+  test("a second transport failure while disconnected changes nothing", async () => {
+    const { deps } = makeDeps({ openSequence: ["ok", "enoent", "ok"] });
+    const mgr = createConnectionManager(deps);
+    const seen: ConnectionState[] = [];
+    mgr.onState((s) => seen.push(s));
+    await mgr.start();
+    mgr.noteTransportFailure(new Error("socket hang up"));
+    expect(mgr.current().kind).toBe("disconnected");
+    const before = seen.length;
+
+    mgr.noteTransportFailure(new Error("socket hang up"));
+
+    expect(seen).toHaveLength(before);
+    expect(mgr.current().kind).toBe("disconnected");
+    await mgr.dispose();
+  });
+
+  // 3s, and it is the manager's own default rather than the caller's: every
+  // production wiring omits reconnectDelayMs, so an accidental 0 here would busy-
+  // loop the extension host against a Gateway that is down.
+  test("without an injected delay it waits the default 3s before retrying", async () => {
+    const { deps } = makeDeps({ openSequence: ["enoent", "ok"] });
+    const { reconnectDelayMs: _omitted, ...withoutDelay } = deps;
+    const mgr = createConnectionManager(withoutDelay);
+    await mgr.start();
+    expect(mgr.current().kind).toBe("disconnected");
+
+    await vi.advanceTimersByTimeAsync(2_900);
+    expect(mgr.current().kind).toBe("disconnected");
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(mgr.current().kind).toBe("connected");
+    await mgr.dispose();
+  });
+
+  test("disposing the same subscription twice does not drop another listener", async () => {
+    const { deps } = makeDeps({ openSequence: ["ok"] });
+    const mgr = createConnectionManager(deps);
+    const first: ConnectionState[] = [];
+    const second: ConnectionState[] = [];
+    const sub = mgr.onState((s) => first.push(s));
+    mgr.onState((s) => second.push(s));
+    sub.dispose();
+    sub.dispose();
+
+    await mgr.start();
+
+    expect(first).toHaveLength(1); // the immediate replay at subscribe time only
+    expect(second.map((s) => s.kind)).toContain("connected");
+    await mgr.dispose();
+  });
+});
+describe("dispose while a connect is still in flight", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // deactivate() is not synchronised with an open() that has not answered yet.
+  // If that open then fails, the failure path must NOT arm the backoff: a timer
+  // left running past deactivate reopens a socket the extension has let go of,
+  // and nothing is left to close it.
+  test("a connect that fails after dispose arms no reconnect timer", async () => {
+    let opens = 0;
+    let rejectOpen: (e: unknown) => void = () => undefined;
+    const mgr = createConnectionManager({
+      open: async () => {
+        opens += 1;
+        return await new Promise<never>((_resolve, reject) => {
+          rejectOpen = reject;
+        });
+      },
+      discoverSocket: async () => ({ socketPath: "/run/nimbus-test/test.sock", source: "default" }),
+      log: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+      reconnectDelayMs: 5,
+    });
+    const started = mgr.start();
+    // start() awaits discoverSocket before it opens anything, so let the
+    // microtask queue drain before asserting the attempt is in flight.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(opens).toBe(1);
+
+    await mgr.dispose();
+    const enoent = new Error("no such file") as NodeJS.ErrnoException;
+    enoent.code = "ENOENT";
+    rejectOpen(enoent);
+    await started;
+
+    // Asserted on the TIMER, not only on the open count: tryConnect refuses to
+    // run while stopped as well, so counting opens alone would still pass with a
+    // timer left armed — and a pending timer past deactivate is the leak.
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(opens).toBe(1);
+  });
+});
