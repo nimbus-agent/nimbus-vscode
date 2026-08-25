@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.21.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.21.0...v0.21.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **connectors:** denial detection was quadratic in the message length ([#119](https://github.com/nimbus-agent/nimbus-vscode/issues/119)) ([8e08d30](https://github.com/nimbus-agent/nimbus-vscode/commit/8e08d30181dd56bce609bea3852b61523adf3ad7))
+
 ## [0.21.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.20.0...v0.21.0) (2026-08-19)
 
 
