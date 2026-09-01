@@ -124,6 +124,7 @@ A running Nimbus Gateway. See <https://nimbus-agent.dev/user-guide/install/> for
 | `nimbus.egress.showStatusBarBadge` | `true` | Show the egress row-count badge (ledger-live ✓) in the status bar. |
 | `nimbus.briefs.showHoverBlame` | `true` | Blame + PR/ticket on hover, with a link to the full Why brief. |
 | `nimbus.briefs.defaultNamespace` | `""` | Prefills the namespace prompt for the Safe to deploy? brief. |
+| `nimbus.connectors.showUnconfigured` | `false` | Show services in the Connectors view you have never configured. The Gateway reports every service it knows, not just yours — on a typical install ~74 extra rows. On, they sit below every configured connector, labelled `not configured`. |
 | `nimbus.context.enabled` | `true` | Keep the Context view collecting. Off keeps the view visible but stops it reading your editor and asking the Gateway. |
 | `nimbus.diagnostics.showCodeActions` | `true` | Offer Nimbus actions on the lightbulb for errors and warnings. |
 | `nimbus.hitlAlwaysModal` | `false` | Render HITL consent as a blocking modal instead of a toast. |

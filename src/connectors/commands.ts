@@ -1,5 +1,5 @@
 import { errMsg, type Logger } from "../logging.js";
-import type { WindowApi } from "../vscode-shim.js";
+import type { DisposableLike, WindowApi } from "../vscode-shim.js";
 import { PROGRESS_LOCATION_NOTIFICATION } from "../vscode-shim.js";
 import { type AuthField, authFieldsFor, isKnownProvider } from "./catalog.js";
 import type { ConnectorOps, ReindexDepth } from "./connector-client.js";
@@ -66,7 +66,10 @@ export function createConnectorCommands(
   const report = (verb: string, serviceId: string, outcome: ConnectorOutcome): void => {
     const text = describeOutcome(verb, serviceId, outcome);
     // A denial is a decision, so it is information, not an error dialog.
+    // `unreachable` is neither: nothing broke and nobody decided, but the action
+    // did not happen and only the user can carry it forward — a warning.
     if (outcome.kind === "failed") void deps.window.showErrorMessage(text);
+    else if (outcome.kind === "unreachable") void deps.window.showWarningMessage(text);
     else void deps.window.showInformationMessage(text, {});
     deps.refresh();
   };
@@ -100,14 +103,53 @@ export function createConnectorCommands(
     }
   };
 
-  // The two HITL-gated calls block until the owner answers. The Gateway bounds
-  // that wait and reports an expiry through the same denial shape, so we add no
-  // timer of our own — and offer no Cancel, because there is nothing to cancel.
-  const awaitingConsent = async <T>(title: string, task: () => Promise<T>): Promise<T> =>
+  /**
+   * The HITL-gated calls block until the owner answers. We add no timer of our
+   * own — the Gateway bounds the wait — but the notification IS cancellable,
+   * because the wait can outlive any prospect of an answer: against Gateway
+   * 7.1.0 the consent request never reaches the editor at all (see
+   * `fromThrownGated`), and a user with no Cancel is simply stuck.
+   *
+   * Cancelling abandons the WAIT, not the request. The RPC has no cancel — none
+   * of the connector methods takes one — so the Gateway's request stays open
+   * and the change still applies if it is answered elsewhere. The `abandoned`
+   * wording says exactly that rather than implying the action was called off.
+   */
+  const awaitingConsent = async (
+    title: string,
+    task: () => Promise<ConnectorOutcome>,
+  ): Promise<ConnectorOutcome> =>
     await deps.window.withProgress(
-      { location: PROGRESS_LOCATION_NOTIFICATION, title, cancellable: false },
+      { location: PROGRESS_LOCATION_NOTIFICATION, title, cancellable: true },
       // Reporter FIRST — the argument order that broke every workflow run once.
-      async (_progress, _token) => await task(),
+      async (_progress, token) =>
+        await new Promise<ConnectorOutcome>((resolve) => {
+          let settled = false;
+          // Held in a mutable binding, not a `const` closed over below: an
+          // already-cancelled token can invoke the callback SYNCHRONOUSLY from
+          // inside onCancellationRequested, before the registration returns —
+          // reading a `const sub` there is a temporal-dead-zone throw, which
+          // would surface as "Removing … failed: Cannot access 'sub'".
+          let sub: DisposableLike | undefined;
+          const finish = (o: ConnectorOutcome): void => {
+            if (settled) return;
+            settled = true;
+            sub?.dispose();
+            resolve(o);
+          };
+          // Registered before the task is started so a cancellation that lands
+          // in the same tick cannot be missed.
+          sub = token.onCancellationRequested(() => finish({ kind: "abandoned" }));
+          // The synchronous case above leaves the listener undisposed, because
+          // `finish` ran while `sub` was still undefined. Settle that here.
+          if (settled) sub.dispose();
+          void task().then(
+            (o) => finish(o),
+            // ConnectorOps normalises its own failures, so a rejection here is
+            // the unreachable belt-and-braces path `run()` also guards.
+            (e: unknown) => finish({ kind: "failed", message: errMsg(e) }),
+          );
+        }),
     );
 
   const promptField = async (field: AuthField): Promise<string | undefined> =>

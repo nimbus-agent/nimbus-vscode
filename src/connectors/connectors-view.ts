@@ -25,6 +25,8 @@ export function createConnectorsView(deps: {
   connection: SidebarConnection;
   ops: ConnectorOps;
   now?: () => number;
+  /** `nimbus.connectors.showUnconfigured`; read per load, so a toggle takes on refresh. */
+  showUnconfigured?: () => boolean;
 }): SidebarView {
   const now = (): number => (deps.now ?? Date.now)();
   return createDataView({
@@ -35,7 +37,22 @@ export function createConnectorsView(deps: {
         if (statuses.length === 0) {
           return [{ label: "No connectors registered", iconId: "info" }, ADD_MCP_ROW];
         }
-        return connectorRows(statuses, now());
+        const rows = connectorRows(statuses, now(), {
+          showUnconfigured: deps.showUnconfigured?.() ?? false,
+        });
+        // Every row was an unconfigured service. Saying so beats an empty view,
+        // which would read as "the Gateway returned nothing".
+        if (rows.length === 0) {
+          return [
+            { label: "No connectors configured", iconId: "info" },
+            {
+              label: `${statuses.length} available — set nimbus.connectors.showUnconfigured to see them`,
+              iconId: "circle-outline",
+            },
+            ADD_MCP_ROW,
+          ];
+        }
+        return rows;
       } catch (err) {
         return [errorRow("Failed to load connectors", err)];
       }

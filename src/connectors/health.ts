@@ -3,13 +3,32 @@ import type { ConnectorSyncStatus } from "@nimbus-dev/client";
 /** How many connectors are degraded right now, and which. */
 export type ConnectorHealthSummary = { count: number; names: string[] };
 
-// A connector is degraded when it is enabled but its scheduler has given up or
-// is backing off. paused/syncing are user-intended or transient, not degraded.
+/**
+ * Whether this connector ever actually worked. A real Gateway reports `error`
+ * for a service that was never set up as readily as for one that broke —
+ * `bigeye` ("no server spawned") and `gmail` ("token has been expired or
+ * revoked") are both `status: "error"`, and `healthState` calls both "error"
+ * too, so neither field separates them. What does: a connector that has never
+ * completed a sync and has nothing in the index has nothing to have degraded
+ * from. Items alone are enough — they are proof it once worked, whatever the
+ * sync cursor currently says.
+ */
+function hasEverWorked(s: ConnectorSyncStatus): boolean {
+  return s.lastSyncAt !== null || s.itemCount > 0;
+}
+
+// A connector is degraded when it is enabled, its scheduler has given up or is
+// backing off, AND it was working before — otherwise the ambient panel's
+// Sources row names every service the user never configured, which on a real
+// install was 12 names and meant the row never turned off. paused/syncing are
+// user-intended or transient, not degraded.
 export function summarizeConnectorHealth(
   statuses: readonly ConnectorSyncStatus[],
 ): ConnectorHealthSummary {
   const names = statuses
-    .filter((s) => s.enabled && (s.status === "error" || s.status === "backoff"))
+    .filter(
+      (s) => s.enabled && (s.status === "error" || s.status === "backoff") && hasEverWorked(s),
+    )
     .map((s) => s.serviceId)
     .sort((a, b) => a.localeCompare(b));
   return { count: names.length, names };

@@ -16,11 +16,56 @@ container's views. In the manifest it sits sixth, directly after Index: "what is
 indexed" then "where it comes from" — the eight views are Context, Audit,
 Egress, Agents, Index, Connectors, Sessions, Workflows, in that order.
 Rows come from `connectorListStatus()` and sort **unhealthy first** — `error`,
-then `backoff`, `paused`, `syncing`, `ok`, ties broken by `serviceId` — so a
-health surface puts the connector that needs attention on top rather than
-burying it alphabetically. A disabled connector (`enabled: false`) always
-shows a slashed-circle icon and reads *disabled* regardless of its underlying
-`status`.
+then `backoff`, `paused`, `syncing`, `ok`, then everything unconfigured, ties
+broken by `serviceId` — so a health surface puts the connector that needs
+attention on top rather than burying it alphabetically. A disabled connector
+(`enabled: false`) always shows a slashed-circle icon and reads *disabled*
+regardless of its underlying `status`.
+
+### `connectorListStatus` returns every service, not just yours
+
+This is the single most surprising thing about the payload, and the extension
+was blind to it until an F5 pass against a real Gateway 7.1.0 on 2026-09-01:
+**`connectorListStatus` returns every service the Gateway knows about**, not
+the ones you set up. That install returned **97 rows**, of which 74 had never
+been configured.
+
+An unconfigured row does not look unconfigured. It reports `status: "ok"`, a
+`lastSyncAt` a few minutes old — the scheduler ticking over a connector with
+nothing to do — and `itemCount: 0`. Rendered off `status` alone it drew a green
+tick that was byte-identical to `github`, which was genuinely syncing 336
+items. The distinction lives in **`healthState`**, which carries
+`"healthy" | "error" | "not_configured"` and which nothing in this repo read
+before that pass. `nimbus doctor` has always shown the same split
+(`[ok] healthy`, `[warn] not_configured`, `[fail] error`), so the CLI and this
+view were disagreeing about the same field.
+
+Today `isUnconfigured()` in `rows.ts` keys on it. Such rows are **hidden by
+default** (`nimbus.connectors.showUnconfigured`, default `false`), because none
+of them can be acted on from the editor anyway — registering a built-in
+connector is a CLI job, see *Built-in connector onboarding is absent* below.
+Turned on, they sort below every configured row and are labelled
+`not configured` with a hollow icon, and their sync date is dropped rather than
+dating a sync that never happened. `healthState` is typed `?: string` in the
+client, so an **absent** value must keep a row rendering exactly as it did —
+never treat a missing field as evidence of anything.
+
+Note what `healthState` does *not* solve: it reports `"error"` both for `gmail`
+(299 indexed items, a token that expired) and for `bigeye` (never set up, "no
+server spawned"). Telling those apart needs a different question — see *Sources
+row in the context panel*.
+
+**And this view deliberately does not ask it.** A never-configured connector
+reporting `error` still appears here, at the top, in red — on the real install
+that was ten of the first twelve rows. The Sources row in the context panel
+suppresses exactly those, and the asymmetry is the point: the ambient panel
+interrupts you while you are doing something else, so it should only speak up
+about data that *was* flowing and stopped. This view is where you come
+deliberately to fix a connector, and the case it must never hide is the one
+that looks identical to a never-configured one — a connector you just set up
+whose credentials are failing, which has no successful sync and no items
+either. Filtering on `hasEverWorked` here would hide precisely the row someone
+opened the view to find.
 
 Each row's description is its sync telemetry at a glance —
 `1,204 items · synced 3m ago`, or `never synced` when `lastSyncAt` is `null`
@@ -125,6 +170,8 @@ mean *denied* rather than *broken* — the entire reason
 | resolves `{status: "rejected", reason}` (never throws) | addMcp, remove | `denied` |
 | **rejects** on denial | reindex at `depth: "full"` | `denied`, distinguished from a genuine error by inspecting the rejection message |
 | rejects | any of them, on a real fault | `failed` |
+| rejects with an IPC timeout | the three gated calls **only** | `unreachable` — see *Consent that never arrives* |
+| the user cancels the wait | the three gated calls **only** | `abandoned` |
 
 `denied` is worded as a decision, never as a breakage — *"Removing github was
 not approved."* A denial is the consent system working, and collapsing it
@@ -138,17 +185,60 @@ declined. It shows the Gateway's own `reason` **verbatim**, which is what lets
 the two actually read differently to the user (an expiry message from the
 Gateway does not say the same thing an active rejection does).
 
-`connectorAddMcp` and `connectorRemove` are the two HITL-gated calls: the
-returned promise does not settle until the owner answers the consent request
-the Gateway raises, and there is no cancel — it is a genuine wait, shown as a
-non-cancellable progress notification ("Waiting for your consent…"). **The
+`connectorAddMcp` and `connectorRemove` are the two HITL-gated calls (a
+full-depth `connectorReindex` is the third): the returned promise does not
+settle until the owner answers the consent request the Gateway raises. **The
 extension adds no timeout of its own.** None of the connector methods accepts
 a `timeoutMs` (unlike the `agents*` family, which all do), so the wait is
-bounded by the Gateway alone. A defensive extension-side timer here would be
-actively wrong: it would close the notification and report a timeout while
-the Gateway call is still live, so a consent answered a minute later would
-land against a UI that had already told the user it hadn't. The only two
-states that exist are "still waiting" and "the Gateway settled it."
+bounded by the Gateway and the client's transport alone. A defensive
+extension-side timer would be actively wrong: it would close the notification
+and report a timeout while the Gateway call is still live, so a consent
+answered a minute later would land against a UI that had already told the user
+it hadn't.
+
+The progress notification **is** cancellable, which is a different thing from a
+timeout. Cancelling abandons the *wait*, not the request: there is no cancel
+RPC, so the Gateway's consent request stays open and the change still applies
+if it is answered elsewhere. The `abandoned` wording says exactly that instead
+of implying the action was called off.
+
+### Consent that never arrives
+
+Against **Gateway 7.1.0 with `@nimbus-dev/client` 0.17.0, the consent request
+never reaches the editor at all**, so none of the three gated calls can be
+approved or denied from VS Code. Established on the wire during the F5 pass of
+2026-09-01:
+
+- The Gateway emits the consent request as a `consent.request` notification.
+- The client's `subscribeHitl` registers its handler on `agent.hitlBatch`.
+- `agent.hitlBatch` does not appear **anywhere** in the Gateway 7.1.0 binary;
+  `consent.request` appears four times.
+
+The payload shape is otherwise exactly what `subscribeHitl` validates
+(`{requestId, prompt, details}`) — it is purely the method name. The respond
+side is fine: the client sends `consent.respond`, which is what the Gateway
+expects. `src/extension.ts` has exactly one HITL wiring point
+(`c.subscribeHitl(...)` → `hitlRouter.handle`), so this silences the modal, the
+toast and the details webview for **every** gated action, not only connectors.
+
+What the user saw before this was handled: the progress notification sat there
+until the client's `requestTimeoutMs` elapsed, then reported
+`failed: IPC request timed out after 30000ms` — which reads as a broken
+Gateway. The Gateway meanwhile logged the request as
+`rejected — client disconnected`.
+
+`fromThrownGated` now maps that timeout to `unreachable` and says what is true:
+the approval request never reached the editor, and it can be answered with the
+Nimbus CLI. This is deliberately kept **out of `fromThrown`** — on the nine
+ungated calls a timeout means exactly what it says, and reading consent into it
+there would be an invention. A genuine denial is still checked first, because
+an expired consent request arrives with "timed out" in its text and that *is*
+an answer.
+
+**This is an upstream client bug, not something this repo can fix** — the
+non-negotiable is that the extension never reaches past the typed client, and
+`subscribeHitl` is the client's. It resolves when a published
+`@nimbus-dev/client` listens on the notification the Gateway actually sends.
 
 ## Credentials
 
@@ -231,11 +321,29 @@ it ships in a future client release.
 ## Sources row in the context panel
 
 The ambient context panel (`src/context/`) gains a fifth signal, **Sources**,
-shown only when at least one connector is in `error` or `backoff` — a
-connector the user deliberately paused or disabled raises no row here, since
-that is a state the user chose, and it is already visible in the Connectors
-view. The row names the failing connector and when it last synced
-successfully. It is informational only: `SignalRow` has no `command` field and
+shown only when at least one connector is in `error` or `backoff` **and was
+working before** — a connector the user deliberately paused or disabled raises
+no row here, since that is a state the user chose, and it is already visible in
+the Connectors view. The row names the failing connector and when it last
+synced successfully.
+
+The "was working before" half was added after the F5 pass of 2026-09-01 found
+this row permanently on and mostly noise. On a real install it named **12**
+connectors, of which seven — `bigeye`, `looker`, `montecarlo`, `powerbi`,
+`snowflake`, `tableau`, `google_meet` — reported `status: "error"` only because
+they had never been set up ("connector-session: no server spawned for service
+X"). A conditional signal that never turns off is the exact outcome
+`suppressWhenEmpty` exists to prevent.
+
+`healthState` cannot make this distinction: it reads `"error"` for `gmail` and
+`bigeye` alike. What does is `hasEverWorked()` — `lastSyncAt !== null ||
+itemCount > 0`. A connector that has never completed a sync and holds nothing
+in the index has nothing to have degraded *from*; `bigeye`'s error means "you
+never set me up", while `gmail`'s means "your 299 indexed emails are going
+stale", and only the second is worth interrupting someone about. Item count
+alone is sufficient evidence — items are proof it once worked, whatever the
+sync cursor currently says. On that same install the row went from 12 names to
+two: `gmail` and `google_drive`. It is informational only: `SignalRow` has no `command` field and
 no row in the context panel is clickable yet, so — unlike what an earlier
 draft of the design spec claimed — this row does not open the Connectors view
 by itself; opening it still means using the Connectors view directly until the

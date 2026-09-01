@@ -277,7 +277,11 @@ export function activateWithDeps(
   // and only an await inside the poll currently defers the reference past
   // that point. Depends only on connection/nimbus, both already bound above.
   const connectorOps = createConnectorOps(() => nimbus());
-  const connectorsView = createConnectorsView({ connection, ops: connectorOps });
+  const connectorsView = createConnectorsView({
+    connection,
+    ops: connectorOps,
+    showUnconfigured: () => settings.showUnconfiguredConnectors(),
+  });
   // Same TDZ reasoning as connectorsView above: registerContextView() itself
   // is called much further down (it needs deps — gitApi, settings — that are
   // only constructed later), but pollConnectorHealth's closure needs a

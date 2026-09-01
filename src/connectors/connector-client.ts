@@ -11,7 +11,13 @@ import type {
 } from "@nimbus-dev/client";
 
 import { formatInterval } from "./interval.js";
-import { type ConnectorOutcome, fromGated, fromOk, fromThrown } from "./outcome.js";
+import {
+  type ConnectorOutcome,
+  fromGated,
+  fromOk,
+  fromThrown,
+  fromThrownGated,
+} from "./outcome.js";
 
 /**
  * The Gateway capability this surface needs, as a structural seam. None of
@@ -99,6 +105,16 @@ export function createConnectorOps(getClient: () => ConnectorClientLike | undefi
     }
   };
 
+  // Identical, but for the three HITL-gated calls, where an unanswered request
+  // times out and must not be reported as a Gateway fault. See fromThrownGated.
+  const mutateGated = async (run: (c: ConnectorClientLike) => Promise<ConnectorOutcome>) => {
+    try {
+      return await run(need());
+    } catch (e) {
+      return fromThrownGated(e);
+    }
+  };
+
   // `undefined` means "not part of this call" and drops out below; `false` is a
   // request to disable and must survive as a word, which is why this is not a
   // truthiness test.
@@ -139,8 +155,11 @@ export function createConnectorOps(getClient: () => ConnectorClientLike | undefi
         // part of this call", NOT "cleared", so we report the request instead.
         return { kind: "applied", detail: configDetail(params) };
       }),
+    // Only a FULL reindex is HITL-gated, so only a full one may read a timeout
+    // as consent that never arrived; at the two shallower depths nothing asks
+    // for approval and a timeout is exactly what it says.
     reindex: (serviceId, depth) =>
-      mutate(async (c) => {
+      (depth === "full" ? mutateGated : mutate)(async (c) => {
         const r = await c.connectorReindex({ service: serviceId, depth });
         return {
           kind: "applied",
@@ -158,14 +177,14 @@ export function createConnectorOps(getClient: () => ConnectorClientLike | undefi
         };
       }),
     addMcp: (serviceId, commandLine) =>
-      mutate(async (c) =>
+      mutateGated(async (c) =>
         fromGated(
           await c.connectorAddMcp({ serviceId, commandLine }),
           (r) => `added ${r.serviceId}`,
         ),
       ),
     remove: (serviceId) =>
-      mutate(async (c) =>
+      mutateGated(async (c) =>
         fromGated(await c.connectorRemove({ serviceId }), (r) => `${r.itemsDeleted} items deleted`),
       ),
   };

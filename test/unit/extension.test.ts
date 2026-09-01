@@ -2819,10 +2819,14 @@ describe("activateWithDeps", () => {
       {
         serviceId: "slack",
         status: "error" as const,
-        lastSyncAt: null,
+        // Has synced before and holds indexed items: a connector that WAS
+        // working and broke. One that never synced and indexed nothing was
+        // never configured, and no longer counts as degraded — see
+        // summarizeConnectorHealth.
+        lastSyncAt: 1_700_000_000_000,
         nextSyncAt: null,
         intervalMs: 60000,
-        itemCount: 0,
+        itemCount: 42,
         lastError: "401",
         consecutiveFailures: 3,
         depth: "summary" as const,
