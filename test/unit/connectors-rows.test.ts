@@ -9,6 +9,7 @@ import {
   healthEntryToItem,
   telemetryToItem,
 } from "../../src/connectors/rows.js";
+import { REAL_CONNECTOR_STATUSES } from "./fixtures/real-connector-statuses.js";
 
 const NOW = 1_000_000_000;
 
@@ -165,5 +166,64 @@ describe("detail rows", () => {
     );
     expect(item.label).toBe("→ healthy");
     expect(item.description).toBe("1h ago");
+  });
+});
+
+// --- Findings 3: rows built from a REAL Gateway payload -------------------
+// The Connectors surface shipped believing `status` told the whole story. A
+// real Gateway 7.1.0 returns every known service, configured or not, and
+// carries the distinction in `healthState` — a field this repo did not read.
+describe("healthState (captured from a real Gateway)", () => {
+  test("a never-configured connector does not render as a healthy one", () => {
+    const airflow = REAL_CONNECTOR_STATUSES.find((s) => s.serviceId === "airflow");
+    if (airflow === undefined) throw new Error("fixture lost its airflow row");
+    const item = connectorToItem(airflow, NOW);
+    // Before this change it drew "[pass] airflow - 0 items · synced 3d ago",
+    // byte-identical in icon to github, which was genuinely working.
+    expect(item.iconId).not.toBe("pass");
+    expect(item.iconId).toBe("circle-outline");
+  });
+
+  test("it says 'not configured' rather than dating a sync that never happened", () => {
+    const airflow = REAL_CONNECTOR_STATUSES.find((s) => s.serviceId === "airflow");
+    if (airflow === undefined) throw new Error("fixture lost its airflow row");
+    const item = connectorToItem(airflow, NOW);
+    expect(item.description).toBe("not configured");
+    expect(item.description).not.toContain("synced");
+  });
+
+  test("an absent healthState still renders exactly as it did before", () => {
+    // `healthState` is `?: string` in the client: an older Gateway omits it,
+    // and such a row must keep its old rendering rather than become "not
+    // configured" on the strength of a missing field.
+    const item = connectorToItem(status(), NOW);
+    expect(item.iconId).toBe("pass");
+    expect(item.description).toBe("1,204 items · synced 3m ago");
+  });
+
+  test("unconfigured connectors are hidden by default", () => {
+    const rows = connectorRows(REAL_CONNECTOR_STATUSES, NOW);
+    const labels = rows.map((r) => r.label);
+    expect(labels).not.toContain("airflow");
+    // obsidian is healthy with zero items — configured, just empty; it stays.
+    expect(labels).toContain("obsidian");
+    expect(labels).toContain("github");
+    expect(labels).toContain("gmail");
+  });
+
+  test("showUnconfigured surfaces them, sorted below every configured row", () => {
+    const rows = connectorRows(REAL_CONNECTOR_STATUSES, NOW, { showUnconfigured: true });
+    const labels = rows.map((r) => r.label);
+    expect(labels).toContain("airflow");
+    // Every unconfigured row sits below every configured one, so a row that
+    // needs attention is never pushed under 74 that cannot.
+    const lastConfigured = Math.max(labels.indexOf("github"), labels.indexOf("google_photos"));
+    expect(labels.indexOf("airflow")).toBeGreaterThan(lastConfigured);
+  });
+
+  test("errors still sort to the top, ahead of working connectors", () => {
+    const rows = connectorRows(REAL_CONNECTOR_STATUSES, NOW, { showUnconfigured: true });
+    const labels = rows.map((r) => r.label);
+    expect(labels.indexOf("bigeye")).toBeLessThan(labels.indexOf("github"));
   });
 });

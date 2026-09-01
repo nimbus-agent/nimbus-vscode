@@ -19,6 +19,7 @@ export interface Settings {
   showHoverBlame(): boolean;
   defaultNamespace(): string;
   showDiagnosticCodeActions(): boolean;
+  showUnconfiguredConnectors(): boolean;
   hitlAlwaysModal(): boolean;
   logLevel(): LogLevel;
 }
@@ -41,6 +42,7 @@ export function createSettings(workspace: WorkspaceApi): Settings {
     showHoverBlame: () => cfg().get<boolean>("briefs.showHoverBlame", true),
     defaultNamespace: () => cfg().get<string>("briefs.defaultNamespace", ""),
     showDiagnosticCodeActions: () => cfg().get<boolean>("diagnostics.showCodeActions", true),
+    showUnconfiguredConnectors: () => cfg().get<boolean>("connectors.showUnconfigured", false),
     hitlAlwaysModal: () => cfg().get<boolean>("hitlAlwaysModal", false),
     logLevel: () => {
       const lvl = cfg().get<string>("logLevel", "info");

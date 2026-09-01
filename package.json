@@ -973,6 +973,11 @@
           "default": "",
           "description": "Prefills the namespace prompt for the 'Safe to deploy?' brief. agents.preflight requires a namespace and Nimbus never guesses one — a wrong namespace returns a confident answer about the wrong thing, so this only prefills a prompt you still confirm."
         },
+        "nimbus.connectors.showUnconfigured": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show services in the Connectors view that have never been configured. The Gateway reports every service it knows about, not just yours — on a typical install that is around 74 extra rows you cannot act on from here, since registering a built-in connector is a CLI job. When on, they are listed below every configured connector and labelled 'not configured'."
+        },
         "nimbus.context.enabled": {
           "type": "boolean",
           "default": true,

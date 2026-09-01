@@ -11,7 +11,11 @@ import { errMsg } from "../logging.js";
 export type ConnectorOutcome =
   | { kind: "applied"; detail?: string }
   | { kind: "denied"; reason: string }
-  | { kind: "failed"; message: string };
+  | { kind: "failed"; message: string }
+  // Nobody was ever asked. See `fromThrownGated`.
+  | { kind: "unreachable" }
+  // The user stopped waiting. The Gateway's request is still open.
+  | { kind: "abandoned" };
 
 // Whether a REJECTED promise is a consent denial rather than a fault. Only the
 // full-depth reindex path can produce one, and the client gives us no code to
@@ -69,6 +73,37 @@ export function fromThrown(e: unknown): ConnectorOutcome {
   return isDenial(message) ? { kind: "denied", reason: message } : { kind: "failed", message };
 }
 
+// The transport's own wording when a call goes unanswered. Matched as a plain
+// literal — no alternation, nothing to backtrack over.
+const IPC_TIMEOUT = "ipc request timed out";
+
+/**
+ * `fromThrown` for the THREE HITL-gated calls only — addMcp, remove, and a
+ * full-depth reindex.
+ *
+ * On those, a timeout is not a slow Gateway: it is the consent request going
+ * unanswered because it never reached anyone. Gateway 7.1.0 raises connector
+ * consent as a `consent.request` notification, while `@nimbus-dev/client`
+ * 0.17.0's `subscribeHitl` listens on `agent.hitlBatch` — a method absent from
+ * that Gateway's binary entirely — so the extension's HITL surface never fires
+ * and the call blocks until the client's request timeout. The Gateway then
+ * records the request as `rejected — client disconnected`.
+ *
+ * Reporting that as a plain failure blames the Gateway for a mismatch between
+ * two versions, and tells the user nothing they can act on. This is kept OUT of
+ * `fromThrown` deliberately: on the nine ungated calls a timeout means exactly
+ * what it says, and reading consent into it there would be an invention.
+ *
+ * A genuine denial is still checked first — an expired consent request arrives
+ * with "timed out" in it, and that IS an answer, unlike this.
+ */
+export function fromThrownGated(e: unknown): ConnectorOutcome {
+  const message = errMsg(e);
+  if (isDenial(message)) return { kind: "denied", reason: message };
+  if (message.toLowerCase().includes(IPC_TIMEOUT)) return { kind: "unreachable" };
+  return { kind: "failed", message };
+}
+
 /** `verb` is the gerund of the action: "Removing", "Pausing", "Syncing". */
 export function describeOutcome(verb: string, serviceId: string, o: ConnectorOutcome): string {
   switch (o.kind) {
@@ -80,5 +115,18 @@ export function describeOutcome(verb: string, serviceId: string, o: ConnectorOut
       return `${verb} ${serviceId} was not approved: ${o.reason}`;
     case "failed":
       return `${verb} ${serviceId} failed: ${o.message}`;
+    case "unreachable":
+      // Never "not approved": nobody was asked. Names the surface that can
+      // still answer, because the Gateway's request is genuinely pending there.
+      return (
+        `${verb} ${serviceId} needs your approval, but the Gateway's request never reached ` +
+        `the editor. Answer it with the Nimbus CLI, or check that your Gateway and Nimbus ` +
+        `client versions match.`
+      );
+    case "abandoned":
+      return (
+        `${verb} ${serviceId}: stopped waiting for your approval. The Gateway's request may ` +
+        `still be open — if it is answered elsewhere, the change will still be applied.`
+      );
   }
 }

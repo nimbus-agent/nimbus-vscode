@@ -6,6 +6,7 @@ import {
   fromGated,
   fromOk,
   fromThrown,
+  fromThrownGated,
 } from "../../src/connectors/outcome.js";
 
 describe("the four wire shapes", () => {
@@ -149,5 +150,46 @@ describe("denial detection stays linear in the message length", () => {
   test("both halves on ONE line of a multi-line message is still a denial", () => {
     const message = "request failed\nHITL: owner denied the request\n  at connectorReindex";
     expect(fromThrown(new Error(message))).toEqual({ kind: "denied", reason: message });
+  });
+});
+
+// --- Finding 1: consent that never arrives ---------------------------------
+// Gateway 7.1.0 raises connector consent as a `consent.request` notification,
+// but @nimbus-dev/client 0.17.0's subscribeHitl listens on `agent.hitlBatch`,
+// which that Gateway never emits (the string is absent from its binary). So a
+// HITL-gated call is never answerable from the editor: it blocks until the
+// client's request timeout and surfaces as a bare IPC timeout, which reads as
+// a Gateway fault rather than what it is.
+describe("fromThrownGated", () => {
+  test("an IPC timeout on a gated call reports consent as unreachable", () => {
+    const o = fromThrownGated(new Error("IPC request timed out after 30000ms: connector.addMcp"));
+    expect(o.kind).toBe("unreachable");
+  });
+
+  test("it explains where the request can still be answered", () => {
+    const o = fromThrownGated(new Error("IPC request timed out after 30000ms: connector.remove"));
+    const text = describeOutcome("Removing", "gmail", o);
+    expect(text).toContain("approval");
+    expect(text).toContain("Nimbus CLI");
+    // Never claims the user decided anything: nobody was ever asked.
+    expect(text).not.toContain("not approved");
+  });
+
+  test("a genuine fault on a gated call is still a failure", () => {
+    const o = fromThrownGated(new Error("ENOENT: socket is gone"));
+    expect(o.kind).toBe("failed");
+  });
+
+  test("a real denial on a gated call is still a denial", () => {
+    const o = fromThrownGated(new Error("consent denied by the owner"));
+    expect(o.kind).toBe("denied");
+  });
+
+  test("the ungated classifier is unchanged — a timeout there is a plain failure", () => {
+    // Only the three gated calls may read a timeout as unreachable consent;
+    // for everything else it is what it says it is.
+    expect(fromThrown(new Error("IPC request timed out after 30000ms: connector.sync")).kind).toBe(
+      "failed",
+    );
   });
 });

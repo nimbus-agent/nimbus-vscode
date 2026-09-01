@@ -30,6 +30,23 @@ const STATUS_ICONS: Record<ConnectorSyncStatus["status"], string> = {
   error: "error",
 };
 
+/**
+ * `connectorListStatus` returns every service the Gateway knows, not just the
+ * ones set up here — a real Gateway 7.1.0 returned 97, of which 74 had never
+ * been configured. Those carry `healthState: "not_configured"` and otherwise
+ * look ordinary: `status: "ok"`, a `lastSyncAt` that is only the scheduler
+ * ticking, and an item count of zero. Rendered off `status` alone they drew a
+ * green tick indistinguishable from a connector that was genuinely working.
+ *
+ * `healthState` is `?: string` in the client — untyped, and absent on older
+ * Gateways — so a missing value must mean "say nothing", never "unconfigured".
+ */
+const NOT_CONFIGURED = "not_configured";
+
+export function isUnconfigured(s: ConnectorSyncStatus): boolean {
+  return s.healthState === NOT_CONFIGURED;
+}
+
 // Unhealthy first: this is a health surface, and a row that needs attention
 // should not sit below four that do not. Ties break on id so the order is total
 // and the rendering is deterministic.
@@ -41,8 +58,21 @@ const SEVERITY: Record<ConnectorSyncStatus["status"], number> = {
   ok: 4,
 };
 
+// Below every configured row, whatever its status. An unconfigured connector
+// cannot be acted on from here — registering a built-in one is a CLI job — so
+// it must never push a row that needs attention down the view.
+const UNCONFIGURED_SEVERITY = 5;
+
+function severityOf(s: ConnectorSyncStatus): number {
+  return isUnconfigured(s) ? UNCONFIGURED_SEVERITY : SEVERITY[s.status];
+}
+
 function iconFor(s: ConnectorSyncStatus): string {
   if (!s.enabled) return "circle-slash";
+  // Ahead of the status icon: an unconfigured connector reporting "ok" (or
+  // "error", as the never-spawned ones do) is describing a scheduler tick, not
+  // a connector, and neither a tick nor a cross is honest about it.
+  if (isUnconfigured(s)) return "circle-outline";
   return STATUS_ICONS[s.status];
 }
 
@@ -70,9 +100,16 @@ function tooltipFor(s: ConnectorSyncStatus, now: number): string {
 export function connectorToItem(s: ConnectorSyncStatus, now: number): SidebarItem {
   const synced =
     s.lastSyncAt === null ? "never synced" : `synced ${formatRelativeTime(now, s.lastSyncAt)}`;
+  // An unconfigured connector has no item count worth printing and no sync
+  // worth dating — its `lastSyncAt` is the scheduler having ticked over a
+  // connector that was never set up, and printing "synced 3d ago" over that is
+  // the half of this row that actually misled.
+  const description = isUnconfigured(s)
+    ? "not configured"
+    : `${s.itemCount.toLocaleString("en-US")} items · ${synced}`;
   return {
     label: s.serviceId,
-    description: `${s.itemCount.toLocaleString("en-US")} items · ${synced}`,
+    description,
     tooltip: tooltipFor(s, now),
     iconId: iconFor(s),
     contextValue: contextValueFor(s),
@@ -84,15 +121,21 @@ export function connectorToItem(s: ConnectorSyncStatus, now: number): SidebarIte
   };
 }
 
+/**
+ * `showUnconfigured` mirrors `nimbus.connectors.showUnconfigured`, and is off
+ * by default: a real Gateway returns ~74 services nobody here set up, and none
+ * of them can be registered from the extension anyway. Turning it on relabels
+ * them rather than hiding them — nothing is ever silently reclassified.
+ */
 export function connectorRows(
   statuses: readonly ConnectorSyncStatus[],
   now: number,
+  opts: { showUnconfigured?: boolean } = {},
 ): SidebarItem[] {
-  return statuses
-    .slice()
-    .sort(
-      (a, b) => SEVERITY[a.status] - SEVERITY[b.status] || a.serviceId.localeCompare(b.serviceId),
-    )
+  const visible =
+    opts.showUnconfigured === true ? statuses.slice() : statuses.filter((s) => !isUnconfigured(s));
+  return visible
+    .sort((a, b) => severityOf(a) - severityOf(b) || a.serviceId.localeCompare(b.serviceId))
     .map((s) => connectorToItem(s, now));
 }
 

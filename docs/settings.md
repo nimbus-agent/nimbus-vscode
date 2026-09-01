@@ -119,6 +119,25 @@ Typed accessors are in [`src/settings.ts`](../src/settings.ts). Edit them via
 
 `string` (default `""`). Prefills the namespace prompt for **Safe to deploy?** (`agents.preflight`), which requires a namespace the extension has no way to derive. It is only a prefill: the prompt still appears and you still confirm it. Nimbus deliberately does not infer the namespace from the branch name or `package.json` — a wrong namespace does not error, it returns a confident `preflight` answer computed for something you never asked about. A namespace you have already typed in this workspace folder takes precedence over this setting.
 
+### `nimbus.connectors.showUnconfigured`
+
+`boolean` (default `false`). Shows services in the **Connectors** view that have
+never been configured. `connector.listStatus` returns every service the Gateway
+knows about, not just the ones you set up — a real Gateway 7.1.0 returned 97, of
+which 74 had never been touched. Those rows carry `healthState:
+"not_configured"` and otherwise look ordinary (`status: "ok"`, a `lastSyncAt`
+that is only the scheduler ticking, zero items), so before this setting existed
+they drew a green tick indistinguishable from a connector that was genuinely
+working. None of them can be registered from the editor either — standing up a
+built-in connector is a CLI job — so they are hidden by default.
+
+Turn it on and they are listed **below** every configured connector, labelled
+`not configured` with a hollow icon, so a connector that needs attention is
+never pushed under rows that cannot be acted on. Nothing is reclassified: a
+connector that has genuinely synced keeps its real status either way, and one
+that is merely empty (`obsidian` with zero items, say) is configured and stays
+visible regardless of this setting.
+
 ### `nimbus.context.enabled`
 
 `boolean` (default `true`). Keeps the **Context** view collecting. The view

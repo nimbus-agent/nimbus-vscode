@@ -105,11 +105,11 @@ describe("remove", () => {
     expect(h.ops.remove).not.toHaveBeenCalled();
   });
 
-  test("the consent wait is non-cancellable, and the task takes (progress, token)", async () => {
+  test("the consent wait is cancellable, and the task takes (progress, token)", async () => {
     const h = harness();
     await h.commands["nimbus.removeConnector"]!(node());
     const [options, task] = h.window.withProgress.mock.calls[0] ?? [];
-    expect(options).toMatchObject({ cancellable: false });
+    expect(options).toMatchObject({ cancellable: true });
     // Two parameters: the reporter, then the cancellation token — the order
     // the real vscode.window.withProgress always calls with.
     expect(task as (...args: unknown[]) => unknown).toHaveLength(2);
@@ -169,7 +169,7 @@ describe("reindex", () => {
     expect(h.window.showWarningMessage).not.toHaveBeenCalled();
   });
 
-  test("full confirms modally and goes through the non-cancellable consent wrapper", async () => {
+  test("full confirms modally and goes through the cancellable consent wrapper", async () => {
     const h = harness({
       window: {
         showQuickPick: vi.fn(async () => ({ label: "full" })),
@@ -179,7 +179,7 @@ describe("reindex", () => {
     await h.commands["nimbus.reindexConnector"]!(node());
     expect(h.window.showWarningMessage).toHaveBeenCalled();
     const [options] = h.window.withProgress.mock.calls[0] ?? [];
-    expect(options).toMatchObject({ cancellable: false });
+    expect(options).toMatchObject({ cancellable: true });
     expect(h.ops.reindex).toHaveBeenCalledWith("github", "full");
   });
 });
@@ -198,7 +198,7 @@ describe("addMcp", () => {
     expect(idOpts.validateInput("mcp_acme")).toBeUndefined();
     expect(h.ops.addMcp).toHaveBeenCalledWith("mcp_acme", "npx -y @acme/mcp-server");
     const [options] = h.window.withProgress.mock.calls[0] ?? [];
-    expect(options).toMatchObject({ cancellable: false });
+    expect(options).toMatchObject({ cancellable: true });
   });
 });
 
@@ -681,5 +681,50 @@ describe("confirmations that are declined", () => {
     await h.commands["nimbus.addMcpConnector"]!(undefined);
     expect(h.window.showInputBox).toHaveBeenCalledTimes(1);
     expect(h.ops.addMcp).not.toHaveBeenCalled();
+  });
+});
+
+// --- Finding 1: consent that never arrives ---------------------------------
+describe("waiting for consent", () => {
+  test("cancelling stops the wait and says the request may still be open", async () => {
+    const h = harness({
+      // A consent call that never settles: exactly what Gateway 7.1.0 does when
+      // the request is raised as `consent.request` and nothing in the editor is
+      // listening for it.
+      ops: { remove: vi.fn(() => new Promise<never>(() => {})) },
+      window: {
+        showWarningMessage: vi.fn(async (..._args: unknown[]) => "Remove"),
+        withProgress: vi.fn(
+          async (_o: unknown, task: (p: unknown, t: unknown) => Promise<unknown>) =>
+            await task(
+              { report: () => {} },
+              // Cancel as soon as the task registers its listener.
+              {
+                onCancellationRequested: (cb: () => void) => {
+                  cb();
+                  return { dispose: () => {} };
+                },
+              },
+            ),
+        ),
+      },
+    });
+    await h.commands["nimbus.removeConnector"]!(node());
+    const text = String(h.window.showInformationMessage.mock.calls[0]?.[0] ?? "");
+    expect(text).toContain("stopped waiting");
+    expect(text).toContain("still be open");
+    // Never claims the removal was called off — the Gateway's request survives.
+    expect(text).not.toContain("failed");
+  });
+
+  test("an unanswered gated call warns, and never blames the Gateway", async () => {
+    const h = harness({
+      ops: { addMcp: vi.fn(async () => ({ kind: "unreachable" }) as const) },
+      window: { showInputBox: vi.fn(async (..._args: unknown[]) => "mcp_acme") },
+    });
+    await h.commands["nimbus.addMcpConnector"]!();
+    const text = String(h.window.showWarningMessage.mock.calls[0]?.[0] ?? "");
+    expect(text).toContain("Nimbus CLI");
+    expect(h.window.showErrorMessage).not.toHaveBeenCalled();
   });
 });

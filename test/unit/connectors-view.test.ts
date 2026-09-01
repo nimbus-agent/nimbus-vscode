@@ -135,3 +135,39 @@ describe("the connectors view", () => {
     expect(await view.getChildren(foreign)).toEqual([]);
   });
 });
+
+describe("unconfigured services", () => {
+  test("are hidden unless the setting asks for them", async () => {
+    const list = vi.fn(async () => [
+      status(),
+      status({ serviceId: "airflow", healthState: "not_configured", itemCount: 0 }),
+    ]);
+    const hidden = createConnectorsView({ connection, ops: ops({ list }), now: () => NOW });
+    expect((await hidden.getChildren()).map((i: SidebarItem) => i.label)).toEqual(["github"]);
+
+    const shown = createConnectorsView({
+      connection,
+      ops: ops({ list }),
+      now: () => NOW,
+      showUnconfigured: () => true,
+    });
+    expect((await shown.getChildren()).map((i: SidebarItem) => i.label)).toEqual([
+      "github",
+      "airflow",
+    ]);
+  });
+
+  test("an all-unconfigured Gateway says so rather than rendering an empty view", async () => {
+    // The Gateway returned 97 rows; none is yours. A blank view here would read
+    // as "the Gateway returned nothing", which is a different and wrong story.
+    const list = vi.fn(async () => [
+      status({ serviceId: "airflow", healthState: "not_configured" }),
+      status({ serviceId: "apple", healthState: "not_configured" }),
+    ]);
+    const view = createConnectorsView({ connection, ops: ops({ list }), now: () => NOW });
+    const labels = (await view.getChildren()).map((i: SidebarItem) => i.label);
+    expect(labels[0]).toBe("No connectors configured");
+    expect(labels[1]).toContain("2 available");
+    expect(labels).toContain("Add an MCP connector…");
+  });
+});
