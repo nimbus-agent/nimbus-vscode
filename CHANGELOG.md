@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.21.1...v0.22.0) (2026-09-01)
+
+
+### Features
+
+* **connectors:** tell never-configured services apart from broken ones ([#121](https://github.com/nimbus-agent/nimbus-vscode/issues/121)) ([3b184d8](https://github.com/nimbus-agent/nimbus-vscode/commit/3b184d8037c12485c630229af80bb9b677038d67))
+
 ## [0.21.1](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.21.0...v0.21.1) (2026-08-25)
 
 
