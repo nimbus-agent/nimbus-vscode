@@ -134,9 +134,12 @@ export function connectorRows(
 ): SidebarItem[] {
   const visible =
     opts.showUnconfigured === true ? statuses.slice() : statuses.filter((s) => !isUnconfigured(s));
-  return visible
-    .sort((a, b) => severityOf(a) - severityOf(b) || a.serviceId.localeCompare(b.serviceId))
-    .map((s) => connectorToItem(s, now));
+  // Sorted in its own statement rather than mid-chain. `visible` is already a fresh array on
+  // both branches above, so nothing outside is mutated today — but a chained `.sort()` reads as
+  // non-mutating, and the guarantee here rests entirely on those two branches staying copies.
+  // `toSorted` would say it outright; it is ES2023 and this package targets ES2022.
+  visible.sort((a, b) => severityOf(a) - severityOf(b) || a.serviceId.localeCompare(b.serviceId));
+  return visible.map((s) => connectorToItem(s, now));
 }
 
 export function connectorPayloadOf(item: SidebarItem): ConnectorPayload | undefined {
