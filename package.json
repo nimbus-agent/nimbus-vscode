@@ -1027,7 +1027,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.11",
-    "@nimbus-dev/client": "^0.17.0",
+    "@nimbus-dev/client": "^0.17.3",
     "@types/chai": "5",
     "@types/mocha": "10",
     "@types/node": "^26.1.2",
