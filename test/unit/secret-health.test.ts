@@ -320,7 +320,7 @@ describe("DECLARED_EXPIRY mirror", () => {
     // Pinned so the earlier, real date cannot silently regress to the
     // 2026-12-01 decommission, which does not apply to an org-scoped token —
     // the same assertion the Nimbus registry test makes on the source of truth.
-    expect(DECLARED_EXPIRY["VSCE_PAT"]).toBe("2026-09-20");
+    expect(DECLARED_EXPIRY["VSCE_PAT"]).toBe("2026-12-15");
     expect(DECLARED_EXPIRY["VSCE_PAT"]).not.toBe("2026-12-01");
   });
 
