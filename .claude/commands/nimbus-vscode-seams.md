@@ -284,9 +284,9 @@ Full runbook is `docs/releasing.md`. The parts that bite:
   `environment: release` declaration plus its `main` + `v*` branch policy narrows
   who can *deploy*, not who can *read*. Closing it means deleting the repo-scoped
   copies (`docs/releasing.md:41-55`).
-- **`VSCE_PAT` has a declared expiry of `2026-09-20`** (`scripts/secret-health.ts:61`).
+- **`VSCE_PAT` has a declared expiry of `2026-12-15`** (`scripts/secret-health.ts:62`; regenerated 2026-09-16, previously `2026-09-20`).
   `secret-health.yml` (Mondays 09:00 UTC) warns from 90 days out and escalates to a
-  **job failure plus a filed issue at 14 days — i.e. from 2026-09-06**
+  **job failure plus a filed issue at 14 days — i.e. from 2026-12-01**
   (`EXPIRY_CRITICAL_DAYS = 14`, `severityOf` → `hard`). That map is a **mirror**;
   the source of truth is `scripts/release/credential-registry.ts` in
   `nimbus-agent/Nimbus`. Update the registry first, the mirror second. Drift can

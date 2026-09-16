@@ -57,8 +57,9 @@ export type Severity = "hard" | "warn" | "healthy";
 export const DECLARED_EXPIRY: Readonly<Record<string, string>> = {
   // Azure DevOps PAT, org-scoped to `asafgolombek`. Its own expiry — deliberately
   // NOT the 2026-12-01 global-PAT decommission, which does not apply to an
-  // org-scoped token. See nimbus-vscode#34.
-  VSCE_PAT: "2026-09-20",
+  // org-scoped token. See nimbus-vscode#34. Regenerated 2026-09-16 (previous
+  // expiry 2026-09-20).
+  VSCE_PAT: "2026-12-15",
   // OVSX_PAT has no hard expiry date; Open VSX offers no OIDC path, so it is
   // rotated on a cadence rather than against a deadline. Absent from this map on
   // purpose — an unlisted credential is simply never dated.
