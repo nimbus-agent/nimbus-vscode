@@ -5,6 +5,7 @@ import type {
   MetricsDoraParams,
   RankedSearchItem,
   RankedSearchParams,
+  RankedSearchWithRetrieval,
 } from "@nimbus-dev/client";
 import type { ParticipantBriefs } from "../egress/gated-client.js";
 import type { Logger } from "../logging.js";
@@ -58,6 +59,12 @@ export interface CancellationLike {
 export interface ParticipantClientLike {
   askStream(input: string, opts?: AskStreamOptions): AskStreamHandle;
   searchRanked(params?: RankedSearchParams): Promise<RankedSearchItem[]>;
+  /**
+   * The citation search, WITH the gateway's account of what it actually did. Citations use this
+   * rather than `searchRanked`: without it a keyword-only or mid-backfill result reaches the user
+   * looking exactly like a complete semantic one.
+   */
+  searchRankedWithRetrieval(params?: RankedSearchParams): Promise<RankedSearchWithRetrieval>;
   /** The ops briefs, pre-routed through the egress seam. */
   briefs: ParticipantBriefs;
   metricsDora(params: MetricsDoraParams): Promise<DoraMetricsResult>;

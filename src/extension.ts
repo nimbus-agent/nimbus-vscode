@@ -1813,6 +1813,7 @@ export function activateWithDeps(
       const participantClient: ParticipantClientLike = {
         askStream: gateRawAskStream(client, egressGate, "participant", "@nimbus chat"),
         searchRanked: (params) => client.searchRanked(params),
+        searchRankedWithRetrieval: (params) => client.searchRankedWithRetrieval(params),
         // Recorded, not prompted: a slash-command argument is text the user
         // just typed, and a modal must not interrupt a chat turn.
         briefs: gateRawParticipantBriefs(client, egressGate),

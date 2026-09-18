@@ -34,6 +34,11 @@ function client(
       throw new Error("askStream must not be called by ops commands");
     },
     searchRanked: async () => [],
+    searchRankedWithRetrieval: async () => ({
+      items: [],
+      retrieval: { vectorRanked: true, reason: null, partial: null, backfill: null },
+      notes: [],
+    }),
     briefs: {
       expert: async () => {
         throw new Error("not faked");
