@@ -30,14 +30,24 @@ async function emitCitations(
   const q = query.trim();
   if (q.length === 0) return;
   try {
-    const rows = await client.searchRanked({ name: q, limit: deps.citationLimit });
+    const { items, notes } = await client.searchRankedWithRetrieval({
+      name: q,
+      limit: deps.citationLimit,
+    });
     if (signal.aborted) return;
     const citationOpts =
       excludeBasename !== undefined
         ? { excludeBasename, limit: deps.citationLimit }
         : { limit: deps.citationLimit };
-    for (const c of buildCitations(rows as unknown[], citationOpts)) {
+    for (const c of buildCitations(items as unknown[], citationOpts)) {
       sink.citation(c);
+    }
+    // The gateway's own wording for what the search could not do — the model still loading, a
+    // timed-out query embedding, a background pass leaving the index incomplete. Emitted AFTER the
+    // citations, so the reader sees which results the caveat is about; silent when there is nothing
+    // to disclose, which is the normal case.
+    for (const note of notes) {
+      sink.markdown(`_Search note: ${note}_\n\n`);
     }
   } catch (e) {
     deps.log.warn(`participant: searchRanked failed: ${errMsg(e)}`);

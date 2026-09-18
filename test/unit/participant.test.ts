@@ -68,6 +68,13 @@ function fakeClient(
   return {
     askStream: () => streamOf([{ type: "done", reply: "hi", sessionId: "sess" }]),
     searchRanked: async () => [],
+    // Default: a complete vector-ranked search with nothing to disclose, so existing cases keep
+    // asserting the same output and only a test that opts in sees a note.
+    searchRankedWithRetrieval: async () => ({
+      items: [],
+      retrieval: { vectorRanked: true, reason: null, partial: null, backfill: null },
+      notes: [],
+    }),
     briefs: {
       expert: async () => {
         throw new Error("expert not faked");
@@ -143,11 +150,14 @@ describe("runParticipantTurn", () => {
     expect(result).toEqual({ sessionId: "sess-1" });
   });
 
-  test("emits citations from searchRanked", async () => {
+  test("emits citations from the retrieval envelope", async () => {
     const f = fakeSink();
     const client = fakeClient({
-      searchRanked: async () =>
-        [{ name: "a.ts", service: "fs", score: 1, canonicalUrl: "file:///w/a.ts" }] as never,
+      searchRankedWithRetrieval: async () => ({
+        items: [{ name: "a.ts", service: "fs", score: 1, canonicalUrl: "file:///w/a.ts" }] as never,
+        retrieval: { vectorRanked: true, reason: null, partial: null, backfill: null },
+        notes: [],
+      }),
     });
     await runParticipantTurn(
       req({ prompt: "auth flow" }),
@@ -156,9 +166,37 @@ describe("runParticipantTurn", () => {
       noCancel,
     );
     expect(f.citations).toEqual([{ label: "a.ts", target: "file:///w/a.ts" }]);
+    // Nothing to disclose on a complete search: no note is added to an otherwise clean answer.
+    expect(f.md.join("")).not.toContain("Search note");
   });
 
-  test("a failing searchRanked does not block the answer", async () => {
+  test("the gateway's retrieval notes reach the user, after the citations they qualify", async () => {
+    // The point of the whole chain: a keyword-only or mid-backfill result must not reach the reader
+    // looking like a complete semantic one. Before this, the participant called `searchRanked`,
+    // which cannot carry the disclosure at all.
+    const f = fakeSink();
+    const client = fakeClient({
+      searchRankedWithRetrieval: async () => ({
+        items: [{ name: "a.ts", service: "fs", score: 1, canonicalUrl: "file:///w/a.ts" }] as never,
+        retrieval: { vectorRanked: false, reason: "warming", partial: null, backfill: null },
+        notes: [
+          "semantic ranking unavailable (the embedding model is still loading) — keyword-only results",
+        ],
+      }),
+    });
+    await runParticipantTurn(
+      req({ prompt: "auth flow" }),
+      deps({ client: () => client }),
+      f.sink,
+      noCancel,
+    );
+    expect(f.citations).toEqual([{ label: "a.ts", target: "file:///w/a.ts" }]);
+    const md = f.md.join("");
+    expect(md).toContain("Search note");
+    expect(md).toContain("keyword-only results");
+  });
+
+  test("a failing citation search does not block the answer", async () => {
     const f = fakeSink();
     const client = fakeClient({
       askStream: () =>
@@ -166,7 +204,7 @@ describe("runParticipantTurn", () => {
           { type: "token", text: "answer" },
           { type: "done", reply: "answer", sessionId: "s" },
         ]),
-      searchRanked: async () => {
+      searchRankedWithRetrieval: async () => {
         throw new Error("index down");
       },
     });
