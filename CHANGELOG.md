@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.22.0...v0.23.0) (2026-09-18)
+
+
+### Features
+
+* **chat:** show the gateway retrieval disclosure with citations ([#127](https://github.com/nimbus-agent/nimbus-vscode/issues/127)) ([a2e59eb](https://github.com/nimbus-agent/nimbus-vscode/commit/a2e59ebeaf3699d4017e587247ccd6d1f5de0ba8))
+
 ## [0.22.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.21.1...v0.22.0) (2026-09-01)
 
 
