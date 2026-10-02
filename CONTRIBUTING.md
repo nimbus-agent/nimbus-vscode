@@ -82,6 +82,39 @@ settings, and the release runbook.
   CI runs the same set on Ubuntu, plus a lean Windows job (typecheck, test,
   build, bundle guards).
 
+## Updating dependencies
+
+No bot opens dependency-update PRs here. A maintainer updates dependencies in
+periodic bulk PRs: run `bun outdated`, raise the ranges in `package.json`, run
+`bun install`, then run the full gate above and open one `chore(deps):` PR.
+GitHub's Dependabot *alerts* stay on for security advisories; only its update
+PRs were retired.
+
+A range bump is not the whole job for these:
+
+- **`bun.lock`** — commit it with `package.json`. CI installs with
+  `bun install --frozen-lockfile`, so a range change without its regenerated
+  lockfile fails every job.
+- **`@nimbus-dev/client`** — leave it out of a bulk update. It is bumped on
+  purpose, in its own PR, when the extension surfaces new Gateway capability.
+- **`vitest` and `@vitest/coverage-v8`** — always the same version, in one
+  change: the coverage provider declares the exact `vitest` version as its peer.
+- **`@types/vscode`** — follows `engines.vscode`, not npm's latest. The types
+  decide which VS Code APIs the code may call, so types newer than the
+  `engines.vscode` floor let code compile against APIs the oldest supported
+  VS Code lacks. `vsce package` rejects a declared `@types/vscode` range whose
+  major.minor is newer than `engines.vscode`, but it reads the range in
+  `package.json`, not the version `bun.lock` resolved — check that too. Raise
+  the two together, deliberately, never as part of a bulk update.
+- **The UI-test harness** — `vscode-extension-tester` (pinned exactly),
+  `mocha`, `chai` and their `@types`. CI typechecks `test/ui/` but never runs
+  it, so after bumping any of them run `bun run test:ui` yourself (see
+  [docs/development.md](./docs/development.md#ui-tests)).
+- **GitHub Actions** — third-party actions are pinned by full commit SHA with
+  the version in a trailing comment (`@<sha> # v7.0.0`); update the two
+  together. Bun is pinned in two places that move together: the workflows'
+  `bun-version` input and the `oven/bun` image in `.gitlab-ci.yml`.
+
 ## Releases
 
 Releases are automated with **Release Please**. Merging Conventional-Commit PRs
