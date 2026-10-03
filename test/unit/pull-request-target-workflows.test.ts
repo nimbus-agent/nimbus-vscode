@@ -33,9 +33,15 @@ function declaresPullRequestTarget(source: string): boolean {
   return /\bpull_request_target\b/.test(stripComments(source));
 }
 
-// The checkout action in any quoting, or a git / gh command that fetches a tree.
+// The checkout action in any quoting, or a git / gh command that fetches a
+// tree. Options can sit between the tool and its subcommand — `git -C "$dir"
+// fetch`, `git -c k=v checkout`, `gh pr -R owner/repo checkout` — so anything
+// on the same line is allowed there. That also counts a line that merely names
+// both words, which fails closed: a false positive reds this file, a miss lets
+// a checkout land. A tool and subcommand on different lines (a `\` continuation,
+// a folded YAML scalar) are not seen.
 function checksOutCode(source: string): boolean {
-  return /actions\/checkout@|\bgit\s+(?:clone|fetch|checkout|pull|worktree)\b|\bgh\s+(?:pr\s+checkout|repo\s+clone)\b/.test(
+  return /actions\/checkout@|\bgit\b[^\n]*\b(?:clone|fetch|checkout|pull|worktree)\b|\bgh\b[^\n]*\b(?:checkout|clone)\b/.test(
     stripComments(source),
   );
 }
@@ -84,7 +90,10 @@ describe("the workflow detectors", () => {
     ["the double-quoted checkout action", '      - uses: "actions/checkout@0123abcd"\n'],
     ["the single-quoted checkout action", "      - uses: 'actions/checkout@0123abcd'\n"],
     ["git fetch", "      - run: git fetch origin pull/1/head\n"],
+    ["git fetch after -C", '      - run: git -C "$dir" fetch origin pull/1/head\n'],
+    ["git checkout after -c", "      - run: git -c x=y checkout FETCH_HEAD\n"],
     ["gh pr checkout", "      - run: gh pr checkout 1\n"],
+    ["gh pr checkout after -R", "      - run: gh pr -R owner/repo checkout 1\n"],
   ])("see a checkout through %s", (_form, source) => {
     expect(checksOutCode(source)).toBe(true);
   });

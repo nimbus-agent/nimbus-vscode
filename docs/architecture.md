@@ -117,8 +117,9 @@ code paths without a running editor — including, where it is worth it, a
 ## The `src/egress/` choke point
 
 Before anything reaches the agent, it passes through one seam that can render
-exactly what would leave — paths already redacted — and refuse to send it. The
-gate is the point; the transparency is the payoff.
+what would leave — paths already redacted — and refuse to send it. That rendering
+is the exact outbound text for every kind but `workflow`, whose preview is a
+manifest (see the table). The gate is the point; the transparency is the payoff.
 
 **Eight** outbound paths route through it — one per `EgressKind` in
 `src/egress/preflight.ts`. The **five where the extension assembles the context**

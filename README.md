@@ -34,28 +34,32 @@ claim about every byte that left the machine.
 
 The ledger answers "what left?". The **pre-flight gate** answers "should this
 leave at all?", while you can still say no. Every agent-bound path routes through
-one seam that renders exactly what would be sent — every path Nimbus adds is cut
-down to a file name, or to a path relative to your repository root where the
-Gateway needs one to find the file — and can refuse to send it.
+one seam that renders what would be sent and can refuse to send it. On every
+surface but one, that rendering is exact — every path Nimbus adds is cut down to
+a file name, or to a path relative to your repository root where the Gateway
+needs one to find the file. The exception is a workflow run: the extension sends
+only the workflow's name and run mode, and the Gateway expands the saved steps
+into model prompts the extension never sees, so what you preview is a manifest
+of those steps, not the prompts themselves.
 
 Where the extension assembles the context for you, you get the final say: **Quick
 Ask**, the **dev-workflow trio**, the **built-in briefs** and the **diagnostic
 actions** show a manifest of the payload (how many files, how many characters,
 what was left out and why) with *Show full text* to read the exact bytes in a
 tab, and *Always send … here* to stop asking per surface, per workspace. A
-**workflow run** asks the same way, previewing the saved steps the Gateway will
-expand, since the extension itself sends only the workflow's name. `nimbus_ask`
-confirms inline when another chat extension calls it. The Ask panel and `@nimbus`
-participant send text you typed yourself, so they record without interrupting;
-anything you attach to an Ask turn is already on screen as a sized chip in the
-composer before it goes.
+**workflow run** asks the same way, with its step manifest in place of the exact
+bytes. `nimbus_ask` confirms inline when another chat extension calls it. The
+Ask panel and `@nimbus` participant send text you typed yourself, so they record
+without interrupting; anything you attach to an Ask turn is already on screen as
+a sized chip in the composer before it goes.
 
 It also warns when the payload contains an absolute path from your machine —
 Nimbus never adds one, but your own code and comments sometimes do. In Restricted
 Mode a stored *Always send* is ignored and you are asked again, since that is
 precisely when you wanted to be. The gate needs no Gateway connection: it works
 while disconnected. `Nimbus: Show Last Outbound Payload` replays the last send
-verbatim, and `Nimbus: Reset Egress Preview Prompts` clears the stored choices.
+verbatim — after a workflow run, its manifest — and
+`Nimbus: Reset Egress Preview Prompts` clears the stored choices.
 
 ## Everything else it does
 
