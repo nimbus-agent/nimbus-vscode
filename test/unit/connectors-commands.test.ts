@@ -727,4 +727,58 @@ describe("waiting for consent", () => {
     expect(text).toContain("Nimbus CLI");
     expect(h.window.showErrorMessage).not.toHaveBeenCalled();
   });
+
+  test("a gated op that rejects outright is reported as a failure, not left waiting", async () => {
+    const h = harness({
+      ops: {
+        remove: vi.fn(async () => {
+          throw new Error("pipe closed");
+        }),
+      },
+    });
+    await h.commands["nimbus.removeConnector"]!(node());
+    expect(h.window.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(h.window.showErrorMessage).toHaveBeenCalledWith("Removing github failed: pipe closed");
+    expect(h.window.showInformationMessage).not.toHaveBeenCalled();
+    expect(h.refresh).toHaveBeenCalledTimes(1);
+  });
+
+  test("an answer arriving after the user stopped waiting is not reported a second time", async () => {
+    let answer: (o: { kind: "applied" }) => void = () => undefined;
+    const dispose = vi.fn();
+    const h = harness({
+      ops: {
+        remove: vi.fn(
+          () =>
+            new Promise<{ kind: "applied" }>((resolve) => {
+              answer = resolve;
+            }),
+        ),
+      },
+      window: {
+        showWarningMessage: vi.fn(async (..._args: unknown[]) => "Remove"),
+        withProgress: vi.fn(
+          async (_o: unknown, task: (p: unknown, t: unknown) => Promise<unknown>) =>
+            await task(
+              { report: () => {} },
+              {
+                onCancellationRequested: (cb: () => void) => {
+                  cb();
+                  return { dispose };
+                },
+              },
+            ),
+        ),
+      },
+    });
+    await h.commands["nimbus.removeConnector"]!(node());
+    // The owner approves elsewhere, after this editor gave up waiting.
+    answer({ kind: "applied" });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.window.showInformationMessage).toHaveBeenCalledTimes(1);
+    expect(String(h.window.showInformationMessage.mock.calls[0]?.[0])).toContain("stopped waiting");
+    expect(h.refresh).toHaveBeenCalledTimes(1);
+    // The wait settled once; the late answer must not tear down its listener again.
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
 });

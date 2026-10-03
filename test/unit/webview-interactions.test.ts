@@ -189,6 +189,26 @@ describe("webview applyMessage", () => {
     expect(() => dispatch({ type: "cancelled" })).not.toThrow();
     expect(btn("#input-send").disabled).toBe(false);
   });
+
+  test("a cancel that lands after a mid-stream rehydrate marks nothing Stopped", () => {
+    // hydrate replaces the transcript without ending the stream, so the
+    // streaming bubble a "Stopped" marker would go on no longer exists.
+    dispatch({ type: "userMessage", text: "q" });
+    dispatch({
+      type: "hydrate",
+      turns: [{ role: "assistant", text: "an earlier answer", timestamp: 1 }],
+    });
+    dispatch({ type: "cancelled" });
+    expect($("#transcript").innerHTML).toContain("an earlier answer");
+    expect($("#transcript").innerHTML).not.toContain("Stopped");
+    expect(btn("#input-send").disabled).toBe(false);
+    expect(btn("#input-stop").disabled).toBe(true);
+  });
+
+  test("a token with no streaming bubble to land in renders nothing", () => {
+    dispatch({ type: "token", text: "orphaned" });
+    expect($("#transcript").innerHTML).toBe("");
+  });
 });
 
 describe("webview interactions", () => {
@@ -300,5 +320,90 @@ describe("webview interactions", () => {
     if (logsBtn === null) throw new Error("no openLogs button");
     click(logsBtn);
     expect(posted.at(-1)).toEqual({ type: "openLogs" });
+  });
+
+  test("Enter alone, or a modifier with another key, does not submit", () => {
+    const input = $("#input-text") as HTMLTextAreaElement;
+    input.value = "not yet";
+    for (const init of [
+      { key: "Enter" },
+      { key: "a", ctrlKey: true },
+      { key: "a", metaKey: true },
+    ]) {
+      input.dispatchEvent(
+        new KeyboardEvent("keydown", { ...init, bubbles: true, cancelable: true }),
+      );
+    }
+    expect(posted).toEqual([]);
+    expect(input.value).toBe("not yet");
+  });
+
+  test("Stop while nothing is streaming posts nothing and leaves the status alone", () => {
+    click($("#input-stop"));
+    expect(posted).toEqual([]);
+    expect($("#status").textContent).toBe("");
+  });
+
+  test("rejecting a HITL card posts reject and records it as rejected", () => {
+    dispatch({ type: "hitlInline", requestId: "r10", prompt: "Allow?" });
+    const reject = document.querySelector<HTMLButtonElement>(
+      'button.hitl-btn[data-decision="reject"]',
+    );
+    if (reject === null) throw new Error("no reject button");
+    click(reject);
+    expect(posted.at(-1)).toEqual({ type: "hitlResponse", requestId: "r10", decision: "reject" });
+    expect($("#hitl-mount").innerHTML).toContain("Decision recorded: rejected");
+  });
+
+  // renderHitlCard and renderChips always write these attributes; the click
+  // handler still checks each one, so anything else that ends up on the page
+  // with the same classes cannot post a half-formed decision or detach.
+  describe("clicks on controls missing what the handler needs", () => {
+    function mount(html: string): HTMLElement {
+      const host = document.createElement("div");
+      host.innerHTML = html;
+      document.body.appendChild(host);
+      return host;
+    }
+
+    test("a decision button with no request id, or an unknown decision, posts nothing", () => {
+      const host = mount(
+        `<button class="hitl-btn" data-decision="approve">a</button>` +
+          `<button class="hitl-btn" data-decision="maybe" data-request-id="r1">b</button>`,
+      );
+      try {
+        for (const b of host.querySelectorAll("button")) click(b);
+        expect(posted).toEqual([]);
+      } finally {
+        host.remove();
+      }
+    });
+
+    test("a valid decision button outside any card still posts, with no card to replace", () => {
+      const host = mount(
+        `<button class="hitl-btn" data-decision="approve" data-request-id="r2">ok</button>`,
+      );
+      try {
+        const b = host.querySelector("button");
+        if (b === null) throw new Error("no button");
+        click(b);
+        expect(posted).toEqual([{ type: "hitlResponse", requestId: "r2", decision: "approve" }]);
+        expect(host.innerHTML).toContain("data-request-id");
+      } finally {
+        host.remove();
+      }
+    });
+
+    test("a remove control with no chip id, or an unknown action button, posts nothing", () => {
+      const host = mount(
+        `<button class="chip-remove">x</button><button data-action="reloadWindow">r</button>`,
+      );
+      try {
+        for (const b of host.querySelectorAll("button")) click(b);
+        expect(posted).toEqual([]);
+      } finally {
+        host.remove();
+      }
+    });
   });
 });

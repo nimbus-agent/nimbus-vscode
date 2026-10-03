@@ -138,6 +138,26 @@ describe("describeRunOutcome", () => {
     expect(msg).not.toMatch(/cancelled/i);
     expect(msg).toMatch(/finished|completed/i);
   });
+
+  test("a status-less dry run is still worded as a preview, with a plural step count", () => {
+    const { status: _drop, ...noStatus } = result({
+      dryRun: true,
+      stepResults: [
+        { label: "collect", status: "done" },
+        { label: "summarise", status: "done" },
+      ],
+    });
+    expect(describeRunOutcome("nightly-sync", noStatus as WorkflowRunResult)).toBe(
+      "Workflow nightly-sync dry run finished — 2 steps previewed.",
+    );
+  });
+
+  test("counts zero and many steps in the plural, one in the singular", () => {
+    expect(describeRunOutcome("w", result({ stepResults: [] }))).toBe(
+      "Workflow w completed 0 steps.",
+    );
+    expect(describeRunOutcome("w", result())).toBe("Workflow w completed 1 step.");
+  });
 });
 
 describe("formatRunReport", () => {
@@ -187,5 +207,12 @@ describe("formatRunReport", () => {
     const { status: _drop, ...noStatus } = result();
     const { content } = formatRunReport("nightly-sync", noStatus as WorkflowRunResult);
     expect(content).toContain("not reported by this Gateway");
+  });
+
+  test("a dry run's report says so in its header, and a real run's says it was not", () => {
+    expect(formatRunReport("w", result({ status: "preview", dryRun: true })).content).toContain(
+      "\n- Dry run: yes\n",
+    );
+    expect(formatRunReport("w", result()).content).toContain("\n- Dry run: no\n");
   });
 });

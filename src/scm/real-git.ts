@@ -4,8 +4,9 @@ import type { ChangedFile, DiffScope, GitApiLike, GitRepositoryLike } from "./gi
 import { relativeOrBasename } from "./paths.js";
 import { type StatusedPath, untrackedPathsFrom } from "./untracked.js";
 
-// Thin vscode-git glue — mirrors real-participant.ts. Excluded from coverage;
-// the pure modules carry the logic and the tests.
+// Thin vscode-git glue — mirrors real-participant.ts. The pure modules carry the
+// logic; test/unit/scm-real-git.test.ts drives this adapter through the vscode
+// stub, so it is measured by vitest and Sonar alike.
 //
 // The git extension's API is not typed on our side. Resolving the API itself is
 // guarded here and degrades to "git unavailable" rather than throwing; a shape

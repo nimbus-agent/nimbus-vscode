@@ -255,4 +255,49 @@ describe("clicking an offer", () => {
     heading.click();
     expect(posted).toEqual([]);
   });
+
+  test("says nothing for a click whose target is not an element at all", () => {
+    // A click dispatched on the document itself has the Document as its
+    // target, which has no closest() to walk up from.
+    dispatch("vscode-webview://abc", WITH_OFFER);
+    expect(() => document.dispatchEvent(new MouseEvent("click", { bubbles: true }))).not.toThrow();
+    expect(posted).toEqual([]);
+  });
+
+  test("an offer-styled button that names no command posts nothing", () => {
+    // renderOffers always writes data-command; this guards the boundary in
+    // case anything else ever puts an offer-shaped button on the page.
+    const stray = document.createElement("button");
+    stray.className = "offer";
+    stray.dataset["target"] = JSON.stringify({ ref: "src/a.ts", line: 1 });
+    document.body.appendChild(stray);
+    try {
+      stray.click();
+      expect(posted).toEqual([]);
+    } finally {
+      stray.remove();
+    }
+  });
+});
+
+describe("a missing mount", () => {
+  test("is skipped without throwing, and filled by the next render once it exists", () => {
+    // paint() returns BEFORE recording what it painted when its mount is
+    // absent, so the next render is not mistaken for an identical repaint and
+    // skipped — the mount gets filled as soon as it is back.
+    const offers = document.getElementById("offers");
+    if (offers === null) throw new Error("shell has no #offers mount");
+    offers.remove();
+    try {
+      expect(() =>
+        dispatch("vscode-webview://abc", { ...WITH_OFFER, generation: 21 }),
+      ).not.toThrow();
+      expect(document.getElementById("signals")?.innerHTML).toContain("Line 3: boom");
+    } finally {
+      document.querySelector("#root")?.appendChild(offers);
+    }
+    expect(offers.innerHTML).toBe("");
+    dispatch("vscode-webview://abc", { ...WITH_OFFER, generation: 22 });
+    expect(offers.querySelector("button.offer")?.textContent).toContain("Why is this here?");
+  });
 });

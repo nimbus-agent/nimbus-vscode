@@ -94,4 +94,25 @@ describe("Settings", () => {
     const s = createSettings(makeWorkspace({ "briefs.defaultNamespace": "billing" }));
     expect(s.defaultNamespace()).toBe("billing");
   });
+
+  // Hidden by default: a real Gateway reports every service it knows, most of
+  // them never set up, and listing those as connectors is noise.
+  test("showUnconfiguredConnectors is off by default and reads connectors.showUnconfigured", () => {
+    expect(createSettings(makeWorkspace({})).showUnconfiguredConnectors()).toBe(false);
+    const on = createSettings(makeWorkspace({ "connectors.showUnconfigured": true }));
+    expect(on.showUnconfiguredConnectors()).toBe(true);
+  });
+
+  test("searchLimit reads search.limit through the clamp, defaulting to 50", () => {
+    expect(createSettings(makeWorkspace({})).searchLimit()).toBe(50);
+    expect(createSettings(makeWorkspace({ "search.limit": 20 })).searchLimit()).toBe(20);
+    expect(createSettings(makeWorkspace({ "search.limit": 9_999 })).searchLimit()).toBe(500);
+  });
+
+  test("contextEnabled is on by default and reads context.enabled", () => {
+    expect(createSettings(makeWorkspace({})).contextEnabled()).toBe(true);
+    expect(createSettings(makeWorkspace({ "context.enabled": false })).contextEnabled()).toBe(
+      false,
+    );
+  });
 });

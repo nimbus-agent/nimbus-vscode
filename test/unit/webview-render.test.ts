@@ -201,5 +201,21 @@ describe("renderEmptyState", () => {
     const html = renderEmptyState({ sub: "permission-denied" });
     expect(html).toContain("empty-permission-denied");
     expect(html).toContain('data-action="openLogs"');
+    expect(html).not.toContain("Socket:");
+  });
+  test("disconnected with no known socket omits the socket line rather than printing an empty one", () => {
+    const html = renderEmptyState({ sub: "disconnected", socketPath: "" });
+    expect(html).toContain('data-action="startGateway"');
+    expect(html).not.toContain("Socket:");
+  });
+  test("permission-denied names the socket it could not open, escaped", () => {
+    const html = renderEmptyState({
+      sub: "permission-denied",
+      socketPath: "/run/<user>/nimbus.sock",
+    });
+    expect(html).toContain(
+      '<p class="muted">Socket: <code>/run/&lt;user&gt;/nimbus.sock</code></p>',
+    );
+    expect(html).not.toContain("<user>");
   });
 });

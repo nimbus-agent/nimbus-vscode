@@ -2,9 +2,10 @@
 // groups.
 //
 // This is its own module rather than a few lines inside real-git.ts because
-// real-git.ts is untested vscode glue, and getting this wrong is silent: the
-// "Not reviewed — untracked" list is what stops a reader assuming a brand-new
-// file was covered, so an empty list reads as "nothing was left out".
+// real-git.ts is vscode glue, and getting this wrong is silent: the "Not
+// reviewed — untracked" list is what stops a reader assuming a brand-new file
+// was covered, so an empty list reads as "nothing was left out". Kept pure so
+// the rule is unit-tested on its own, independent of the git extension's shape.
 
 /** `Status.UNTRACKED` from the git extension's API enum. */
 export const GIT_STATUS_UNTRACKED = 7;

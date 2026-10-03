@@ -199,8 +199,9 @@ untyped on our side. Resolving the API itself (`getExtension`/`activate`/
 a shape mismatch discovered later, per-repository call (e.g. a `RawChange`
 missing `.uri.fsPath`) is not caught here — `commands.ts` catches it, at the
 per-command level, alongside its other failure modes. It mirrors
-`chat-participant/real-participant.ts` and is excluded from coverage for the
-same reason: the pure modules carry the logic and the tests.
+`chat-participant/real-participant.ts`: the pure modules carry the logic. Unlike
+that adapter it is measured for coverage — `test/unit/scm-real-git.test.ts`
+drives it through the `vscode` stub, standing in a fake git extension.
 
 Diffs are always fetched **per file**: `collectDiff` lists changed files via
 `changedFiles(scope)`, then calls `fileDiff(scope, path)` once per path. Paths

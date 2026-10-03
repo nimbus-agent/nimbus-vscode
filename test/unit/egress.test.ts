@@ -225,4 +225,36 @@ describe("buildProofDocument", () => {
     expect(doc.content).toContain("No signed receipt attached");
     expect(doc.content).toContain("Rows in window (0)");
   });
+
+  test("a covered window with every class unobserved says so, and pluralises a zero count", () => {
+    const doc = buildProofDocument(
+      { rows: [], completeness: { coverage: {}, outboundEgressEvents: 0, indeterminate: false } },
+      1,
+    );
+    expect(doc.content).toContain(
+      "<p>Completeness: <strong>0</strong> authorized outbound events recorded before dispatch. This covers no egress class was observed only",
+    );
+    expect(doc.content).not.toContain("observed classes:");
+    expect(doc.content).not.toContain("INDETERMINATE");
+  });
+
+  test("a covered window with no event count says it is absent rather than inventing one", () => {
+    const doc = buildProofDocument(
+      { rows: [], completeness: { coverage: { task: "per-call" }, indeterminate: false } },
+      1,
+    );
+    expect(doc.content).toContain(
+      "<p>Completeness: The event count is absent from this response. This covers observed classes: <code>task</code> only",
+    );
+    expect(doc.content).not.toContain("authorized outbound");
+  });
+
+  test("a result that is not an object still yields a well-formed, fail-closed document", () => {
+    const doc = buildProofDocument(null, 7);
+    expect(doc.filename).toBe("egress-proof-7.html");
+    expect(doc.content).toContain("INDETERMINATE");
+    expect(doc.content).toContain("Rows in window (0)");
+    expect(doc.content).toContain("No signed receipt attached");
+    expect(doc.content).toContain("FAILED");
+  });
 });

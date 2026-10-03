@@ -52,6 +52,12 @@ describe("formatEgressBadge", () => {
     expect(r?.tooltip).toContain("ECONNRESET");
     expect(r?.text).not.toMatch(/egress/i);
   });
+
+  test("a stale count with no recorded error says so without an empty parenthesis", () => {
+    const r = formatEgressBadge({ ...base, head: undefined, lastKnownCount: 9 });
+    expect(r?.text).toBe("$(shield) 9 $(warning)");
+    expect(r?.tooltip).toBe("Egress ledger: couldn't refresh — showing last known 9 rows");
+  });
 });
 
 function makeFakeStatusBarItem(): StatusBarItemHandle {

@@ -255,6 +255,21 @@ describe("applyThemeIcons", () => {
     c.set({ kind: "idle" });
     expect(fired).toBe(1);
   });
+
+  test("a view with no change event gets a provider without one, not an undefined member", () => {
+    // VS Code reads the PRESENCE of onDidChangeTreeData; a key holding
+    // `undefined` is not the same thing as no key under
+    // exactOptionalPropertyTypes, and is not what the view declared.
+    const staticView = {
+      getTreeItem: (item: { label: string }) => item,
+      getChildren: () => [{ label: "fixed row" }],
+      refresh: () => undefined,
+      dispose: () => undefined,
+    };
+    const wrapped = applyThemeIcons(staticView, (id) => id);
+    expect("onDidChangeTreeData" in wrapped).toBe(false);
+    expect(wrapped.getChildren()).toEqual([{ label: "fixed row" }]);
+  });
 });
 
 describe("one-level nesting", () => {

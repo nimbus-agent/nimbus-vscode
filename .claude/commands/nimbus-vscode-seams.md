@@ -248,18 +248,17 @@ and every word of prose are unchecked.
 
 `coverage.exclude` in `vitest.config.ts` and `sonar.coverage.exclusions` in
 `sonar-project.properties` are independent lists. A file must be in **both** to
-leave both denominators. Two divergences exist, both deliberate, both now named
-with a reason in `test/unit/coverage-exclusions.test.ts` — which fails on a
-**third**, in either direction:
+leave both denominators. One divergence exists, deliberately, named with a
+reason in `test/unit/coverage-exclusions.test.ts` — which fails on any other, in
+either direction:
 
-- `src/scm/real-git.ts` — excluded in vitest, **not** in Sonar. So vitest emits no
-  lcov record and Sonar scores it 0.0%. That row is an artifact of the asymmetry,
-  not a coverage gap; read it that way before "fixing" it. Adding it to
-  `sonar.coverage.exclusions` would hide the number rather than earn it.
 - `src/chat/webview/main.ts` — excluded in Sonar, deliberately measured by vitest
   under jsdom.
-- `src/briefs/real-hover.ts` is in **neither** list — it is measured by both, and
-  now has a test of its own (`test/unit/briefs-real-hover.test.ts`).
+- `src/briefs/real-hover.ts` and `src/scm/real-git.ts` are in **neither** list —
+  both are measured by both tools, each through a test of its own
+  (`test/unit/briefs-real-hover.test.ts`, `test/unit/scm-real-git.test.ts`).
+  `real-git.ts` used to be a second divergence (vitest-only, so Sonar scored it
+  0.0%); it earned its number with that test rather than a second exclusion.
 
 Sonar's gate blocks via `sonar.qualitygate.wait=true`, but the whole analysis step
 is `if: env.SONAR_TOKEN != ''` — so **a green Sonar check does not prove a scan

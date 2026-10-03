@@ -136,6 +136,13 @@ export const chat = {
 export const lm = {
   registerTool: (_name: string, _tool: unknown) => ({ dispose: () => undefined }),
 };
+// The built-in git extension, as src/scm/real-git.ts reaches it. No extension by
+// default — as in a window where git is disabled — so activation in the other
+// suites resolves "git unavailable" quietly. A test that needs one stands it in
+// with vi.spyOn(extensions, "getExtension").
+export const extensions = {
+  getExtension: (_id: string): unknown => undefined,
+};
 export class LanguageModelTextPart {
   constructor(public value: string) {}
 }

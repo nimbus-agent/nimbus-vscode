@@ -28,6 +28,12 @@ describe("renderSections", () => {
     expect(html).toContain("Line 3: boom");
   });
 
+  test("a finished section with no rows and no wording of its own falls back to a generic line", () => {
+    const html = renderSections([{ id: "related", title: "Related", rows: [] }]);
+    expect(html).toContain('<p class="empty">Nothing to show.</p>');
+    expect(html).not.toContain("Loading…");
+  });
+
   test("renders the empty text instead of rows when there are none", () => {
     const html = renderSections([
       { id: "git", title: "Git", rows: [], empty: "No git repository here." },

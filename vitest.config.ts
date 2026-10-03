@@ -20,7 +20,6 @@ export default defineConfig({
         "src/connection/ping-socket.ts",
         "src/context/real-context-view.ts",
         "src/lm-tools/real-lm-tools.ts",
-        "src/scm/real-git.ts",
       ],
       // No hard thresholds here: coverage quality is enforced by SonarCloud's
       // "Sonar way" gate (80% on NEW code) via sonar.yml. `test:coverage` only

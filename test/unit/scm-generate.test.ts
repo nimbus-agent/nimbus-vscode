@@ -18,6 +18,9 @@ describe("deriveTestFileName", () => {
     expect(deriveTestFileName("lib/thing.rb")).toBe("thing_spec.rb");
     expect(deriveTestFileName("pkg/server.go")).toBe("server_test.go");
   });
+  test("Kotlin takes the JUnit-style suffix, like Java, not <base>.test.kt", () => {
+    expect(deriveTestFileName("app/src/main/Billing.kt")).toBe("BillingTest.kt");
+  });
   test("falls back to <base>.test.<ext> for unknown extensions", () => {
     expect(deriveTestFileName("src/a.zig")).toBe("a.test.zig");
   });

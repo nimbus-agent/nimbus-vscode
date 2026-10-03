@@ -82,6 +82,29 @@ describe("validateInbound", () => {
     expect(validateInbound("run").kind).toBe("rejected");
     expect(validateInbound({ type: "explode" }).kind).toBe("rejected");
   });
+
+  test("rejects a run message whose command is missing or not a string, saying so", () => {
+    expect(validateInbound({ type: "run", command: 42 })).toEqual({
+      kind: "rejected",
+      reason: "command is not a string",
+    });
+    expect(validateInbound({ type: "run" })).toEqual({
+      kind: "rejected",
+      reason: "command is not a string",
+    });
+  });
+
+  test("rejects a bare string where an editor target object belongs", () => {
+    // A "ref:line" string is the obvious wrong shape for a webview to send; it
+    // must not slip through as if it were { ref, line }.
+    expect(
+      validateInbound({ type: "run", command: "nimbus.brief.why", args: ["src/a.ts:4"] }),
+    ).toEqual({ kind: "rejected", reason: "nimbus.brief.why needs { ref: string, line: number }" });
+    expect(validateInbound({ type: "run", command: "nimbus.brief.why", args: [null] })).toEqual({
+      kind: "rejected",
+      reason: "nimbus.brief.why needs { ref: string, line: number }",
+    });
+  });
 });
 
 // The set of commands that may carry an EditorTarget is derived from the catalog

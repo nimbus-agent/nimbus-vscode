@@ -115,4 +115,25 @@ describe("blameSection", () => {
     const section = await blameSection(buildSnapshot({ generation: 8, editor }), deps(client));
     expect(section.transient).toBe(true);
   });
+
+  test("a line known only through its ticket shows just the ticket row", async () => {
+    // No author, time or sha means no person row; no subject, no commit row;
+    // no PR, no PR row. Each row is conditional on its own field, so a sparse
+    // peek must not produce empty or placeholder rows for the missing ones.
+    const ticketOnly = {
+      ...PEEK,
+      author: null,
+      commitSha: null,
+      committedAt: null,
+      commitSubject: null,
+      pr: null,
+      ticket: { key: "NIM-88", url: null },
+    };
+    const section = await blameSection(
+      buildSnapshot({ generation: 9, editor }),
+      deps(stub(ticketOnly)),
+    );
+    expect(section.rows).toEqual([{ label: "NIM-88", iconId: "tag" }]);
+    expect(section.empty).toBeUndefined();
+  });
 });

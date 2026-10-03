@@ -35,6 +35,11 @@ describe("findLeakedRoots", () => {
   test("matches case-insensitively, since Windows paths are", () => {
     expect(findLeakedRoots("see c:\\GITREP\\Nimbus\\a.ts", [WIN])).toEqual([WIN]);
   });
+  test("a root listed twice is still reported once", () => {
+    // Opening the home directory itself as the workspace puts the same path in
+    // the root list twice: once as the folder, once as homedir().
+    expect(findLeakedRoots(`wrote ${HOME}/notes.md`, [HOME, HOME])).toEqual([HOME]);
+  });
   test("reports each matching root once, in the order given", () => {
     expect(findLeakedRoots(`${WIN} and ${HOME} and ${WIN}`, [WIN, HOME])).toEqual([WIN, HOME]);
   });
