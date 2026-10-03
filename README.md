@@ -34,16 +34,21 @@ claim about every byte that left the machine.
 
 The ledger answers "what left?". The **pre-flight gate** answers "should this
 leave at all?", while you can still say no. Every agent-bound path routes through
-one seam that renders exactly what would be sent — file names only, never
-directory or repository paths — and can refuse to send it.
+one seam that renders exactly what would be sent — every path Nimbus adds is cut
+down to a file name, or to a path relative to your repository root where the
+Gateway needs one to find the file — and can refuse to send it.
 
 Where the extension assembles the context for you, you get the final say: **Quick
-Ask** and the **dev-workflow trio** show a manifest of the payload (how many
-files, how many characters, what was left out and why) with *Show full text* to
-read the exact bytes in a tab, and *Always send … here* to stop asking per
-surface, per workspace. `nimbus_ask` confirms inline when another chat extension
-calls it. The Ask panel and `@nimbus` participant send text you typed yourself,
-so they record without interrupting.
+Ask**, the **dev-workflow trio**, the **built-in briefs** and the **diagnostic
+actions** show a manifest of the payload (how many files, how many characters,
+what was left out and why) with *Show full text* to read the exact bytes in a
+tab, and *Always send … here* to stop asking per surface, per workspace. A
+**workflow run** asks the same way, previewing the saved steps the Gateway will
+expand, since the extension itself sends only the workflow's name. `nimbus_ask`
+confirms inline when another chat extension calls it. The Ask panel and `@nimbus`
+participant send text you typed yourself, so they record without interrupting;
+anything you attach to an Ask turn is already on screen as a sized chip in the
+composer before it goes.
 
 It also warns when the payload contains an absolute path from your machine —
 Nimbus never adds one, but your own code and comments sometimes do. In Restricted
@@ -56,7 +61,7 @@ verbatim, and `Nimbus: Reset Egress Preview Prompts` clears the stored choices.
 
 - **Ask** — chat with the Nimbus agent in a side panel; responses stream token-by-token, and a **Stop** button cancels a long generation cleanly while keeping the partial reply.
 - **Attach context to Ask** — pull a workspace file, an editor selection, or a local-index item into a question, from a composer button, the editor's *Attach Selection to Ask*, or *Attach to Ask* on an Index sidebar row. The composer shows exactly what will be sent: a chip per attachment with its resolved size, or the reason it wasn't sent — a possibly-secret or binary file is refused outright, an oversized one is clamped and says how much of it made the cut. **`isSecretPath` matches file names, not contents** — an API key pasted into an ordinary source file is not detected, the same limitation *Review Changes* ships with. Attachments last for the whole session, so a follow-up question keeps them, and each sent question keeps its own permanent record of what it carried.
-- **`@nimbus` Chat participant** — also works as a general assistant: free-form questions can pull in `#file` context (or your selection), answers stream token-by-token, and replies include clickable citations back to local-index sources. Explain / Fix / Review / Docstring / Write tests live as **Quick Ask presets** rather than slash commands.
+- **`@nimbus` Chat participant** — also works as a general assistant: free-form questions can pull in `#file` context (or your selection), answers stream token-by-token, and replies include clickable citations back to local-index sources — followed by the Gateway's own note when the search behind them was incomplete (keyword-only, say, or run while the index was still backfilling). Explain / Fix / Review / Docstring / Write tests live as **Quick Ask presets** rather than slash commands.
 - **Language Model tools** — other chat extensions and agents can call Nimbus as a tool: `nimbus_search` (ranked search over your private local index) and `nimbus_ask` (a one-shot answer from your local agent), referenceable in a prompt as `#nimbusSearch` / `#nimbusAsk`.
 - **Quick Ask** — ask about a selection (or the whole file) and get a one-shot answer in a read-only tab, without opening the chat panel.
 - **Search** — live ranked (semantic + keyword) search over your local Nimbus index; results update as you type, and selecting one opens its source (or notifies you when it has none). **Search Selection** seeds it from the editor.

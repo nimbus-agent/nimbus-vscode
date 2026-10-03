@@ -33,10 +33,11 @@ string `querySql(` anywhere under `src/`. Two consequences they don't spell out:
   a user from either section. `marked` and `dompurify` are in `dependencies` and
   are inlined identically. Do not "fix" this.
 - **A missing Gateway capability is a blocked feature, not a workaround.** New
-  capability is reached by bumping the pinned `@nimbus-dev/client` (`^0.17.0`)
-  first. This is why `CLAUDE.md` records the share surface as *blocked upstream*
-  rather than deferred: the pinned client exposes no `share*` RPCs, so the feature
-  cannot be written here at all.
+  capability is reached by bumping the pinned `@nimbus-dev/client` (`^0.18.0`
+  today — read the pin off `package.json`, not this line) first. This is why
+  `CLAUDE.md` records the share surface as *blocked upstream* rather than
+  deferred: the pinned client exposes no `share*` RPCs, so the feature cannot be
+  written here at all.
 
 `scripts/check-bundle.mjs` is the runtime half — it regex-scans `dist/extension.js`
 for `require("…")` and fails on any specifier outside node builtins + `vscode`.
@@ -192,8 +193,15 @@ stops shipping, silently, leaving a broken walkthrough step. Nothing validates
 that the `media.markdown` paths in `package.json` resolve. Only `quick-ask.md`
 has any content guard at all (§6).
 
-Also: `**/*.map` is the **last** line of `.vscodeignore` (last match wins), so
-sourcemaps are excluded even from the re-included `dist/**`.
+Also: `**/*.map` is the **last** line of `.vscodeignore`, but it does **not**
+keep source maps out. vsce does not apply last-match-wins: a file matching any
+`!` re-include ships, so `!dist/**` and `!media/**` re-include
+`dist/extension.js.map` and the webview maps (probed: 18 files become 19 the
+moment a map exists). Released artifacts carry none only because CI and
+`publish.yml` build in production mode, which emits no maps. A local
+`bun run package` after `bun run watch` or a `NODE_ENV=development` build ships
+them, and `check-vsix-contents` cannot notice — `dist/` and `media/` are
+allowlisted wholesale.
 
 ## 6. `DEFAULT_QUICK_ASK_PRESETS` — one list, five copies
 
@@ -236,7 +244,7 @@ cannot then be configured away — Terraform, Dockerfiles, `.github/workflows/*.
 or YAML that looks like Kubernetes/Helm; `filePresetsFor` returns `[]` for anything
 else (`filePresetsFor` in `src/quick-ask-presets.ts`, wired at the `opsPresets`
 call in `src/extension.ts`). And `bun run check-settings-docs` catches **none** of
-this — for each of the 17 `nimbus.*` properties it asserts only that a
+this — for each of the 18 `nimbus.*` properties it asserts only that a
 `### \`nimbus.x\`` heading exists in `docs/settings.md` and a `| \`nimbus.x\` |`
 row exists in `README.md` — and, since the quality sweep, that no `### \`nimbus.x\``
 heading or README row names a setting `package.json` does **not** contribute, so a
@@ -308,7 +316,11 @@ Full runbook is `docs/releasing.md`. The parts that bite:
   `scripts/check-vsix-contents.mjs`. Under `resources/`, neither — see §5.
 - New CI gate → `.github/workflows/ci.yml` **and** `.gitlab-ci.yml`, whose
   `build-test` job re-lists the same seven `bun run` gates in order and whose own
-  header says it is kept in sync with `package.json` scripts.
+  header says it is kept in sync with `package.json` scripts, **and**
+  `.github/workflows/publish.yml`, which re-runs the same gates before packaging
+  so a release cannot publish what a PR would have been blocked for. The gate is
+  also spelled out by hand in `CONTRIBUTING.md`, `docs/development.md`, the PR
+  template and the `verify-extension` skill.
 - New `nimbus.*` setting → `package.json` **and** `docs/settings.md` (`###`
   heading) **and** the `README.md` table row (`check-settings-docs` enforces all
   three).

@@ -83,7 +83,8 @@ That is what keeps the logic unit-testable: tests alias `vscode` to a stub
 (`test/unit/vscode-stub.ts`, wired in `vitest.config.ts`) and exercise the real
 code paths without a running editor — including, where it is worth it, a
 `real-*.ts` adapter itself (`test/unit/diagnostics-provider.test.ts`,
-`test/unit/briefs-real-hover.test.ts`). Keep `src/` and `test/` self-contained.
+`test/unit/briefs-real-hover.test.ts`, `test/unit/scm-real-git.test.ts`). Keep
+`src/` and `test/` self-contained.
 
 ## Module map
 
@@ -93,7 +94,7 @@ code paths without a running editor — including, where it is worth it, a
 | `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free, over shared helpers in `parse-helpers.ts` (`nodePayload`, which digs a row's payload out of a tree node — remembering that `typeof null === "object"` — and `parseAll`, the filter-map that drops unparseable rows) and one `NOT_CONNECTED_ROW` exported from `tree-view.ts`, so "not connected" cannot come to mean two different things in two panels of the same sidebar. `tree-view.ts`'s `createDataView` is also what `src/connectors/connectors-view.ts` builds on, for the eighth container view, Connectors — Workflows and Connectors are the two views with lazily-loaded children (`loadChildren`), because eager children would cost one round trip per row on every open. |
 | `src/workflows/` | The run surface: pure `run.ts` (pre-flight manifest, outcome wording, run report) plus `commands.ts`, which holds the injected seams. The run is gated under the `"workflow"` kind; `workflowCancel` is deliberately **not** gated, since it stops egress rather than causing any. |
 | `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). Attachments live here too: `attachments.ts` is the pure, `vscode`-free core — the `Attachment` union (`file` / `selection` / `index`), refusal precedence (secret — decided from the path alone, before the assembler reads a byte — then unreadable or empty, then binary, then over budget), the budgets (64,000 characters per attachment and 200,000 per turn; without the turn ceiling, ten attachments at the per-file one would send 640,000), line-boundary clamping, and `buildAttachedContext`, the single traversal that produces both the prompt blocks and the chips from one pass — the property that lets Ask keep recording instead of prompting (see the egress section below). `attachment-paths.ts` converts between the repo-relative paths chips and block headers show and the absolute paths the `vscode` shim reads by, and checks workspace containment. `attachment-cache.ts` is the synchronous read cache behind it: files are primed into the cache when attached and re-primed for every currently-attached file immediately before each send — resolution happens **at send, not at attach**, so a file edited after attaching sends what's on screen now, while a `selection` attachment's text was already captured at attach and is never re-read (a stored range drifts under edits, so the range travels as provenance only). Reuse from the SCM trio is deliberately narrow: `attachments.ts` borrows `isSecretPath` from `src/scm/diff.ts` and nothing else, since the budgeting helpers there are diff-shaped (hunks, `{path, diff}` entries) and mean nothing for a continuous file. |
-| `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. |
+| `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. Citations come from `searchRankedWithRetrieval`, which returns the Gateway's own notes on what the search could not do (keyword-only, an index still backfilling) alongside the hits; those notes are rendered after the citations, and nothing is added when there is nothing to disclose. |
 | `src/lm-tools/` | The `nimbus_search` / `nimbus_ask` Language Model tools (`contributes.languageModelTools`): pure `lm-tools.ts` handlers + the `real-lm-tools.ts` vscode-glue adapter. |
 | `src/search.ts` | Pure parse/rank helpers behind Search and Find related (`searchRanked` results → Quick Pick items). |
 | `src/quick-ask.ts` | Pure quick-ask helpers: context clamping, path redaction, prompt building, reply extraction, plus the one-shot `agentInvoke` options and the empty-reply notice (`oneShotInvokeOptions`, `replyOrNotify`). Shared by quick-ask, ask-about-selection and the chat participant — and, for the one-shot pieces, by the SCM trio, the diagnostic actions and the `nimbus_ask` LM tool, so every one-shot surface sends the same options and reports an empty answer the same way. |
@@ -270,14 +271,16 @@ TypeScript **strict**, **no `any`** (use `unknown` for external data). Biome
 ## Current surface
 
 Implemented: **Ask** (streaming chat panel, with a Stop affordance that cancels
-an in-flight generation), **Search** (Quick Pick over the local index),
+an in-flight generation, and file / selection / index-item attachments shown as
+sized chips before they are sent), **Search** (Quick Pick over the local index),
 **Ask/Search Selection**, **Find related** (pivot from a selection or Index item
 to ranked neighbors), **Quick Ask** (one-shot editor quick-ask over
 `agentInvoke`, reply in a read-only tab); a native `@nimbus` **Chat participant**
 in VS Code's built-in Chat view (the ops slash commands `/incident`, `/deploys`,
 `/owns`, `/blast`, `#file`/selection context, streaming answers, local-index
-citations — the Copilot three, explain/fix/test, were retired to Quick Ask
-presets); the **Language Model tools** `nimbus_search` and `nimbus_ask`, which
+citations with the Gateway's own notes when that search was incomplete — the
+Copilot three, explain/fix/test, were retired to Quick Ask presets); the
+**Language Model tools** `nimbus_search` and `nimbus_ask`, which
 let other chat extensions and agents call Nimbus as a tool; a
 **dev-workflow trio** over VS Code's built-in git extension — `Generate Commit
 Message` (staged diff → SCM input box), `Review Changes` (all local changes →
@@ -295,9 +298,14 @@ a **Connectors** view (`nimbus.connectorsView`, `src/connectors/`, see
 registered connector sorted unhealthy-first, sync telemetry and health-state
 history loaded on expand, and nine commands (sync, full re-sync, pause,
 resume, configure, re-index, authenticate, add MCP connector, remove)
-normalised through one adapter into `applied` / `denied` / `failed`, so a
-consent denial is never reported as a failure; plus connection + HITL
-plumbing and **Restricted Mode** support
+normalised through one adapter into `applied` / `denied` / `failed` (plus
+`unreachable` / `abandoned` for the three consent-gated calls), so a consent
+denial is never reported as a failure; the **ambient context panel**
+(`nimbus.contextView`, see *The `src/context/` cadence* above); the six
+**built-in briefs** and **blame on hover**; the **diagnostic actions** on the
+lightbulb; the **"Preview what leaves" pre-flight gate** in front of every
+agent-bound call among them (see *The `src/egress/` choke point* above); plus
+connection + HITL plumbing and **Restricted Mode** support
 (`capabilities.untrustedWorkspaces` = `limited` with `extensionKind: ["ui"]` — in
 an untrusted workspace the workspace-level `nimbus.socketPath` and
 `nimbus.autoStartGateway` settings are ignored, so a workspace cannot redirect

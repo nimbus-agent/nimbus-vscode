@@ -9,7 +9,8 @@ export type QuotedTokenPolicy = "keep" | "drop";
 // is the useful half of their message. Only linters that quote the offending
 // identifier are listed. Sources whose messages quote BOTH (rustc, pyright) are
 // deliberately absent — a single per-source verdict is the wrong shape for
-// them, and guessing would make their queries worse. See the spec, Part 9.
+// them, and guessing would make their queries worse. See Part 9 of the deleted
+// design: `git show edc2c81:docs/superpowers/specs/2026-08-13-diagnostic-actions-design.md`.
 export const QUOTED_TOKEN_POLICY: Record<string, QuotedTokenPolicy> = {
   eslint: "drop",
   biome: "drop",

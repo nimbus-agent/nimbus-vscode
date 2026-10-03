@@ -42,7 +42,7 @@ bun install
 ```bash
 bun run typecheck   # tsc --noEmit (strict)
 bun run lint        # biome check . (whole repo)
-bun run test        # vitest run
+bun run test        # vitest run (never plain `bun test`: Bun's runner hangs on this suite)
 bun run build       # esbuild bundles into dist/ + media/
 ```
 
@@ -53,8 +53,11 @@ test setup.
 
 ## Docs
 
-Deeper reference lives in [`docs/`](./docs/): architecture, development,
-settings, and the release runbook.
+Deeper reference lives in [`docs/`](./docs/): architecture (including the
+design decisions behind each surface), connectors, development, settings, the
+release runbook, and the roadmap. Design specs and implementation plans are
+working documents: once their work ships they are deleted, after anything
+durable moves into those docs — git history keeps the originals.
 
 ## Architecture notes
 

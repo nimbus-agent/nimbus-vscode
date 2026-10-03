@@ -13,7 +13,10 @@ export interface DiagnosticActionDescriptor {
   id: DiagnosticActionId;
   commandId: string;
   title: string;
-  /** Namespaced under `quickfix` so Ctrl+. reaches it; see the spec, Part 1. */
+  /**
+   * Namespaced under `quickfix` so Ctrl+. reaches it; see Part 1 of the deleted design,
+   * `git show edc2c81:docs/superpowers/specs/2026-08-13-diagnostic-actions-design.md`.
+   */
   kind: string;
   /**
    * Always false, and typed as the literal so it cannot drift. Auto Fix

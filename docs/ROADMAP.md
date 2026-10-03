@@ -47,7 +47,9 @@ is "does the RPC exist yet?":
   than re-freezing a copy here — a frozen copy is what made this section stale.
   Three items graduated out of Phase 4 once those RPCs shipped (Workflow surface,
   Connector management, Index write ops); what is left below is genuinely
-  unshipped upstream.
+  unshipped upstream. The pin is `^0.18.0` today: `0.18.0` added
+  `searchRankedWithRetrieval` (ranked hits plus the Gateway's own notes on how
+  complete the search was), which the `@nimbus` participant's citations use.
 
 The columns below name the enabling client RPC (or, for Phase 4, the new SDK
 capability required) so the split is verifiable, not aspirational. Effort is a
@@ -68,29 +70,33 @@ The editor is the surface with the **best context and the shortest path to
 action**. A browser tab offers a URL; VS Code already knows the open file, the
 selection, the diff against `HEAD`, the branch, the failing test, and the stack
 trace in the terminal — and it is the place where an answer becomes an edit.
-That context is underused today: `#file`/selection reaches the chat participant
-and the SCM trio reads the diff, but nothing in the editor *offers* an agent
-based on what you are looking at.
+That context was underused for a long time: `#file`/selection reaches the chat
+participant and the SCM trio reads the diff, but until the ambient context panel
+nothing in the editor *offered* an agent based on what you are looking at. The
+panel now offers the built-in briefs that fit the file and line on screen,
+pre-filled; it is still the only surface that does.
 
 This is a repositioning, not a new identity — the extension already ships as
 **Nimbus — On-Call & Incident Agent** (`package.json` `displayName`), and
-several baseline items above are already agent-surface features: the `@nimbus`
+several baseline items below are already agent-surface features: the `@nimbus`
 chat participant with the ops slash commands, the `nimbus_search` /
 `nimbus_ask` Language Model tools, the "Preview what leaves" gate, the Index
 view, and — since the built-in-briefs work — the built-in briefs themselves.
-What is missing is not reach any more, but that reach is still *invoked*
-rather than *offered*, exactly as above.
+What is missing is not reach any more, but that most of that reach is still
+*invoked* rather than *offered*, exactly as above.
 
-- The Gateway ships **fifteen** agents (`packages/gateway/src/agents/`):
-  catchup, conflicts, decisions, expert, ghost, glossary, huddle, impact,
-  janitor, negotiate, ownership, premortem, preflight, why, why-peek — and
-  dispatches all fifteen over the `agents.*` IPC namespace
-  (`packages/gateway/src/ipc/agents-rpc.ts`). That count moves with the Gateway,
-  not with this repo; re-derive it from the handler map there rather than
-  trusting this line.
-- The published (pinned) client types **ten** of them — all but decisions,
-  glossary, negotiate, ownership and premortem, which are client-packaging gaps
-  rather than missing Gateway methods — as `agentsCatchup`, `agentsConflicts`,
+- The Gateway dispatches **eighteen** `agents.*` methods
+  (`AGENTS_RPC_HANDLERS` in `packages/gateway/src/ipc/agents-rpc.ts`, the
+  agents themselves in `packages/gateway/src/agents/`): catchup, changelog,
+  conflicts, decisions, expert, ghost, glossary, huddle, impact, janitor,
+  negotiate, oncall, ownership, premortem, preflight, standup, why, and the
+  synchronous whyPeek companion (re-derived from the Gateway's `main` on
+  2026-10-03). That count moves with the Gateway, not with this repo; re-derive
+  it from the handler map there rather than trusting this line.
+- The published (pinned) client types **ten** of them — all but changelog,
+  decisions, glossary, negotiate, oncall, ownership, premortem and standup,
+  which are client-packaging gaps rather than missing Gateway methods — as
+  `agentsCatchup`, `agentsConflicts`,
   `agentsExpert`, `agentsGhost`, `agentsHuddle`, `agentsImpact`,
   `agentsJanitor`, `agentsPreflight`, `agentsWhy`, `agentsWhyPeek`. Read the
   list off `node_modules/@nimbus-dev/client/dist/nimbus-client.d.ts`, which is
@@ -98,19 +104,21 @@ rather than *offered*, exactly as above.
 - This extension now calls **all ten** of the client's typed methods (every
   `.agentsX(` shape the choke-point test discovers in `src/`, verified against
   `src/egress/gated-client.ts` — nine of the ten call sites — and
-  `src/extension.ts`, which calls the tenth, `agentsWhyPeek`, directly). So the
-  extension reaches everything the client types; the five untyped agents stay
-  Phase 4 until a client release exposes them. The Agents sidebar view shows two
+  `src/extension.ts`, which calls the tenth, `agentsWhyPeek`, directly for the
+  blame hover and the context panel). So the extension reaches everything the
+  client types; the eight untyped agents stay Phase 4 until a client release
+  exposes them. The Agents sidebar view shows two
   groups: the built-in briefs, populated from `BRIEF_CATALOG` and never empty,
   and the chat scopes from the `nimbus.agents` setting, which still defaults
   to an empty array and stays user-configured by design — see **Built-in
-  briefs** and **Agents view shows the built-ins** in *Already shipped* above.
+  briefs** and **Agents view shows the built-ins** in *Already shipped* below.
 
 The reach gap above is closed; most of the near-term work below is now about
 **depth and offering agents from context, not reach**. The exceptions —
 resolving an arbitrary reference to an indexed item, and indexing one item on
-demand when that resolution misses — are genuinely new Gateway work and sit in
-Phase 4 accordingly.
+demand when that resolution misses — were new Gateway work; the Gateway now
+serves both over its HTTP API, but no typed client method reaches either, so
+they stay in Phase 4.
 
 **The browser surface is a sibling repo, not this one.** The recorded direction
 for `nimbus-web-clipper` — a direction, not work in progress — is that it stops
@@ -123,23 +131,25 @@ decisions taken there that bear on this file: an ambient panel rather than a
 generic ask box; on a resolve miss, a targeted sync of that one item rather
 than a DOM fallback; polling plus `chrome.alarms` rather than SSE, because MV3
 terminates idle service workers; and the fetch-and-index route allowlisted
-explicitly as an `I13` HTTP **write**, not reclassified as a read. That surface
-is further from shipping than this one: the extension can only speak the
-gateway's bearer-authed HTTP API, which has no agents route at all, so the
-browser needs an invocation surface this extension already has for free through
-the typed client. The design spec is planned in the gateway repo at
-`docs/superpowers/specs/2026-08-01-browser-gateway-client-design.md`; it is not
-written yet.
+explicitly as an `I13` HTTP **write**, not reclassified as a read. A browser
+extension can speak only the gateway's bearer-authed HTTP API, which at first
+had no agents route at all; the gateway has since shipped the two surfaces this
+direction needed — `POST /v1/agents/{agent}` (plus `GET /v1/agents` and
+`GET /v1/agents/runs/{id}`, under the `agents` token scope) and the
+resolve-by-URL read `GET /v1/items/resolve` (the `resolve` scope) — so what is
+missing there is the client, not the gateway. Its design spec,
+`2026-08-01-browser-gateway-client-design.md` in the gateway repo, is still
+planned and unwritten (checked 2026-10-03).
 
 That direction is not a victory lap, and the same honesty applies to the
 items below. The clipper being repositioned has effectively no users —
 addons.mozilla.org reports an average of 0 daily users after two weeks — in a
-category that is already well occupied (Obsidian Web Clipper, Karakeep), and
-two open defects still block it at its current job: `Nimbus#1005` (clip bodies
-truncated to 512 characters while `wordCount` reports the full length) and
-`Nimbus#1006` (`web_clip` routing to OpenAI embeddings when a key is set,
-contradicting the store listings' local-only claim; `#1006` resolves before or
-with `#1005`). The cross-corpus idea is not unique either — SurfSense ships a
+category that is already well occupied (Obsidian Web Clipper, Karakeep). The
+two defects that blocked it at its current job — `Nimbus#1005` (clip bodies
+truncated to 512 characters while `wordCount` reported the full length) and
+`Nimbus#1006` (`web_clip` routing to OpenAI embeddings when a key was set,
+contradicting the store listings' local-only claim) — were closed together on
+2026-08-11. The cross-corpus idea is not unique either — SurfSense ships a
 comparable architecture with overlapping connectors and an MCP server.
 Execution on the surfaces is the whole difference, which is what the rows below
 are for.
@@ -152,11 +162,11 @@ are for.
 | **Search** — live ranked search over the local index (+ configurable limit, duplicates badge, Search Selection) | `searchRanked` |
 | **Find related** — pivot from a selection or Index item to ranked local neighbors (self-excluded) | `searchRanked` |
 | **Quick Ask** — one-shot editor quick-ask (preset actions + custom), reply in a read-only tab | `agentInvoke` |
-| **`@nimbus` Chat participant** — native participant in VS Code's built-in Chat view, with the ops slash commands (`/incident`, `/deploys`, `/owns`, `/blast`), `#file`/selection context, streaming answers, and local-index citations | `askStream`, `searchRanked`, `agentsCatchup`, `agentsImpact`, `agentsExpert`, `metricsDora` |
+| **`@nimbus` Chat participant** — native participant in VS Code's built-in Chat view, with the ops slash commands (`/incident`, `/deploys`, `/owns`, `/blast`), `#file`/selection context, streaming answers, and local-index citations, followed by the Gateway's own note when the search behind them was incomplete (keyword-only, or run mid-backfill) | `askStream`, `searchRankedWithRetrieval`, `agentsCatchup`, `agentsImpact`, `agentsExpert`, `metricsDora` |
 | **Language Model tools** — `nimbus_search` + `nimbus_ask` registered via `contributes.languageModelTools`, so other chat extensions and agents can call Nimbus as a tool | `searchRanked`, `agentInvoke` |
 | **Restricted Mode support** — runs in an untrusted workspace with the workspace-level `nimbus.socketPath` / `nimbus.autoStartGateway` settings ignored | *no RPC* |
 | **Dev-workflow trio** — Generate commit message (staged diff → SCM input box), Review changes (all local changes vs `HEAD` → findings tab), Generate tests / docstrings (untitled test buffer / docstring diff) | `agentInvoke` + SCM API |
-| **Sidebar** — Audit, Sessions (with chat resume), Index, Agents, Workflows, Connectors | `auditList`, `getSessionTranscript`, `queryItems`, `workflowList`, `workflowListRuns` |
+| **Sidebar** — Audit, Sessions (with chat resume), Index, Agents, Workflows, Connectors | `auditList`, `sessionList`, `getSessionTranscript`, `queryItems`, `workflowList`, `workflowListRuns` |
 | **Workflow surface** — every saved workflow with its recent runs (status, duration, trigger, dry-run badge, error) loaded on expand, plus **Run** / **Dry-Run** with streaming per-step output and cancel. Cancellation lands at the **next step boundary** — the in-flight step always finishes — and every string the surface shows says so | `workflowList`, `workflowListRuns`, `workflowRunStream`, `workflowCancel` |
 | **Egress ledger** — viewer + Verify-ledger + Prove-window, plus a status-bar badge (row count + ledger-live ✓, shown while connected, on by default) | `egressList`, `egressVerify`, `egressProveWindow`, `egressHead` |
 | **"Preview what leaves" pre-flight** — a gate, not a viewer: every agent-bound call routes through one seam that renders the exact outbound context with redacted paths and can refuse to send. **Eight** outbound paths, one per `EgressKind`. **Five prompt**, because the extension assembles the context: Quick Ask, the SCM trio, the six built-in briefs, a workflow run (whose preview is a *manifest* — the Gateway expands the saved steps — stated as such rather than implied byte-exact), and the diagnostic actions. **Three record without prompting**, because the payload is text the user typed or is confirmed by someone else's UI: the Ask panel, the `@nimbus` participant (`askStream` plus its three ops briefs — a modal must not interrupt a chat turn), and the `nimbus_ask` LM tool (confirmed inline by the calling chat's `prepareInvocation` card). `agentsWhyPeek` is the one agent-shaped call outside the gate, because it reaches no model. Per-surface, per-workspace "always send here" on each prompting kind; plus `Show Last Outbound Payload` and `Reset Egress Preview Prompts` | *no RPC — the payload is already in hand* |
@@ -164,9 +174,9 @@ are for.
 | **Agents view shows the built-ins** — two-group sidebar view: the built-in briefs, plus the chat scopes from the `nimbus.agents` setting (never empty on a fresh install) | the `agents*` family |
 | **Connection troubleshooter** — state-aware "why am I disconnected / how to fix" modal | *no RPC* |
 | **Get Started walkthrough** — first-run walkthrough (install → connect Gateway → try Ask/Search/Quick Ask), on the Welcome page and via `Nimbus: Open Walkthrough` | *VS Code Walkthroughs API — no RPC* |
-| **Diagnostic actions** — up to three Nimbus actions on the lightbulb for an error or warning diagnostic: **Explain this problem** and **Suggest a fix** (reply spliced into a diff against the real file — never an applied edit), both behind the pre-flight gate under a new `"diagnostic"` kind, and **Find prior occurrences** (a local-index search for the same error, reaching no model and so ungated, but still needing the Gateway socket, only as good as what is indexed, and withheld altogether when the message normalizes to too little to search on). Errors and warnings only; where a line carries several diagnostics, exactly one is chosen, so the lightbulb never grows past three entries. Toggle `nimbus.diagnostics.showCodeActions`; not yet exercised in a real editor | `agentInvoke`, `searchRanked` |
+| **Diagnostic actions** — up to three Nimbus actions on the lightbulb for an error or warning diagnostic: **Explain this problem** and **Suggest a fix** (reply spliced into a diff against the real file — never an applied edit), both behind the pre-flight gate under a new `"diagnostic"` kind, and **Find prior occurrences** (a local-index search for the same error, reaching no model and so ungated, but still needing the Gateway socket, only as good as what is indexed, and withheld altogether when the message normalizes to too little to search on). Errors and warnings only; where a line carries several diagnostics, exactly one is chosen, so the lightbulb never grows past three entries. Toggle `nimbus.diagnostics.showCodeActions`. Driven in a real editor on 2026-08-13 against Gateway 2.2.0 — three entries on an error, never three per diagnostic, none from Auto Fix, none on a Hint; the labelling when two diagnostics share a line is still unchecked | `agentInvoke`, `searchRanked` |
 | **Ambient context panel** — a sidebar view (`nimbus.contextView`) that follows the active editor with no click needed and shipped with four signals — a fifth, **Sources**, arrived with *Connector management* below, so the panel renders five today: the file's errors and warnings, the branch of the repository containing it with a count of files **not yet committed** (the union of unstaged and staged paths — counting either group alone, as the panel did before this change, made the count fall the moment a file was staged; the row is omitted on a clean tree rather than shown as zero), who last touched the cursor line, and the local index's nearest neighbours of the file or selection (self-excluded by an exact match on the index item's file against the open file's repo-relative path, plus a dedupe, not the old name-based check, which never matched). Also offers the built-in briefs pre-filled with the file and line. Toggle `nimbus.context.enabled` (default on; off leaves the view visible, saying so, rather than going blank). Both Gateway-backed signals reach no model, so neither raises a pre-flight preview; collapsing the view stops collection entirely. A real-editor pass (2026-08-17, repeated on 2026-08-18 against Gateway 2.2.0) confirmed the fixes above; never checked in a real editor: multi-root windows, a second repository opened mid-session, focus surviving a re-render, screen-reader announcements, an unindexed repository, commit invalidation, Ctrl+A over a large file, the selected text checked against the egress ledger, and Related refreshing on save. It also isolated the panel's rendered height: a fresh profile already opens the Context view with room for Problems, Git, History, Related and all six offers, with no manifest hint needed — that is VS Code's own default for a webview view placed first in a container. A profile carrying a layout stored from an earlier version can still show the view short; no manifest default can rewrite a stored layout, so there the fix is the user's — collapse the other views, or drag the sash | `agentsWhyPeek`, `searchRanked` |
-| **Connector management** — a `nimbus.connectorsView` tree view, one row per registered connector sorted unhealthy-first, with sync telemetry and health-state history loaded on expand; nine commands (sync, full re-sync, pause, resume, configure, re-index, authenticate, add MCP connector, remove) normalised through one adapter into `applied` / `denied` / `failed`, so a consent denial is never reported as a failure; and a conditional Sources row in the ambient context panel, shown only when a connector is unhealthy, that makes no Gateway call of its own | `connectorListStatus`, `connectorStatus`, `connectorHealthHistory`, `connectorPause`/`connectorResume`, `connectorSetConfig`, `connectorAuth`, `connectorAddMcp`, `connectorRemove`, `subscribeConnectorConfigChanged` |
+| **Connector management** — a `nimbus.connectorsView` tree view, one row per registered connector sorted unhealthy-first, with sync telemetry and health-state history loaded on expand; nine commands (sync, full re-sync, pause, resume, configure, re-index, authenticate, add MCP connector, remove) normalised through one adapter into `applied` / `denied` / `failed` (plus `unreachable` / `abandoned` for the three consent-gated calls), so a consent denial is never reported as a failure; and a conditional Sources row in the ambient context panel, shown only when a connector is unhealthy, that makes no Gateway call of its own | `connectorListStatus`, `connectorStatus`, `connectorHealthHistory`, `connectorPause`/`connectorResume`, `connectorSetConfig`, `connectorAuth`, `connectorAddMcp`, `connectorRemove`, `subscribeConnectorConfigChanged` |
 | **Index write ops** — trigger a sync, a full re-sync, or a re-index at a chosen depth, and register a new MCP source, all from the Connectors view above; standing up a *built-in* connector for the first time still needs the CLI, since no RPC registers one | `connectorSync`, `connectorReindex`, `connectorAddMcp` |
 | **Context-grounded Ask** — attach a workspace file, an editor selection, or a local-index item to a question, from a composer Quick Pick, *Attach Selection to Ask*, or *Attach to Ask* on an Index row. Attachments are session-scoped (a follow-up keeps them; New Conversation clears them); a file is read at send and reflects edits made since attaching, a selection is a snapshot captured at attach (its line range is provenance, not a pointer), and an index attachment carries its indexed snippet or a fetched fallback. Refusals and clamping — possible secret (by file name, not contents — the same limitation *Review Changes* ships with), binary, or over-budget (64,000 chars/attachment, 200,000/turn, cut at a line boundary) — render as a chip, never silently. The Ask panel still records rather than prompts: the composer's chips are themselves the preview, honest only because one traversal produces both what is sent and what the chips show. `EgressKind` count unchanged at eight | `searchRanked`, `askStream` |
 | **HITL**, status-bar quick menu, connection plumbing | `subscribeHitl` |
@@ -233,9 +243,9 @@ RPC ships.
 | **Egress policy management** + live egress subscription | Configure and watch egress in real time | egress-policy / subscription RPCs | M |
 | **Inline completions / ghost text** | Type-ahead grounded in the local model | a completion-oriented RPC | L |
 | **Agent authoring** in-editor | Create/edit agents without leaving VS Code | agent-write RPCs | L |
-| **Reference → item resolution** — turn a canonical URL or a service ref into the indexed item | The shared primitive this surface and the browser client both need. `canonical_url` is a real column on `item`, but nothing reads it: the typed `queryItems` filters only by service / type / time, no IPC method keys on it (`querySql` is an escape hatch, not a contract), and the column carries no SQL index — so this is a Gateway migration plus a handler, not a client-side trick | a resolve-by-URL/ref RPC | M |
-| **Targeted single-item sync** — index one item on demand when resolution misses, then answer | Removes "not indexed yet" as a dead end; `connectorSync` takes a `serviceId` and syncs the whole connector. Gateway-side this is an explicit `I13` write route, not a read | a per-item fetch-and-index RPC | L |
-| **The five untyped Gateway agents** — glossary, decisions, ownership, pre-mortem, negotiate | The cheapest rows here: the Gateway already dispatches `agents.glossary`, `agents.decisions`, `agents.ownership`, `agents.premortem` and `agents.negotiate` over IPC alongside the ten this extension already calls — only the typed client methods are missing, so each needs a client release, not Gateway work | a client release typing the `agents.glossary` / `.decisions` / `.ownership` / `.premortem` / `.negotiate` methods | S each |
+| **Reference → item resolution** — turn a canonical URL or a service ref into the indexed item | The shared primitive this surface and the browser client both need. The Gateway side now exists — a derived, indexed `item.resolve_key` (schema V52) behind `GET /v1/items/resolve` on its bearer-authed HTTP API — but the pinned client types no method that reaches it: `queryItems` filters only by service / type / time, and `querySql` is an escape hatch, not a contract | a typed resolve-by-URL/ref client method | M |
+| **Targeted single-item sync** — index one item on demand when resolution misses, then answer | Removes "not indexed yet" as a dead end; `connectorSync` takes a `serviceId` and syncs the whole connector. The Gateway side now exists as `POST /v1/items/fetch`, an explicit `I13` HTTP write route rather than a read, which records one egress-ledger row per fetch; the pinned client types no method for it | a typed per-item fetch-and-index client method | L |
+| **The eight untyped Gateway agents** — changelog, decisions, glossary, negotiate, oncall, ownership, pre-mortem, standup | The cheapest rows here: the Gateway already dispatches `agents.changelog`, `agents.decisions`, `agents.glossary`, `agents.negotiate`, `agents.oncall`, `agents.ownership`, `agents.premortem` and `agents.standup` over IPC alongside the ten this extension already calls — only the typed client methods are missing, so each needs a client release, not Gateway work | a client release typing the `agents.changelog` / `.decisions` / `.glossary` / `.negotiate` / `.oncall` / `.ownership` / `.premortem` / `.standup` methods | S each |
 | **MCP connector command line, shown in the Connectors view** | You could see what a registered `mcp_*` connector actually runs without opening the CLI — the posture this extension already has for everything else it touches. `commandLine` appears in the typed client **only as an input to `connectorAddMcp`**; no status, result, or notification type returns it, so there is nothing to render | a client release that returns `commandLine` from `connectorListStatus` or `connectorStatus` | S |
 
 ---

@@ -278,23 +278,26 @@ describe("running a workflow", () => {
   // Check 3. The whole point: every string this surface shows about a cancel
   // must say the in-flight step finished, not that the run stopped instantly.
   //
-  // THIS CASE FAILS TODAY, and the failure is the surface's, not the spec's.
-  // What it found, in a real window: after `workflow.run` goes out, the run
-  // throws
+  // THIS CASE FAILED when it was written, and the failure was the surface's,
+  // not the spec's. The fix shipped in the same PR (#100, 0.17.1):
+  // runWithCancellableProgress now forwards withProgress's SECOND argument, and
+  // the last recorded local run of this suite (2026-08-18) passed 23 of 23.
+  // What it found, in a real window before that fix: after `workflow.run` went
+  // out, the run threw
   //     Nimbus: workflow nightly-triage failed — o.onCancellationRequested is
   //     not a function
-  // because `src/extension.ts`'s runWithCancellableProgress hands `body`
+  // because `src/extension.ts`'s runWithCancellableProgress handed `body`
   // straight to vscode.window.withProgress, whose task is invoked as
-  // `task(progress, token)` — so the run surface's `token` is really the
-  // Progress object. Every run (dry or real) dies there: no report tab, no
-  // outcome message, and workflow.cancel never reaches the Gateway. The
-  // `vscode` seam types the task as taking the token alone
+  // `task(progress, token)` — so the run surface's `token` was really the
+  // Progress object. Every run (dry or real) died there: no report tab, no
+  // outcome message, and workflow.cancel never reached the Gateway. The
+  // `vscode` seam typed the task as taking the token alone
   // (src/vscode-shim.ts's WindowLike), activate() casts `vscode.window as
-  // unknown as WindowApi`, and the unit stubs call `task(token)` — which is
-  // why nothing below the UI level could ever have caught it.
+  // unknown as WindowApi`, and the unit stubs called `task(token)` — which is
+  // why nothing below the UI level could have caught it.
   //
-  // Left asserting the correct behaviour on purpose. Once the seam passes the
-  // real token, this case is what says so.
+  // Left asserting the correct behaviour on purpose: if the seam ever stops
+  // passing the real token, this case is what says so.
   it("says cancellation lands at the next step boundary — outcome, report and run log", async () => {
     await pickWorkflow("Nimbus: Run Workflow", NIGHTLY_TRIAGE.name);
     await (await waitForModal()).pushButton("Send");

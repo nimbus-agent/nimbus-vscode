@@ -39,8 +39,10 @@ import { classifyRepositories, findRepoByRoot, repoLabel } from "./repo-select.j
 import { buildReviewDocument, buildReviewPrompt, type ReviewCoverage } from "./review.js";
 
 export interface ScmClientLike {
-  // The third argument is the guardrail: the raw NimbusClient does not satisfy
-  // this shape, so only a wrapper from src/egress/gated-client.ts fits here.
+  // The third argument documents the intent — only a wrapper from
+  // src/egress/gated-client.ts belongs here — but it does not enforce it: a raw
+  // NimbusClient still satisfies this shape, since TypeScript accepts a function
+  // with fewer parameters. test/unit/egress-choke-point.test.ts is the guard.
   agentInvoke(
     input: string,
     opts: { stream: boolean; agent?: string },

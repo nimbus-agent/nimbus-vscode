@@ -3,10 +3,11 @@ import { errMsg } from "../logging.js";
 import { oneShotInvokeOptions } from "../quick-ask.js";
 import { normalizeInline, parseRankedItem } from "../search.js";
 
-// The client slice the LM tools need. The `meta` argument is the guardrail: the
-// raw NimbusClient no longer satisfies this shape, so only a wrapper from
-// src/egress/gated-client.ts fits. Kept minimal so the pure handlers stay
-// trivially fakeable.
+// The client slice the LM tools need. The `meta` argument documents that only a
+// wrapper from src/egress/gated-client.ts belongs here, but does not enforce it:
+// a raw NimbusClient still satisfies this shape, since TypeScript accepts a
+// function with fewer parameters — test/unit/egress-choke-point.test.ts is the
+// guard. Kept minimal so the pure handlers stay trivially fakeable.
 export interface LmToolsClientLike {
   searchRanked(params: { name: string; limit?: number }): Promise<unknown[]>;
   agentInvoke(

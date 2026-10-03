@@ -65,9 +65,10 @@ async function adaptRequest(
     const sel = readActiveSelection();
     if (sel !== undefined) req.selection = sel;
   } else {
-    // By design (spec decision #5): slash commands read the active selection; only
-    // free-form turns pull in #file references. A slash command issued with #file
-    // refs intentionally ignores them.
+    // By design (decision #5 of the deleted participant design,
+    // `git show 36b4227:docs/superpowers/specs/2026-07-18-chat-participant-design.md`):
+    // slash commands read the active selection; only free-form turns pull in #file
+    // references. A slash command issued with #file refs intentionally ignores them.
     req.attachments = await resolveReferences(request.references, log);
   }
   return req;

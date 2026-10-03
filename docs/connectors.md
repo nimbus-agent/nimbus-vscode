@@ -218,8 +218,9 @@ of implying the action was called off.
 
 Against **Gateway 7.1.0 with `@nimbus-dev/client` 0.17.0, the consent request
 never reaches the editor at all**, so none of the three gated calls can be
-approved or denied from VS Code. Established on the wire during the F5 pass of
-2026-09-01:
+approved or denied from VS Code. The client pinned today, 0.18.0, has not
+changed this: its `subscribeHitl` still registers on `agent.hitlBatch`.
+Established on the wire during the F5 pass of 2026-09-01:
 
 - The Gateway emits the consent request as a `consent.request` notification.
 - The client's `subscribeHitl` registers its handler on `agent.hitlBatch`.
