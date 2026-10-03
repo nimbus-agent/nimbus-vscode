@@ -693,19 +693,26 @@ describe("createController", () => {
     expect(first?.sections?.map((s) => s.id)).toEqual(["problems", "blame"]);
   });
 
-  test("a local signal that throws renders an error row in the first render", async () => {
+  // Both shapes a failure can take. The shipped local collectors answer
+  // synchronously, so for them it is a throw rather than a rejection — and it
+  // must land in the same error row, never escape collect() and cost the render.
+  test.each([
+    {
+      shape: "rejects",
+      collect: async (): Promise<SignalSection> => {
+        throw new Error("local exploded");
+      },
+    },
+    {
+      shape: "throws synchronously",
+      collect: (): SignalSection => {
+        throw new Error("local exploded");
+      },
+    },
+  ])("a local signal that $shape renders an error row in the first render", async ({ collect }) => {
     const posted: Array<{ type: string; sections?: SignalSection[] }> = [];
     const controller = createController({
-      signals: [
-        {
-          id: "problems",
-          needsGateway: false,
-          collect: async () => {
-            throw new Error("local exploded");
-          },
-          cacheKey: () => undefined,
-        },
-      ],
+      signals: [{ id: "problems", needsGateway: false, collect, cacheKey: () => undefined }],
       signalDeps: {
         client: () => undefined,
         now: () => 0,

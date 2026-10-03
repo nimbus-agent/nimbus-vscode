@@ -312,6 +312,20 @@ describe("priorOccurrences", () => {
     await cmds.priorOccurrences({ nope: true });
     expect(deps.search).not.toHaveBeenCalled();
   });
+
+  // This body is synchronous, so its failure is a throw rather than a
+  // rejection: contain() must report it like any other, not let it escape.
+  test("reports a search that throws once, without escaping as a rejection", async () => {
+    const search = vi.fn((): void => {
+      throw new Error("picker unavailable");
+    });
+    const { cmds, deps } = harness({ search });
+    await expect(cmds.priorOccurrences(arg)).resolves.toBeUndefined();
+    expect(deps.window.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(deps.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("picker unavailable"),
+    );
+  });
 });
 
 describe("argument narrowing", () => {
