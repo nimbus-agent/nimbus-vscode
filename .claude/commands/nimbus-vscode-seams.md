@@ -293,7 +293,11 @@ Full runbook is `docs/releasing.md`. The parts that bite:
   only cause a spurious warning — a live probe is never softened by a date.
 - The GitLab warm-standby mirror (`.gitlab-ci.yml`) carries an
   `apt-get install git` step that is load-bearing: `oven/bun` ships without git,
-  and biome's `vcs.useIgnoreFile: true` then scans `node_modules`.
+  and biome's `vcs.useIgnoreFile: true` then scans `node_modules`. The
+  `.bun-cache/` entry in `.gitignore` is load-bearing the same way: the job's
+  `BUN_INSTALL_CACHE_DIR` has to sit inside the project for GitLab to cache it,
+  and without the entry `bun run lint` checks every cached package (reproduced:
+  7,520 files and 40k errors instead of 257 files).
 
 ## Coupled sites — change one, change all
 

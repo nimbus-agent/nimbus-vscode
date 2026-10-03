@@ -8,6 +8,9 @@ stages:
   - verify
 
 # bun's global cache keyed on the lockfile — restored across jobs/pipelines.
+# It has to live inside the project directory to be cached, which is why
+# .gitignore lists it: biome's vcs.useIgnoreFile is what keeps `bun run lint`
+# from scanning the cached packages.
 cache:
   key:
     files:
