@@ -6,6 +6,9 @@ these commands see [architecture.md](./architecture.md).
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+ (package manager + test runner)
+- [Node.js](https://nodejs.org) 22.12+ — the scripts run on it, Vitest included (`bunx` honours
+  its `node` shebang): Vitest 5 requires 22.12+, and on Bun's own runtime its jsdom
+  environment fails to start
 - VS Code 1.95+ (to run the Extension Development Host — matches `engines.vscode` in `package.json`)
 - A running [Nimbus Gateway](https://nimbus-agent.dev/user-guide/install/) for manual testing
   (Ask/Search need a Gateway to talk to over IPC)
@@ -81,7 +84,7 @@ A follow-up will wire CI back up once a workaround is verified against a real
 run.
 
 **What it does not cover:** the `@nimbus` chat participant — including
-`/blast`'s basename redaction — because ExTester 8.23.0 ships no Chat-view
+`/blast`'s basename redaction — because ExTester 8.28.0 ships no Chat-view
 page object; VS Code's built-in Chat view is reachable only by typing into
 it, which the harness's page-objects-only rules can't drive. That surface
 stays manual-only (see the `verify-extension` skill) and is proven at the

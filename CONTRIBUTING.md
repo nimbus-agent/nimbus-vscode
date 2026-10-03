@@ -25,6 +25,9 @@ be posted publicly anywhere: follow [SECURITY.md](./SECURITY.md).
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+
+- [Node.js](https://nodejs.org) 22.12+ — the scripts run on it, Vitest included
+  (`bunx` honours its `node` shebang): Vitest 5 requires 22.12+, and on Bun's
+  own runtime its jsdom environment fails to start
 - VS Code 1.95+ (for running the extension host — matches `engines.vscode`)
 - A running [Nimbus Gateway](https://nimbus-agent.dev/user-guide/install/) for manual testing
 
@@ -104,8 +107,10 @@ A range bump is not the whole job for these:
   `engines.vscode` floor let code compile against APIs the oldest supported
   VS Code lacks. `vsce package` rejects a declared `@types/vscode` range whose
   major.minor is newer than `engines.vscode`, but it reads the range in
-  `package.json`, not the version `bun.lock` resolved — check that too. Raise
-  the two together, deliberately, never as part of a bulk update.
+  `package.json`, not the version `bun.lock` resolved — check that too. That is
+  why the range is a tilde on the floor's minor (`~1.95.0`): a caret let the
+  lockfile resolve 1.125.0. Raise the two together, deliberately, never as
+  part of a bulk update.
 - **The UI-test harness** — `vscode-extension-tester` (pinned exactly),
   `mocha`, `chai` and their `@types`. CI typechecks `test/ui/` but never runs
   it, so after bumping any of them run `bun run test:ui` yourself (see
@@ -113,7 +118,9 @@ A range bump is not the whole job for these:
 - **GitHub Actions** — third-party actions are pinned by full commit SHA with
   the version in a trailing comment (`@<sha> # v7.0.0`); update the two
   together. Bun is pinned in two places that move together: the workflows'
-  `bun-version` input and the `oven/bun` image in `.gitlab-ci.yml`.
+  `bun-version` input and the `npm install -g bun@…` line in `.gitlab-ci.yml`.
+  That job runs on a `node:` image rather than `oven/bun`, matching the Node
+  the GitHub runners ship, because Vitest needs a real Node.
 
 ## Releases
 

@@ -291,13 +291,17 @@ Full runbook is `docs/releasing.md`. The parts that bite:
   the source of truth is `scripts/release/credential-registry.ts` in
   `nimbus-agent/Nimbus`. Update the registry first, the mirror second. Drift can
   only cause a spurious warning — a live probe is never softened by a date.
-- The GitLab warm-standby mirror (`.gitlab-ci.yml`) carries an
-  `apt-get install git` step that is load-bearing: `oven/bun` ships without git,
-  and biome's `vcs.useIgnoreFile: true` then scans `node_modules`. The
-  `.bun-cache/` entry in `.gitignore` is load-bearing the same way: the job's
-  `BUN_INSTALL_CACHE_DIR` has to sit inside the project for GitLab to cache it,
-  and without the entry `bun run lint` checks every cached package (reproduced:
-  7,520 files and 40k errors instead of 257 files).
+- The GitLab warm-standby mirror (`.gitlab-ci.yml`) runs on a `node:` image
+  with Bun npm-installed on top, not on `oven/bun`, whose only `node` is a
+  fallback symlink to Bun: `bunx vitest run` honours vitest's `node` shebang,
+  and on the Bun runtime Vitest 5's jsdom environment fails to start (the four
+  `@vitest-environment jsdom` files die with an `EventTarget` error). Two things
+  there are load-bearing for biome's `vcs.useIgnoreFile: true`: git, which ships
+  with the `node:` image (without it biome scans `node_modules`), and the
+  `.bun-cache/` entry in `.gitignore` — the job's `BUN_INSTALL_CACHE_DIR` has to
+  sit inside the project for GitLab to cache it, and without the entry
+  `bun run lint` checks every cached package (reproduced: 7,520 files and 40k
+  errors instead of 257 files).
 
 ## Coupled sites — change one, change all
 
