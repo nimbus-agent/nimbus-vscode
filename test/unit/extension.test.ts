@@ -1124,7 +1124,7 @@ describe("activateWithDeps", () => {
     expect(items.some((i) => i.label === "$(database) Q3 Deck")).toBe(true);
   });
 
-  // Degraded state the spec's table requires: "searchRanked throws while
+  // Degraded state the attach design requires: "searchRanked throws while
   // picking → the picker shows files only, with a row explaining the index
   // is unavailable." Before this fix, a thrown searchRanked only produced a
   // `log.warn` — a user with the Gateway down saw a files-only picker

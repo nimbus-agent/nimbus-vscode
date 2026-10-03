@@ -35,7 +35,8 @@ export const NEEDS_GATEWAY = "Needs the Nimbus Gateway.";
  * The two Gateway calls this panel makes, and nothing else. A narrow structural
  * seam rather than the whole client: these modules stay pure and unit-testable,
  * and the surface a collector can reach is visible in one place. Both calls
- * reach no model — see the plan's Global Constraints.
+ * reach no model, which is why the panel sits outside the egress gate — see
+ * docs/architecture.md (the src/context/ row and "The src/context/ cadence").
  */
 export interface ContextClientLike {
   agentsWhyPeek(p: { ref: string; line?: number }): Promise<WhyPeek>;

@@ -63,6 +63,13 @@ the command palette, or right-click a selection → *Ask About Selection* /
 - Extension-host logs go to the **Nimbus** output channel
   ([`src/logging.ts`](../src/logging.ts)) — set `nimbus.logLevel` to `debug` for
   the most detail. See [settings.md](./settings.md).
+- To judge anything about layout — which views open collapsed, how tall the
+  Context view is — launch with a throwaway profile directory
+  (`code --extensionDevelopmentPath=. --user-data-dir <empty temp dir> .`).
+  `--profile <name>` is not a clean slate: it carries the view state VS Code
+  stored on earlier runs, and a stored layout overrides every manifest default.
+  The context panel's height checks were misread this way, under `--profile`,
+  until a clean `--user-data-dir` settled them.
 
 ## UI tests
 

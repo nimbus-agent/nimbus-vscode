@@ -180,7 +180,7 @@ export function registerContextView(deps: {
     );
   };
 
-  // One debouncer per event source, at the spec's tiers. Becoming visible and
+  // One debouncer per event source, at debounce.ts's tiers. Becoming visible and
   // the webview's ready handshake collect immediately: both are single events
   // the user is waiting on, not bursts.
   const onSelection = createDebouncer(DEBOUNCE_MS.selection, recollect);
@@ -196,7 +196,7 @@ export function registerContextView(deps: {
   // path:line, with no mention of HEAD — so without this the panel would keep
   // reporting the pre-commit author and sha for every line already visited.
   // (Carrying HEAD on GitSummary and folding it into blame's key is the
-  // narrower fix; it is a seam change, deferred to PR 3.)
+  // narrower fix; it is a seam change, and has not been made.)
   const onGit = createDebouncer(DEBOUNCE_MS.editor, () => {
     controller.invalidateAll();
     recollect();

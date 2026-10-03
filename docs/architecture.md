@@ -92,7 +92,7 @@ code paths without a running editor — including, where it is worth it, a
 | `src/extension.ts` | Activation entry: registers commands, wires the connection manager, status bar, and HITL router. |
 | `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free, over shared helpers in `parse-helpers.ts` (`nodePayload`, which digs a row's payload out of a tree node — remembering that `typeof null === "object"` — and `parseAll`, the filter-map that drops unparseable rows) and one `NOT_CONNECTED_ROW` exported from `tree-view.ts`, so "not connected" cannot come to mean two different things in two panels of the same sidebar. `tree-view.ts`'s `createDataView` is also what `src/connectors/connectors-view.ts` builds on, for the eighth container view, Connectors — Workflows and Connectors are the two views with lazily-loaded children (`loadChildren`), because eager children would cost one round trip per row on every open. |
 | `src/workflows/` | The run surface: pure `run.ts` (pre-flight manifest, outcome wording, run report) plus `commands.ts`, which holds the injected seams. The run is gated under the `"workflow"` kind; `workflowCancel` is deliberately **not** gated, since it stops egress rather than causing any. |
-| `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). Attachments live here too: `attachments.ts` is the pure, `vscode`-free core — the `Attachment` union (`file` / `selection` / `index`), refusal precedence (secret beats non-textual beats too-large), line-boundary clamping, and `buildAttachedContext`, the single traversal that produces both the prompt blocks and the chips from one pass — the property that lets Ask keep recording instead of prompting (see the egress section below). `attachment-paths.ts` converts between the repo-relative paths chips and block headers show and the absolute paths the `vscode` shim reads by, and checks workspace containment. `attachment-cache.ts` is the synchronous read cache behind it: files are primed into the cache when attached and re-primed for every currently-attached file immediately before each send — resolution happens **at send, not at attach**, so a file edited after attaching sends what's on screen now, while a `selection` attachment's text was already captured at attach and is never re-read. |
+| `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). Attachments live here too: `attachments.ts` is the pure, `vscode`-free core — the `Attachment` union (`file` / `selection` / `index`), refusal precedence (secret — decided from the path alone, before the assembler reads a byte — then unreadable or empty, then binary, then over budget), the budgets (64,000 characters per attachment and 200,000 per turn; without the turn ceiling, ten attachments at the per-file one would send 640,000), line-boundary clamping, and `buildAttachedContext`, the single traversal that produces both the prompt blocks and the chips from one pass — the property that lets Ask keep recording instead of prompting (see the egress section below). `attachment-paths.ts` converts between the repo-relative paths chips and block headers show and the absolute paths the `vscode` shim reads by, and checks workspace containment. `attachment-cache.ts` is the synchronous read cache behind it: files are primed into the cache when attached and re-primed for every currently-attached file immediately before each send — resolution happens **at send, not at attach**, so a file edited after attaching sends what's on screen now, while a `selection` attachment's text was already captured at attach and is never re-read (a stored range drifts under edits, so the range travels as provenance only). Reuse from the SCM trio is deliberately narrow: `attachments.ts` borrows `isSecretPath` from `src/scm/diff.ts` and nothing else, since the budgeting helpers there are diff-shaped (hunks, `{path, diff}` entries) and mean nothing for a continuous file. |
 | `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. |
 | `src/lm-tools/` | The `nimbus_search` / `nimbus_ask` Language Model tools (`contributes.languageModelTools`): pure `lm-tools.ts` handlers + the `real-lm-tools.ts` vscode-glue adapter. |
 | `src/search.ts` | Pure parse/rank helpers behind Search and Find related (`searchRanked` results → Quick Pick items). |
@@ -134,7 +134,7 @@ truth:
 | Built-in briefs (6 commands) | `brief` | `agents*` | **prompts** — extension derives the parameters from the editor |
 | Workflow run / dry run | `workflow` | `workflowRunStream` | **prompts** — and its preview is a **manifest**, not the literal bytes: the extension sends a workflow name and the Gateway expands the saved steps, so `buildRunManifest` states that in its omissions rather than implying byte-exactness |
 | Diagnostic actions (explain, fix) | `diagnostic` | `agentInvoke` | **prompts** — extension assembles the snippet around the squiggle |
-| Ask panel | `ask` | `askStream` | routes and records; no prompt — the user typed it. Attachments (`src/chat/attachments.ts`) widen what actually goes out, but not the exemption's premise: the composer's chips are themselves a standing preview, accurate because `buildAttachedContext` is the one traversal that produces both the sent blocks and the chips, guarded by a test that fails if they could ever diverge. The `EgressKind` count stays at **eight** |
+| Ask panel | `ask` | `askStream` | routes and records; no prompt — the user typed it. Attachments (`src/chat/attachments.ts`) widen what actually goes out, but not the exemption's premise: the composer's chips are themselves a standing preview, accurate because `buildAttachedContext` is the one traversal that produces both the sent blocks and the chips, guarded by a test that fails if they could ever diverge. The `EgressKind` count stays at **eight** — and if that property ever fails, Ask must start prompting under a ninth kind rather than keep the exemption |
 | `@nimbus` participant (incl. its 3 ops briefs) | `participant` | `askStream`, `agents*` | routes and records; no prompt — a modal must not interrupt a chat turn, and a slash-command argument is text the user just typed |
 | LM tools (`nimbus_ask`) | `lmTool` | `agentInvoke` | native `prepareInvocation` card, rendered inline by the *calling* chat |
 
@@ -210,6 +210,56 @@ of a combined diff — there is no unified-diff parser anywhere in `src/scm/`.
 Output is always a suggestion (the SCM input box, an untitled buffer, a
 read-only tab, or a diff view); the extension never writes to disk and never
 applies a `WorkspaceEdit`.
+
+## The `src/context/` cadence
+
+The ambient context panel talks to the Gateway with no user action, so what it
+collects, and when, is the design. The decisions below are what keeps an
+always-on panel cheap and correct, and the alternatives that were weighed and
+dropped:
+
+- **Visibility is the master switch.** While the view is hidden nothing is
+  collected; becoming visible collects once. Window focus is deliberately not a
+  second pause condition: collection is driven by events, and an unfocused
+  window fires no editor, selection or diagnostic events, so there is nothing to
+  suppress.
+- **Debounce per event source** (`debounce.ts`): selection 300 ms, active
+  editor 150 ms (tab cycling), diagnostics 500 ms (a language server re-lints in
+  bursts); git changes ride the editor tier, because the git extension fires on
+  every working-tree update while the user types.
+- **Cache keys follow what each RPC depends on.** Blame keys on `path:line`, so
+  moving within a line, or scrolling (which fires no cursor event), costs
+  nothing; Related keys on the path plus the selection, already clamped to the
+  300-character index-query limit (`NORMALIZED_QUERY_MAX_CHARS`) rather than the
+  50,000-character model-context one, since it is an index query. Local signals
+  are never cached. The LRU holds 50 entries per signal — a starting figure,
+  never measured.
+- **Invalidation is by event, never by timer.** Save drops that path's entries;
+  a git change drops everything, because a commit or a branch switch changes
+  blame for lines already visited; any connection change clears everything and
+  re-collects while visible, so losing the Gateway replaces stale answers
+  instead of leaving them looking current. Deliberately **not** a trigger:
+  `onDidChangeTextDocument`. Document `version` is in no cache key either —
+  blame answers about committed content, so a per-keystroke refetch would cost
+  an RPC at every cursor rest and return the same answer. A dirty file gets a
+  banner saying its history may not line up instead, and blame is not
+  suppressed for it, exactly as the hover behaves.
+- **Gateway-backed sections post one by one** as they resolve (the local ones
+  ride the first render), fenced by a generation counter so a slow reply about a
+  line the cursor has left is dropped; a collector that throws renders an error
+  row in its own section and nowhere else.
+- **Related excludes the open file by an exact match** of the item's
+  `rawMeta.file` against the file's repo-relative path (and its
+  workspace-relative one), then de-duplicates. A suffix match was tried and
+  rejected: it also drops a different file sharing a directory-aligned tail
+  (`packages/service-b/src/index.ts` against an open `src/index.ts`). An index
+  holding several checkouts of one repository, git worktrees included,
+  legitimately shows one row per checkout.
+- **Height is VS Code's decision, not the manifest's.** `initialSize` and
+  `visibility: "collapsed"` were added and measured inert on clean
+  `--user-data-dir` profiles, then reverted: a webview view placed first in its
+  container already opens at full height, and no manifest default can rewrite a
+  layout a profile has already stored.
 
 ## Conventions
 

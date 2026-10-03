@@ -24,7 +24,7 @@ export interface ResolvedAttachment {
   readonly attachment: Attachment;
   /** Primary chip text: the path, or the index item's name. */
   readonly label: string;
-  /** Secondary chip text: what happened, in the vocabulary the spec fixes. */
+  /** Secondary chip text: what happened, in the fixed chip vocabulary. */
   readonly detail: string;
   readonly outcome: AttachmentOutcome;
   /** The exact body this attachment contributes. Absent when refused. */
@@ -173,7 +173,7 @@ function budgetedBody(a: Attachment, raw: string, remaining: number): string | u
   return body.length === 0 ? undefined : body;
 }
 
-// One attachment's verdict, decided in the order the spec fixes: secret, then
+// One attachment's verdict, decided in a fixed order: secret, then
 // unreadable, then non-textual, then budget. `remaining` is what is left of the
 // turn budget when this attachment's turn comes.
 function resolveAttachment(

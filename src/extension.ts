@@ -432,8 +432,8 @@ export function activateWithDeps(
   // refreshed before each send. Priming at attach is not an optimisation: the
   // controller renders provisional chips the moment attach() is called, and an
   // unprimed cache would render a perfectly good file as "unreadable · not
-  // sent". The spec's own wording ("about 4 KB, measured when attached")
-  // requires a real measurement at attach time. The cache logic itself lives
+  // sent". A provisional chip shows an estimated size from the moment a file
+  // is attached, which needs a real measurement then. The cache logic itself lives
   // in attachment-cache.ts, pure and unit-tested with an injected
   // openTextDocument — nothing here but the vscode-facing wiring.
   const attachmentCache = createAttachmentCache({
@@ -629,7 +629,7 @@ export function activateWithDeps(
   //
   // A non-selectable status row (mirroring `statusPick` in search.ts —
   // selectable in the QuickPick's own terms, but a no-op in the handler
-  // below) covers the two degraded states the spec calls out: no Gateway
+  // below) covers the two degraded states the attach design names: no Gateway
   // connection, or a `searchRanked` that throws. Both leave the picker
   // showing files only; without this row that looks identical to "the index
   // has nothing for this workspace", which is a different and much less

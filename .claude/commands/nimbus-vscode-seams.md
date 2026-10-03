@@ -52,9 +52,9 @@ instruction. Taken literally all five were false, and following them sent you
 refactoring code that was already correct. **All five were corrected
 together** in the quality sweep; if you find a sixth restatement, correct it too
 rather than half the set — the remaining copies keep sending the next reader the
-same way. (`docs/superpowers/plans|specs/` still carry the old wording and are
-left alone on purpose: those are dated records of what a plan said at the time,
-not live guidance.)
+same way. (The dated design specs and plans that also carried the old wording
+were deleted once their work shipped; git history keeps them, and they are not
+live guidance.)
 
 The real shape, which is what the five now say:
 
