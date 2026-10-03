@@ -1,3 +1,4 @@
+import { redactPath } from "../quick-ask.js";
 import { isSecretPath } from "../scm/diff.js";
 
 /**
@@ -77,17 +78,11 @@ function isAbsolutePath(path: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("/") || path.startsWith("\\\\");
 }
 
-function basename(path: string): string {
-  const normalized = path.replaceAll("\\", "/");
-  const idx = normalized.lastIndexOf("/");
-  return idx < 0 ? normalized : normalized.slice(idx + 1);
-}
-
 // What a `file`/`selection` attachment shows: the repo-relative path as-is,
 // or just the basename when it is an absolute path the workspace root could
-// not account for.
+// not account for — reduced by the same redactPath those other surfaces use.
 function displayPath(path: string): string {
-  return isAbsolutePath(path) ? basename(path) : path;
+  return isAbsolutePath(path) ? redactPath(path) : path;
 }
 
 function labelOf(a: Attachment): string {

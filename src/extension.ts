@@ -67,9 +67,10 @@ import { createLogger, errMsg, type Logger } from "./logging.js";
 import {
   buildQuickAskPrompt,
   clampContext,
-  extractReply,
+  oneShotInvokeOptions,
   QUICK_ASK_MAX_CONTEXT_CHARS,
   redactPath,
+  replyOrNotify,
   validateQuestion,
 } from "./quick-ask.js";
 import { filePresetsFor, type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
@@ -1174,12 +1175,21 @@ export function activateWithDeps(
     await ctl.start(input.trim());
   });
 
-  register("nimbus.askAboutSelection", async () => {
+  // Ask, Search and Attach Selection all act on the editor's selection, and
+  // refuse the same way when there is none to act on.
+  const SELECT_TEXT_FIRST = "Nimbus: select text first.";
+  const selectionEditor = (): TextEditorLike | undefined => {
     const editor = deps.window.activeTextEditor;
     if (editor === undefined || editor.selection.isEmpty) {
-      void deps.window.showErrorMessage("Nimbus: select text first.");
-      return;
+      void deps.window.showErrorMessage(SELECT_TEXT_FIRST);
+      return undefined;
     }
+    return editor;
+  };
+
+  register("nimbus.askAboutSelection", async () => {
+    const editor = selectionEditor();
+    if (editor === undefined) return;
     const selection = editor.document.getText(editor.selection);
     const trimmed = typeof selection === "string" ? selection.trim() : "";
     if (trimmed.length === 0) return;
@@ -1300,11 +1310,8 @@ export function activateWithDeps(
   });
 
   register("nimbus.searchSelection", () => {
-    const editor = deps.window.activeTextEditor;
-    if (editor === undefined || editor.selection.isEmpty) {
-      void deps.window.showErrorMessage("Nimbus: select text first.");
-      return;
-    }
+    const editor = selectionEditor();
+    if (editor === undefined) return;
     runSearch(editor.document.getText(editor.selection));
   });
 
@@ -1335,11 +1342,8 @@ export function activateWithDeps(
   register("nimbus.attachContext", () => attachPicker());
 
   register("nimbus.attachSelectionToAsk", () => {
-    const editor = deps.window.activeTextEditor;
-    if (editor === undefined || editor.selection.isEmpty) {
-      void deps.window.showErrorMessage("Nimbus: select text first.");
-      return;
-    }
+    const editor = selectionEditor();
+    if (editor === undefined) return;
     // Captured NOW: a stored range drifts under edits, and the assembler wants
     // the text as it looked at attach time, not a pointer that can go stale.
     const text = editor.document.getText(editor.selection);
@@ -1347,7 +1351,7 @@ export function activateWithDeps(
     // selection is not usefully "selected text" either, and a silent no-op
     // here would look identical to the command doing nothing at all.
     if (text.trim().length === 0) {
-      void deps.window.showErrorMessage("Nimbus: select text first.");
+      void deps.window.showErrorMessage(SELECT_TEXT_FIRST);
       return;
     }
     const ctl = ensureChatController();
@@ -1499,9 +1503,7 @@ export function activateWithDeps(
       languageId: editor.document.languageId,
       truncated,
     });
-    const agent = settings.askAgent();
-    const options: { stream: boolean; agent?: string } = { stream: false };
-    if (agent.length > 0) options.agent = agent;
+    const options = oneShotInvokeOptions(settings.askAgent());
     try {
       const invoke = gateRawAgentInvoke(client, egressGate, "quickAsk", runWithProgress);
       const result = await invoke(
@@ -1521,11 +1523,8 @@ export function activateWithDeps(
         },
         "Nimbus: asking…",
       );
-      const reply = extractReply(result);
-      if (reply === undefined) {
-        void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
-        return;
-      }
+      const reply = replyOrNotify(result, deps.window);
+      if (reply === undefined) return;
       await openReadonlyJson("Nimbus reply.md", reply);
     } catch (e) {
       // Cancelling at the preview is a normal outcome, like dismissing the

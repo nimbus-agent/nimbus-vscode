@@ -3,9 +3,11 @@ import type { EgressFile, EgressMeta } from "../egress/preflight.js";
 import { errMsg, type Logger } from "../logging.js";
 import {
   clampContext,
-  extractReply,
+  NO_REPLY_NOTICE,
+  oneShotInvokeOptions,
   QUICK_ASK_MAX_CONTEXT_CHARS,
   redactPath,
+  replyOrNotify,
 } from "../quick-ask.js";
 import type { WindowApi } from "../vscode-shim.js";
 import {
@@ -235,6 +237,23 @@ const REVIEW_NOTHING_REVIEWABLE_DETAIL: Record<NothingReviewableReason, string> 
   "too-large": "the changed diff is too large to review",
 };
 
+// What the two editor-context commands (Generate Tests/Docstrings) read from
+// the active editor before sending anything.
+interface EditorCodeContext {
+  code: string;
+  truncated: boolean;
+  fullText: string;
+  fileName: string;
+  languageId: string;
+  hasSelection: boolean;
+  // Captured by readEditorContext (t0), not by the caller after the agent call
+  // (t1): agentInvoke is uncancellable and can run for seconds, during which
+  // the user can move the cursor, change the selection, or switch files.
+  // Reading offsets afterwards would risk splicing a stale (or altogether
+  // different-document) range into this fullText.
+  selectionOffsets: { start: number; end: number } | undefined;
+}
+
 export function createScmCommands(deps: ScmCommandDeps): {
   generateCommitMessage(): Promise<void>;
   reviewChanges(): Promise<void>;
@@ -321,38 +340,17 @@ export function createScmCommands(deps: ScmCommandDeps): {
     title: string,
     meta: EgressMeta,
   ): Promise<string | undefined> => {
-    const agent = deps.agent();
-    const options: { stream: boolean; agent?: string } = { stream: false };
-    if (agent.length > 0) options.agent = agent;
+    const options = oneShotInvokeOptions(deps.agent());
     deps.log.debug(`scm: sending ${prompt.length} chars to agentInvoke`);
     // The seam owns the progress indicator so it can hold it back until the
     // pre-flight gate has cleared the send.
     const result = await client.agentInvoke(prompt, options, meta, title);
-    const reply = extractReply(result);
-    if (reply === undefined) {
-      void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
-    }
-    return reply;
+    return replyOrNotify(result, deps.window);
   };
 
   // Selection when there is one, whole file otherwise — the same rule Quick Ask
   // uses. Paths we add are always redacted to a basename.
-  const readEditorContext = ():
-    | {
-        code: string;
-        truncated: boolean;
-        fullText: string;
-        fileName: string;
-        languageId: string;
-        hasSelection: boolean;
-        // Captured here (t0), not by the caller after the agent call (t1):
-        // agentInvoke is uncancellable and can run for seconds, during which
-        // the user can move the cursor, change the selection, or switch
-        // files. Reading offsets afterwards would risk splicing a stale (or
-        // altogether different-document) range into this fullText.
-        selectionOffsets: { start: number; end: number } | undefined;
-      }
-    | undefined => {
+  const readEditorContext = (): EditorCodeContext | undefined => {
     const editor = deps.window.activeTextEditor;
     if (editor === undefined) {
       void deps.window.showErrorMessage("Nimbus: open a file first.");
@@ -379,6 +377,29 @@ export function createScmCommands(deps: ScmCommandDeps): {
       hasSelection,
       selectionOffsets: hasSelection ? deps.selectionOffsets() : undefined,
     };
+  };
+
+  // Generate Tests and Generate Docstrings send the same thing — the editor's
+  // code, under the same manifest — and differ only in the instruction and in
+  // what they do with the reply. Undefined when there was nothing to send, or
+  // no reply came back (each case already reported to the user).
+  const generateFromEditor = async (
+    buildPrompt: typeof buildTestsPrompt,
+    progressTitle: string,
+    action: string,
+  ): Promise<{ ctx: EditorCodeContext; reply: string } | undefined> => {
+    const ctx = readEditorContext();
+    if (ctx === undefined) return undefined;
+    const client = requireClient();
+    if (client === undefined) return undefined;
+    const prompt = buildPrompt({
+      code: ctx.code,
+      filePath: redactPath(ctx.fileName),
+      languageId: ctx.languageId,
+      ...(ctx.truncated ? { truncated: true } : {}),
+    });
+    const reply = await invoke(client, prompt, progressTitle, editorContextMeta(ctx, action));
+    return reply === undefined ? undefined : { ctx, reply };
   };
 
   return {
@@ -422,7 +443,7 @@ export function createScmCommands(deps: ScmCommandDeps): {
       if (reply === undefined) return;
       let message = sanitizeCommitMessage(reply);
       if (message.length === 0) {
-        void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
+        void deps.window.showInformationMessage(NO_REPLY_NOTICE, {});
         return;
       }
       message = await withEgressTrailer(message, client, deps);
@@ -504,48 +525,27 @@ export function createScmCommands(deps: ScmCommandDeps): {
     }),
 
     generateTests: contain("generateTests", "generate tests", async () => {
-      const ctx = readEditorContext();
-      if (ctx === undefined) return;
-      const client = requireClient();
-      if (client === undefined) return;
-      const prompt = buildTestsPrompt({
-        code: ctx.code,
-        filePath: redactPath(ctx.fileName),
-        languageId: ctx.languageId,
-        ...(ctx.truncated ? { truncated: true } : {}),
-      });
-      const reply = await invoke(
-        client,
-        prompt,
+      const generated = await generateFromEditor(
+        buildTestsPrompt,
         "Nimbus: generating tests…",
-        editorContextMeta(ctx, "Generate Tests"),
+        "Generate Tests",
       );
-      if (reply === undefined) return;
+      if (generated === undefined) return;
       // Untitled: nothing touches disk, and Save presents a location picker.
       await deps.openUntitled({
-        fileName: deriveTestFileName(ctx.fileName),
-        content: extractCode(reply),
+        fileName: deriveTestFileName(generated.ctx.fileName),
+        content: extractCode(generated.reply),
       });
     }),
 
     generateDocstrings: contain("generateDocstrings", "generate docstrings", async () => {
-      const ctx = readEditorContext();
-      if (ctx === undefined) return;
-      const client = requireClient();
-      if (client === undefined) return;
-      const prompt = buildDocstringsPrompt({
-        code: ctx.code,
-        filePath: redactPath(ctx.fileName),
-        languageId: ctx.languageId,
-        ...(ctx.truncated ? { truncated: true } : {}),
-      });
-      const reply = await invoke(
-        client,
-        prompt,
+      const generated = await generateFromEditor(
+        buildDocstringsPrompt,
         "Nimbus: generating docstrings…",
-        editorContextMeta(ctx, "Generate Docstrings"),
+        "Generate Docstrings",
       );
-      if (reply === undefined) return;
+      if (generated === undefined) return;
+      const { ctx, reply } = generated;
       const rewritten = extractCode(reply);
       const offsets = ctx.selectionOffsets;
       // A selection rewrite is spliced back into the full document, so the

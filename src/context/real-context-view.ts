@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import * as vscode from "vscode";
 import { toRelativeRef } from "../briefs/params.js";
 import type { ConnectorHealthSummary } from "../connectors/health.js";
@@ -7,6 +5,7 @@ import { errMsg, type Logger } from "../logging.js";
 import type { GitApiLike, GitRepositoryLike } from "../scm/git-types.js";
 import { repoContaining } from "../scm/repo-select.js";
 import type { SidebarConnection } from "../sidebar/tree-view.js";
+import { renderWebviewDocument } from "../webview-document.js";
 import { createController } from "./controller.js";
 import { createDebouncer, DEBOUNCE_MS } from "./debounce.js";
 import { validateInbound } from "./protocol.js";
@@ -322,25 +321,9 @@ export function registerContextView(deps: {
   return Object.assign(disposable, { recollect });
 }
 
-function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "context.js"));
-  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "context.css"));
-  const nonce = randomUUID().replaceAll("-", "");
-  const csp =
-    `default-src 'none'; ` +
-    `style-src ${webview.cspSource} 'unsafe-inline'; ` +
-    `font-src ${webview.cspSource}; ` +
-    `script-src 'nonce-${nonce}';`;
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="${csp}" />
-<title>Nimbus Context</title>
-<link rel="stylesheet" href="${styleUri.toString()}" />
-</head>
-<body>
-<main id="root">
+// The panel's two mounts inside <main id="root">; webview/main.ts renders into
+// them.
+const CONTEXT_ROOT = `
   <!--
     aria-live is scoped to the informational half only, as real-chat-panel.ts
     scopes it to its own sections. The offers are focusable buttons: a live
@@ -351,8 +334,16 @@ function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
   -->
   <section id="signals" aria-live="polite"></section>
   <section id="offers"></section>
-</main>
-<script nonce="${nonce}" src="${scriptUri.toString()}"></script>
-</body>
-</html>`;
+`;
+
+function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "context.js"));
+  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "context.css"));
+  return renderWebviewDocument({
+    cspSource: webview.cspSource,
+    title: "Nimbus Context",
+    styleUri: styleUri.toString(),
+    scriptUri: scriptUri.toString(),
+    root: CONTEXT_ROOT,
+  });
 }

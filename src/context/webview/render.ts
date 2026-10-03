@@ -1,12 +1,13 @@
+import { escapeHtml } from "../../html-escape.js";
 import type { Offer } from "../offers.js";
 import type { SignalSection } from "../signals.js";
 
 // Pure HTML-string rendering for the context panel.
 //
-// escapeHtml is defined here rather than imported from the chat webview's
-// render module on purpose: that module pulls in marked and DOMPurify, ~20 KB
-// of markdown machinery this panel has no use for, and both bundles ship in the
-// .vsix.
+// escapeHtml comes from the dependency-free src/html-escape.ts, never from the
+// chat webview's render module: that module pulls in marked and DOMPurify,
+// ~20 KB of markdown machinery this panel has no use for, and both bundles ship
+// in the .vsix.
 //
 // No icons are rendered. SignalRow.iconId and Offer.iconId still name a real
 // codicon — the sidebar tree views draw the same ids as ThemeIcons — but a
@@ -14,6 +15,9 @@ import type { SignalSection } from "../signals.js";
 // not. Emitting `<span class="codicon codicon-…">` here produced an empty inline
 // element and a stray flex gap before every label. The ids stay in the data
 // model for whichever PR ships the font.
+
+// The shared escaping, re-exported as part of this renderer's surface.
+export { escapeHtml };
 
 // Shown when nimbus.context.enabled is false. The view deliberately stays in
 // the sidebar when the setting is off, so it has to say why it is empty —
@@ -24,15 +28,6 @@ import type { SignalSection } from "../signals.js";
 // theming for free. No <code> element — styles.css has no rule for one, so it
 // would render in a browser-default font matching nothing else here.
 export const DISABLED_NOTICE = `<p class="empty">Context panel is off — turn on nimbus.context.enabled to use it.</p>`;
-
-export function escapeHtml(text: string): string {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
 
 function renderRow(label: string, detail: string | undefined): string {
   const sub = detail === undefined ? "" : `<span class="detail">${escapeHtml(detail)}</span>`;

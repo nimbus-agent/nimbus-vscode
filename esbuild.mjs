@@ -7,90 +7,50 @@ const isWatch = process.argv.includes("--watch");
 // Local `bun run build --watch` → unminified + sourcemaps for debugging.
 const isDev = isWatch || process.env.NODE_ENV === "development";
 
-const baseExt = {
+// A webview bundle: a browser IIFE exposing `globalName`. Always minified,
+// unlike the extension host bundle — it ships in the .vsix and is reloaded on
+// every panel open.
+const webviewBundle = (globalName, entryPoint, outfile) => ({
   bundle: true,
-  platform: "node",
-  target: "node18",
-  format: "cjs",
+  platform: "browser",
+  target: "es2022",
+  format: "iife",
+  globalName,
   sourcemap: isDev,
-  minify: !isDev,
-  external: ["vscode"],
+  minify: true,
+  treeShaking: true,
+  entryPoints: [entryPoint],
+  outfile,
   logLevel: "info",
-};
+});
+
+// Every bundle the extension ships, each defined ONCE for both build and watch.
+// A new bundle is one entry here — plus its outfile in scripts/clean.mjs and,
+// if it must ship, in the `missing` list of scripts/check-vsix-contents.mjs.
+const bundles = [
+  {
+    bundle: true,
+    platform: "node",
+    target: "node18",
+    format: "cjs",
+    sourcemap: isDev,
+    minify: !isDev,
+    external: ["vscode"],
+    logLevel: "info",
+    entryPoints: ["src/extension.ts"],
+    outfile: "dist/extension.js",
+  },
+  webviewBundle("NimbusWebview", "src/chat/webview/main.ts", "media/webview.js"),
+  webviewBundle("NimbusContextView", "src/context/webview/main.ts", "media/context.js"),
+];
 
 if (isWatch) {
-  const extCtx = await context({
-    ...baseExt,
-    entryPoints: ["src/extension.ts"],
-    outfile: "dist/extension.js",
-  });
-  const webCtx = await context({
-    bundle: true,
-    platform: "browser",
-    target: "es2022",
-    format: "iife",
-    globalName: "NimbusWebview",
-    sourcemap: isDev,
-    // Always minify the Webview bundle — it ships in the .vsix and reloads on
-    // every panel open. ~16 KB marked + ~5 KB our code → ~8 KB minified.
-    minify: true,
-    treeShaking: true,
-    entryPoints: ["src/chat/webview/main.ts"],
-    outfile: "media/webview.js",
-    logLevel: "info",
-  });
-  const ctxCtx = await context({
-    bundle: true,
-    platform: "browser",
-    target: "es2022",
-    format: "iife",
-    globalName: "NimbusContextView",
-    sourcemap: isDev,
-    minify: true,
-    treeShaking: true,
-    entryPoints: ["src/context/webview/main.ts"],
-    outfile: "media/context.js",
-    logLevel: "info",
-  });
-  await extCtx.watch();
-  await webCtx.watch();
-  await ctxCtx.watch();
+  // Every context is created before any of them starts watching.
+  const contexts = [];
+  for (const options of bundles) contexts.push(await context(options));
+  for (const ctx of contexts) await ctx.watch();
 } else {
-  await build({
-    ...baseExt,
-    entryPoints: ["src/extension.ts"],
-    outfile: "dist/extension.js",
-  });
-
-  await build({
-    bundle: true,
-    platform: "browser",
-    target: "es2022",
-    format: "iife",
-    globalName: "NimbusWebview",
-    sourcemap: isDev,
-    // Always minify the Webview bundle — it ships in the .vsix and reloads on
-    // every panel open. ~16 KB marked + ~5 KB our code → ~8 KB minified.
-    minify: true,
-    treeShaking: true,
-    entryPoints: ["src/chat/webview/main.ts"],
-    outfile: "media/webview.js",
-    logLevel: "info",
-  });
-
-  await build({
-    bundle: true,
-    platform: "browser",
-    target: "es2022",
-    format: "iife",
-    globalName: "NimbusContextView",
-    sourcemap: isDev,
-    minify: true,
-    treeShaking: true,
-    entryPoints: ["src/context/webview/main.ts"],
-    outfile: "media/context.js",
-    logLevel: "info",
-  });
+  for (const options of bundles) await build(options);
 }
 
 copyFileSync("src/chat/webview/styles.css", "media/webview.css");

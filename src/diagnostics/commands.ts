@@ -1,7 +1,7 @@
 import { reportCommandFailure } from "../command-failure.js";
 import type { EgressMeta } from "../egress/preflight.js";
 import type { Logger } from "../logging.js";
-import { extractReply, QUICK_ASK_MAX_CONTEXT_CHARS } from "../quick-ask.js";
+import { oneShotInvokeOptions, QUICK_ASK_MAX_CONTEXT_CHARS, replyOrNotify } from "../quick-ask.js";
 import { extractCode, isWholeFileRewrite, spliceSelection } from "../scm/generate.js";
 import type { WindowApi } from "../vscode-shim.js";
 import type { DiagnosticContext } from "./context.js";
@@ -137,15 +137,9 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
     title: string,
     meta: EgressMeta,
   ): Promise<string | undefined> => {
-    const agent = deps.agent();
-    const options: { stream: boolean; agent?: string } = { stream: false };
-    if (agent.length > 0) options.agent = agent;
+    const options = oneShotInvokeOptions(deps.agent());
     deps.log.debug(`diagnostics: sending ${prompt.length} chars to agentInvoke`);
-    const reply = extractReply(await client.agentInvoke(prompt, options, meta, title));
-    if (reply === undefined) {
-      void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
-    }
-    return reply;
+    return replyOrNotify(await client.agentInvoke(prompt, options, meta, title), deps.window);
   };
 
   return {

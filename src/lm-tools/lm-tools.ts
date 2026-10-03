@@ -1,5 +1,6 @@
 import { confirmationMessage, type EgressMeta } from "../egress/preflight.js";
 import { errMsg } from "../logging.js";
+import { oneShotInvokeOptions } from "../quick-ask.js";
 import { normalizeInline, parseRankedItem } from "../search.js";
 
 // The client slice the LM tools need. The `meta` argument is the guardrail: the
@@ -98,16 +99,13 @@ export async function runNimbusAskTool(deps: LmToolsDeps, input: unknown): Promi
   if (question === undefined) return 'Invalid input: "question" (a non-empty string) is required.';
   const client = deps.client();
   if (client === undefined) return NOT_CONNECTED;
-  const agent = deps.askAgent();
+  const options = oneShotInvokeOptions(deps.askAgent());
   try {
-    const result = await client.agentInvoke(
-      question,
-      {
-        stream: false,
-        ...(agent.length > 0 ? { agent } : {}),
-      },
-      { action: ASK_ACTION, files: [], omissions: [] },
-    );
+    const result = await client.agentInvoke(question, options, {
+      action: ASK_ACTION,
+      files: [],
+      omissions: [],
+    });
     return result.reply ?? "(the agent returned no reply)";
   } catch (e) {
     deps.log.warn(`lm-tools: agentInvoke failed: ${errMsg(e)}`);

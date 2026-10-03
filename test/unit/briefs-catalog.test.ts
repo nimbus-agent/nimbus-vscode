@@ -28,6 +28,13 @@ describe("brief catalog", () => {
     for (const c of commands) expect(c.startsWith("nimbus.brief.")).toBe(true);
   });
 
+  // briefs/commands.ts names a brief's command `nimbus.brief.<id>` in its log
+  // lines, and extension.ts registers exactly those ids — so a row whose
+  // command drifted from its id would log and register under different names.
+  test("each command id is nimbus.brief.<its own id>", () => {
+    for (const b of BRIEF_CATALOG) expect(b.command).toBe(`nimbus.brief.${b.id}`);
+  });
+
   test("labels are human sentences, not agent names", () => {
     expect(briefSpec("why").label).toBe("Why is this here?");
     expect(briefSpec("ghost").label).toBe("Who knew this code?");

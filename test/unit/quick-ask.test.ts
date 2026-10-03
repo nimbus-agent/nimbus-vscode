@@ -1,11 +1,14 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 
 import {
   buildQuickAskPrompt,
   clampContext,
   extractReply,
+  NO_REPLY_NOTICE,
+  oneShotInvokeOptions,
   QUICK_ASK_MAX_CONTEXT_CHARS,
   redactPath,
+  replyOrNotify,
   validateQuestion,
 } from "../../src/quick-ask.js";
 
@@ -90,5 +93,37 @@ describe("redactPath", () => {
   });
   test("returns a bare filename unchanged", () => {
     expect(redactPath("a.ts")).toBe("a.ts");
+  });
+});
+
+describe("oneShotInvokeOptions", () => {
+  test("is non-streaming and names the configured agent", () => {
+    expect(oneShotInvokeOptions("ops")).toEqual({ stream: false, agent: "ops" });
+  });
+  // An absent key, not `agent: ""`: a blank setting means "the Gateway's
+  // default", which is exactly what leaving the key out says.
+  test("omits the agent key entirely when the setting is blank", () => {
+    const options = oneShotInvokeOptions("");
+    expect(options).toEqual({ stream: false });
+    expect(Object.keys(options)).toEqual(["stream"]);
+  });
+});
+
+describe("replyOrNotify", () => {
+  const fakeWindow = () => ({ showInformationMessage: vi.fn(async () => undefined) });
+
+  test("returns the trimmed reply and raises nothing", () => {
+    const window = fakeWindow();
+    expect(replyOrNotify({ reply: "  done  " }, window)).toBe("done");
+    expect(window.showInformationMessage).not.toHaveBeenCalled();
+  });
+
+  test("says the agent returned no reply when there is nothing to show", () => {
+    for (const result of [{}, { reply: "   " }, { reply: 7 }, null]) {
+      const window = fakeWindow();
+      expect(replyOrNotify(result, window)).toBeUndefined();
+      expect(window.showInformationMessage).toHaveBeenCalledExactlyOnceWith(NO_REPLY_NOTICE, {});
+    }
+    expect(NO_REPLY_NOTICE).toBe("Nimbus: the agent returned no reply.");
   });
 });
