@@ -250,7 +250,7 @@ export function registerContextView(deps: {
   // runs — subscribing only to what is there at activation is how this trigger
   // ends up never firing at all. Re-attaching on every open also covers a repo
   // closing: its listener is disposed with the rest.
-  // Guards the two async chains below against a teardown that lands while
+  // Guards the two async paths below against a teardown that lands while
   // deps.git() is still pending: without it, a subscription can be created
   // AFTER dispose() has already run and never gets torn down.
   let gitWiringDisposed = false;
@@ -265,26 +265,31 @@ export function registerContextView(deps: {
   };
 
   let openSub: { dispose(): void } | undefined;
-  void deps
-    .git()
-    .then((api) => {
-      const sub = api?.onDidOpenRepository(() => {
-        void attachGitListeners()
-          // Same reasoning as onGit: a repository appearing can change the
-          // branch, the changed-file count and every cached blame answer.
-          .then(() => onGit.trigger())
-          .catch((e: unknown) => deps.log.warn(`context panel git re-attach failed: ${errMsg(e)}`));
-      });
-      if (gitWiringDisposed) {
-        sub?.dispose();
-        return;
-      }
-      openSub = sub;
-      void attachGitListeners().catch((e: unknown) =>
-        deps.log.warn(`context panel git listeners failed: ${errMsg(e)}`),
-      );
-    })
-    .catch((e: unknown) => deps.log.warn(`context panel git init failed: ${errMsg(e)}`));
+  // Awaited in sequence rather than nested inside a then() callback, with each
+  // half still reporting its own failure: resolving the git extension and
+  // subscribing to the repositories it opens later is "init"; the first attach
+  // to the repositories it already has is "listeners".
+  const wireGit = async (): Promise<void> => {
+    const api = await deps.git();
+    const sub = api?.onDidOpenRepository(() => {
+      void attachGitListeners()
+        // Same reasoning as onGit: a repository appearing can change the
+        // branch, the changed-file count and every cached blame answer.
+        .then(() => onGit.trigger())
+        .catch((e: unknown) => deps.log.warn(`context panel git re-attach failed: ${errMsg(e)}`));
+    });
+    if (gitWiringDisposed) {
+      sub?.dispose();
+      return;
+    }
+    openSub = sub;
+    try {
+      await attachGitListeners();
+    } catch (e: unknown) {
+      deps.log.warn(`context panel git listeners failed: ${errMsg(e)}`);
+    }
+  };
+  wireGit().catch((e: unknown) => deps.log.warn(`context panel git init failed: ${errMsg(e)}`));
 
   const disposable = vscode.Disposable.from(
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),

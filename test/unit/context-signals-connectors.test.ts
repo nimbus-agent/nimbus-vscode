@@ -18,26 +18,23 @@ function deps(summary: { count: number; names: string[] }) {
 }
 
 describe("the Sources section", () => {
-  test("is empty and suppressed when every connector is healthy", async () => {
-    const section = await connectorsSection(snapshot, deps({ count: 0, names: [] }));
+  test("is empty and suppressed when every connector is healthy", () => {
+    const section = connectorsSection(snapshot, deps({ count: 0, names: [] }));
     expect(section.rows).toEqual([]);
     expect(section.suppressWhenEmpty).toBe(true);
   });
 
-  test("names the degraded connectors when there are any", async () => {
-    const section = await connectorsSection(
-      snapshot,
-      deps({ count: 2, names: ["github", "slack"] }),
-    );
+  test("names the degraded connectors when there are any", () => {
+    const section = connectorsSection(snapshot, deps({ count: 2, names: ["github", "slack"] }));
     expect(section.title).toBe("Sources");
     expect(section.rows.map((r) => r.label)).toEqual(["github", "slack"]);
     expect(section.rows[0]?.iconId).toBe("warning");
     expect(section.rows[0]?.detail).toBe("sync failing");
   });
 
-  test("makes no Gateway call at all", async () => {
-    await expect(
-      connectorsSection(snapshot, deps({ count: 1, names: ["github"] })),
-    ).resolves.toBeDefined();
+  // The collector is synchronous, so a client() call would throw straight out
+  // of this call and fail the test.
+  test("makes no Gateway call at all", () => {
+    expect(connectorsSection(snapshot, deps({ count: 1, names: ["github"] }))).toBeDefined();
   });
 });

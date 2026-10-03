@@ -15,7 +15,7 @@ function fakeRepo(rootPath: string): GitRepositoryLike {
     changedPathsNow: () => [],
     stagedPathsNow: () => [],
     fileDiff: async () => "",
-    untrackedPaths: async () => [],
+    untrackedPaths: () => [],
     log: async () => [],
     inputBox: { value: "" },
     branch: () => "main",

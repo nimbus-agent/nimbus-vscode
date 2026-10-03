@@ -44,7 +44,7 @@ function fakeRepo(opts: FakeRepoOpts = {}): GitRepositoryLike {
     // The SCM trio never reads this; only the context panel's union does.
     stagedPathsNow: () => [],
     fileDiff: async (_scope: DiffScope, path: string) => diffs[path] ?? "",
-    untrackedPaths: async () => opts.untracked ?? [],
+    untrackedPaths: () => opts.untracked ?? [],
     log: async () => opts.log ?? ["feat: earlier change"],
     inputBox: { value: opts.inputBoxValue ?? "" },
     branch: () => "main",

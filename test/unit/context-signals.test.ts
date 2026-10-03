@@ -20,7 +20,7 @@ const noDeps: SignalDeps = {
 };
 
 describe("problemsSection", () => {
-  test("lists errors and warnings, lowest line first, one-based for the reader", async () => {
+  test("lists errors and warnings, lowest line first, one-based for the reader", () => {
     const snap = buildSnapshot({
       generation: 1,
       editor,
@@ -29,11 +29,11 @@ describe("problemsSection", () => {
         { message: "first", severity: 0, line: 2 },
       ],
     });
-    const section = await problemsSection(snap, noDeps);
+    const section = problemsSection(snap, noDeps);
     expect(section.rows.map((r) => r.label)).toEqual(["Line 3: first", "Line 10: second"]);
   });
 
-  test("drops Information and Hint, exactly as the lightbulb actions do", async () => {
+  test("drops Information and Hint, exactly as the lightbulb actions do", () => {
     const snap = buildSnapshot({
       generation: 2,
       editor,
@@ -42,61 +42,59 @@ describe("problemsSection", () => {
         { message: "hint", severity: 3, line: 2 },
       ],
     });
-    expect((await problemsSection(snap, noDeps)).rows).toEqual([]);
-    expect((await problemsSection(snap, noDeps)).empty).toBe("No errors or warnings in this file.");
+    expect(problemsSection(snap, noDeps).rows).toEqual([]);
+    expect(problemsSection(snap, noDeps).empty).toBe("No errors or warnings in this file.");
   });
 
-  test("says so when there is no file at all", async () => {
-    expect((await problemsSection(buildSnapshot({ generation: 3 }), noDeps)).empty).toBe(
-      "No file open.",
-    );
+  test("says so when there is no file at all", () => {
+    expect(problemsSection(buildSnapshot({ generation: 3 }), noDeps).empty).toBe("No file open.");
   });
 });
 
 describe("gitSection", () => {
-  test("shows the branch and the changed-file count", async () => {
+  test("shows the branch and the changed-file count", () => {
     const snap = buildSnapshot({
       generation: 4,
       editor,
       git: { branch: "feat/x", changedPaths: ["src/a.ts", "src/b.ts"] },
     });
-    expect((await gitSection(snap, noDeps)).rows.map((r) => r.label)).toEqual([
+    expect(gitSection(snap, noDeps).rows.map((r) => r.label)).toEqual([
       "feat/x",
       "2 uncommitted files",
     ]);
   });
 
-  test("uses the singular for one uncommitted file", async () => {
+  test("uses the singular for one uncommitted file", () => {
     const snap = buildSnapshot({
       generation: 5,
       editor,
       git: { branch: "main", changedPaths: ["src/a.ts"] },
     });
-    expect((await gitSection(snap, noDeps)).rows[1]?.label).toBe("1 uncommitted file");
+    expect(gitSection(snap, noDeps).rows[1]?.label).toBe("1 uncommitted file");
   });
 
-  test("omits the count row entirely when no one looked at the changed files", async () => {
+  test("omits the count row entirely when no one looked at the changed files", () => {
     const snap = buildSnapshot({
       generation: 41,
       editor,
       git: { branch: "main", changedPaths: undefined },
     });
-    const rows = (await gitSection(snap, noDeps)).rows;
+    const rows = gitSection(snap, noDeps).rows;
     expect(rows.map((r) => r.label)).toEqual(["main"]);
     expect(rows.some((r) => r.label.includes("uncommitted"))).toBe(false);
   });
 
-  test("reports a detached HEAD rather than pretending there is a branch", async () => {
+  test("reports a detached HEAD rather than pretending there is a branch", () => {
     const snap = buildSnapshot({
       generation: 6,
       editor,
       git: { branch: undefined, changedPaths: [] },
     });
-    expect((await gitSection(snap, noDeps)).rows[0]?.label).toBe("Detached HEAD");
+    expect(gitSection(snap, noDeps).rows[0]?.label).toBe("Detached HEAD");
   });
 
-  test("says so when there is no repository", async () => {
-    expect((await gitSection(buildSnapshot({ generation: 7, editor }), noDeps)).empty).toBe(
+  test("says so when there is no repository", () => {
+    expect(gitSection(buildSnapshot({ generation: 7, editor }), noDeps).empty).toBe(
       "No git repository here.",
     );
   });
@@ -104,8 +102,8 @@ describe("gitSection", () => {
   // The union and Set-dedupe happen in gitSummaryFor (real-context-view.ts),
   // untested vscode/git-extension glue by repo convention — gitSection only
   // ever sees an already-deduped list, so this case checks the plural render.
-  test("renders a plural count for a multi-entry changed-path list", async () => {
-    const section = await gitSection(
+  test("renders a plural count for a multi-entry changed-path list", () => {
+    const section = gitSection(
       buildSnapshot({
         generation: 1,
         git: { branch: "main", changedPaths: ["src/a.ts", "src/b.ts"] },
@@ -115,8 +113,8 @@ describe("gitSection", () => {
     expect(section.rows[1]?.label).toBe("2 uncommitted files");
   });
 
-  test("omits the count row entirely when nothing has changed", async () => {
-    const section = await gitSection(
+  test("omits the count row entirely when nothing has changed", () => {
+    const section = gitSection(
       buildSnapshot({ generation: 2, git: { branch: "main", changedPaths: [] } }),
       noDeps,
     );

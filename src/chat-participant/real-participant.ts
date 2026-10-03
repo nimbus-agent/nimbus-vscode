@@ -33,22 +33,30 @@ function refToUri(value: unknown): vscode.Uri | undefined {
   return undefined;
 }
 
+// One reference read. A failure is logged and that reference skipped — never
+// thrown — so one unreadable #file does not drop the others.
+async function readReference(uri: vscode.Uri, log: Logger): Promise<AttachedFile | undefined> {
+  try {
+    const doc = await vscode.workspace.openTextDocument(uri);
+    return { path: doc.fileName, languageId: doc.languageId, code: doc.getText() };
+  } catch (e) {
+    log.warn(`participant: could not read reference ${uri.toString()}: ${errMsg(e)}`);
+    return undefined;
+  }
+}
+
+// The reads are independent, so they run together; Promise.all keeps the
+// attachments in the order the references were given.
 async function resolveReferences(
   refs: ReadonlyArray<vscode.ChatPromptReference>,
   log: Logger,
 ): Promise<AttachedFile[]> {
-  const out: AttachedFile[] = [];
-  for (const ref of refs) {
+  const uris = refs.flatMap((ref) => {
     const uri = refToUri(ref.value);
-    if (uri === undefined) continue;
-    try {
-      const doc = await vscode.workspace.openTextDocument(uri);
-      out.push({ path: doc.fileName, languageId: doc.languageId, code: doc.getText() });
-    } catch (e) {
-      log.warn(`participant: could not read reference ${uri.toString()}: ${errMsg(e)}`);
-    }
-  }
-  return out;
+    return uri === undefined ? [] : [uri];
+  });
+  const files = await Promise.all(uris.map((uri) => readReference(uri, log)));
+  return files.filter((f): f is AttachedFile => f !== undefined);
 }
 
 async function adaptRequest(

@@ -78,7 +78,7 @@ function adaptRepository(raw: RawRepository): GitRepositoryLike {
       (raw.state.indexChanges ?? []).map((c) => relativeOrBasename(root, c.uri.fsPath)),
     fileDiff: async (scope, path) =>
       scope === "staged" ? raw.diffIndexWithHEAD(path) : raw.diffWithHEAD(path),
-    untrackedPaths: async () => {
+    untrackedPaths: () => {
       const statused = (changes: RawChange[] | undefined): StatusedPath[] =>
         (changes ?? []).map((c) => ({
           path: relativeOrBasename(root, c.uri.fsPath),

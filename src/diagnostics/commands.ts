@@ -100,9 +100,14 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
 } {
   // One shared try/catch, so a throw anywhere inside a handler is reported the
   // same way — and a pre-flight cancellation stays silent, exactly as dismissing
-  // a Quick Pick does.
+  // a Quick Pick does. A body that has nothing to await may be synchronous: the
+  // call sits inside the try, so its throw is caught just as a rejection is.
   const contain =
-    (internalName: string, humanName: string, body: (arg: DiagnosticActionArg) => Promise<void>) =>
+    (
+      internalName: string,
+      humanName: string,
+      body: (arg: DiagnosticActionArg) => Promise<void> | void,
+    ) =>
     async (raw: unknown): Promise<void> => {
       const arg = asArg(raw);
       if (arg === undefined) {
@@ -226,7 +231,7 @@ export function createDiagnosticCommands(deps: DiagnosticCommandDeps): {
     priorOccurrences: contain(
       "diagnosticPriorOccurrences",
       "find prior occurrences",
-      async ({ query }) => {
+      ({ query }) => {
         deps.search(query);
       },
     ),

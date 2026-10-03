@@ -457,10 +457,13 @@ export function activateWithDeps(
     // that entry got wiped by the clear() that ran before its own cacheFile()
     // had a chance to land, and it resolved as "unreadable · not sent" despite
     // being perfectly readable.
-    for (const a of ctl.attachments()) {
-      if (a.kind !== "file") continue;
-      await cacheFile(a.path);
-    }
+    //
+    // The reads run together: each cacheFile() touches only its own path's
+    // entry and never rejects (a failed read clears that entry instead).
+    const reads = ctl.attachments().flatMap((a) => (a.kind === "file" ? [cacheFile(a.path)] : []));
+    // Most turns attach no file. Awaiting an empty Promise.all would still
+    // cost every one of those sends an extra microtask turn, so skip it.
+    if (reads.length > 0) await Promise.all(reads);
   };
 
   let chatController: ChatController | undefined;

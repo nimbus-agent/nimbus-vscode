@@ -266,7 +266,7 @@ describe("createRealGitApi — the adapted repository", () => {
     const r = await adapted(repo);
     expect(r.changedPathsNow()).toEqual([]);
     expect(r.stagedPathsNow()).toEqual([]);
-    expect(await r.untrackedPaths()).toEqual([]);
+    expect(r.untrackedPaths()).toEqual([]);
   });
 
   test("untrackedPaths merges the dedicated group with untracked working-tree entries", async () => {
@@ -280,7 +280,7 @@ describe("createRealGitApi — the adapted repository", () => {
         change("new-a.ts", GIT_STATUS_UNTRACKED),
       ],
     });
-    expect(await (await adapted(repo)).untrackedPaths()).toEqual(["new-a.ts", "new-b.ts"]);
+    expect((await adapted(repo)).untrackedPaths()).toEqual(["new-a.ts", "new-b.ts"]);
   });
 
   test("a file outside the repository root is reduced to its basename, never sent absolute", async () => {

@@ -153,7 +153,13 @@ export function applyThemeIcons(
 // in exactly one place.
 export function createDataView(deps: {
   connection: SidebarConnection;
-  loadData: () => Promise<SidebarItem[]>;
+  /**
+   * The rows to show while connected. A view whose rows are already in hand
+   * returns them directly; one that fetches them returns a promise. loadRows
+   * awaits either inside an async function, so a synchronous throw rejects
+   * getChildren exactly as a failed fetch does.
+   */
+  loadData: () => SidebarItem[] | Promise<SidebarItem[]>;
   /**
    * Resolve a row's children on expand rather than up front. Supplied only by
    * views whose children cost a round trip each — without it, populating them
@@ -192,7 +198,7 @@ export function createPlaceholderView(deps: {
 }): SidebarView {
   return createDataView({
     connection: deps.connection,
-    loadData: async () => [{ label: deps.emptyLabel }],
+    loadData: () => [{ label: deps.emptyLabel }],
   });
 }
 

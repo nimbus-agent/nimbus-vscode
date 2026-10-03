@@ -4459,9 +4459,9 @@ describe("editor integrations reach the Gateway through extension.ts", () => {
     activateWithDeps(off.ctx, off.deps);
     await waitForConnect();
     const offProvider = stubLanguages.lastHoverProvider;
-    expect(await offProvider?.provideHover(hoverDoc("/r/a.ts"), { line: 0 }, NOT_YET_SETTLED)).toBe(
-      undefined,
-    );
+    expect(
+      await offProvider?.provideHover(hoverDoc("/r/a.ts"), { line: 0 }, NOT_YET_SETTLED),
+    ).toBeUndefined();
     expect(agentsWhyPeek).not.toHaveBeenCalled();
   });
 
@@ -4791,7 +4791,7 @@ describe("SCM command wiring", () => {
       changedPathsNow: () => paths,
       stagedPathsNow: () => [],
       fileDiff: async (_scope, path) => diffs[path] ?? "",
-      untrackedPaths: async () => [],
+      untrackedPaths: () => [],
       log: async () => ["feat: earlier change"],
       inputBox: { value: "" },
       branch: () => "main",

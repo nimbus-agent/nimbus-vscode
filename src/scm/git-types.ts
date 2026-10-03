@@ -36,8 +36,12 @@ export interface GitRepositoryLike {
    */
   stagedPathsNow(): readonly string[];
   fileDiff(scope: DiffScope, path: string): Promise<string>;
-  // Counted and named in the review header; contents are never sent.
-  untrackedPaths(): Promise<readonly string[]>;
+  /**
+   * Counted and named in the review header; contents are never sent. Read off
+   * the same already-materialised state as changedPathsNow — no subprocess, so
+   * no await. Repo-relative.
+   */
+  untrackedPaths(): readonly string[];
   // Most recent commit messages, newest first.
   log(maxEntries: number): Promise<readonly string[]>;
   readonly inputBox: { value: string };
