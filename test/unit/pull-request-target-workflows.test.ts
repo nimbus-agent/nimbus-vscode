@@ -17,18 +17,32 @@ import { describe, expect, test } from "vitest";
 const WORKFLOWS_DIR = join(__dirname, "..", "..", ".github", "workflows");
 
 /** Workflow source with whole-line and trailing comments removed. */
-function code(file: string): string {
-  return readFileSync(join(WORKFLOWS_DIR, file), "utf8")
+function stripComments(source: string): string {
+  return source
     .split("\n")
     .filter((line) => !/^\s*#/.test(line))
     .map((line) => line.replace(/\s+#.*$/, ""))
     .join("\n");
 }
 
-const workflowFiles = readdirSync(WORKFLOWS_DIR).filter((f) => /\.ya?ml$/.test(f));
+// A bare word, not a mapping key: YAML can declare the trigger as a key
+// (`pull_request_target:`), a scalar (`on: pull_request_target`) or a list item
+// (`on: [push, pull_request_target]`), and all of them run with the same token.
+// Any other mention outside a comment counts too, which fails closed.
+function declaresPullRequestTarget(source: string): boolean {
+  return /\bpull_request_target\b/.test(stripComments(source));
+}
 
-/** Workflows that declare `pull_request_target` as a trigger key. */
-const privileged = workflowFiles.filter((f) => /^\s+pull_request_target:/m.test(code(f)));
+// The checkout action in any quoting, or a git / gh command that fetches a tree.
+function checksOutCode(source: string): boolean {
+  return /actions\/checkout@|\bgit\s+(?:clone|fetch|checkout|pull|worktree)\b|\bgh\s+(?:pr\s+checkout|repo\s+clone)\b/.test(
+    stripComments(source),
+  );
+}
+
+const read = (file: string): string => readFileSync(join(WORKFLOWS_DIR, file), "utf8");
+
+const workflowFiles = readdirSync(WORKFLOWS_DIR).filter((f) => /\.ya?ml$/.test(f));
 
 describe("pull_request_target workflows", () => {
   test("the workflow directory is actually read", () => {
@@ -38,10 +52,44 @@ describe("pull_request_target workflows", () => {
   });
 
   test("cla.yml is the only workflow triggered by pull_request_target", () => {
-    expect(privileged).toEqual(["cla.yml"]);
+    expect(workflowFiles.filter((f) => declaresPullRequestTarget(read(f)))).toEqual(["cla.yml"]);
   });
 
   test("cla.yml never checks out the repository", () => {
-    expect(code("cla.yml")).not.toMatch(/uses:\s*actions\/checkout@/);
+    expect(checksOutCode(read("cla.yml"))).toBe(false);
+  });
+});
+
+// What this file can catch is decided by the two detectors above, so their
+// recall is pinned on its own: a guard that only knew the spelling cla.yml
+// happens to use would let every other spelling through.
+describe("the workflow detectors", () => {
+  test.each([
+    ["a mapping key", "on:\n  pull_request_target:\n    types: [opened]\n"],
+    ["a scalar", "on: pull_request_target\n"],
+    ["a flow sequence", "on: [push, pull_request_target]\n"],
+    ["a block sequence", "on:\n  - push\n  - pull_request_target\n"],
+  ])("see the trigger written as %s", (_form, source) => {
+    expect(declaresPullRequestTarget(source)).toBe(true);
+  });
+
+  test("do not see the trigger when it is only named in a comment", () => {
+    expect(
+      declaresPullRequestTarget("# pull_request_target\non: push # pull_request_target\n"),
+    ).toBe(false);
+  });
+
+  test.each([
+    ["the unquoted checkout action", "      - uses: actions/checkout@0123abcd\n"],
+    ["the double-quoted checkout action", '      - uses: "actions/checkout@0123abcd"\n'],
+    ["the single-quoted checkout action", "      - uses: 'actions/checkout@0123abcd'\n"],
+    ["git fetch", "      - run: git fetch origin pull/1/head\n"],
+    ["gh pr checkout", "      - run: gh pr checkout 1\n"],
+  ])("see a checkout through %s", (_form, source) => {
+    expect(checksOutCode(source)).toBe(true);
+  });
+
+  test("do not count an action that only talks to the API", () => {
+    expect(checksOutCode("      - uses: actions/create-github-app-token@0123abcd\n")).toBe(false);
   });
 });
