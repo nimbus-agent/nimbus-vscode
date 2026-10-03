@@ -33,8 +33,8 @@ export function createPreflightSkipStore(memento: MementoLike): PreflightSkipSto
     setSkipped: async (kind) => {
       await memento.update(KEYS[kind], true);
     },
-    // Five independent keys, none of which depends on another being cleared
-    // first, so the updates go out together.
+    // One key per kind, none of which depends on another being cleared first,
+    // so the updates go out together.
     clearAll: async () => {
       await Promise.all(Object.values(KEYS).map((key) => memento.update(key, undefined)));
     },

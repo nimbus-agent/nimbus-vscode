@@ -453,7 +453,7 @@ export function activateWithDeps(
     // No `attachmentCache.clear()` here: `cacheFile` already overwrites or
     // deletes its own path per call, and the assembler only ever reads paths
     // that are actually attached — a clear buys nothing. It used to run
-    // first and race a file attached DURING this function's per-file awaits:
+    // first and race a file attached DURING this function's awaits:
     // that entry got wiped by the clear() that ran before its own cacheFile()
     // had a chance to land, and it resolved as "unreadable · not sent" despite
     // being perfectly readable.

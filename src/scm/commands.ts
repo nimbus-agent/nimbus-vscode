@@ -186,7 +186,7 @@ export async function collectDiff(
   const { ordered, omitted } = orderFiles(changed, { skipSecrets });
   const entries: Array<{ path: string; diff: string }> = [];
   for (const file of ordered) {
-    entries.push({ path: file.path, diff: await repo.fileDiff(scope, file.path) }); // NOSONAR S9382: each fileDiff is a `git diff` subprocess on the same repository, up to SCM_MAX_FILES (100) of them — one at a time, not all at once
+    entries.push({ path: file.path, diff: await repo.fileDiff(scope, file.path) }); // NOSONAR S9382: each fileDiff is a `git diff` subprocess on the same repository, up to SCM_MAX_FILES of them — one at a time, not all at once
   }
   const selection = selectWithinBudget(entries, SCM_MAX_DIFF_CHARS);
   const all: OmittedFile[] = [...omitted, ...selection.omitted];
