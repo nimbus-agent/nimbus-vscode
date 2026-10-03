@@ -318,14 +318,12 @@ Full runbook is `docs/releasing.md`. The parts that bite:
 - New contributed command / view / LM tool → `package.json` **and** the matching
   `test/unit/manifest-*.test.ts`, which pin the manifest against the source SSoT
   (`BRIEF_CATALOG`, `DIAGNOSTIC_COMMANDS`, …).
-- Any edit to `.github/workflows/dependabot-lockfile.yml` → four safety properties
-  are pinned by `test/unit/dependabot-lockfile-workflow.test.ts` (actor gate,
-  `--ignore-scripts`, `persist-credentials: false`, `head.sha` checkout). It is the
-  only `pull_request_target` workflow that checks out **the PR author's tree** with
-  a write-capable token; a unit test failing there is the intended signal.
-  `cla.yml` is the other `pull_request_target` workflow — also write-capable
-  (`actions`/`pull-requests`/`statuses: write`) — but it checks out nothing and has
-  no pinning test.
+- A new `pull_request_target` workflow, or a checkout step added to `cla.yml` →
+  `test/unit/pull-request-target-workflows.test.ts` fails, on purpose. `cla.yml` is
+  the only workflow allowed that trigger: it runs with a write-capable token
+  (`actions`/`pull-requests`/`statuses: write`) even for fork PRs, and is safe only
+  because it checks out nothing. (The Dependabot lockfile-sync workflow, which did
+  check out a PR's tree, was deleted along with Dependabot.)
 - Any new agent-bound call → route it through `src/egress/gated-client.ts`. Do not
   widen `ALLOWED` in `egress-choke-point.test.ts`.
 

@@ -22,7 +22,7 @@ Extracted from the Nimbus monorepo (`packages/vscode-extension`) on 2026-06-22 s
 - `docs/` — contributor/maintainer reference: `architecture.md`, `connectors.md`, `development.md`, `settings.md`, `releasing.md`. See `docs/README.md`.
 - `.github/workflows/ci.yml` — typecheck + lint + check-settings-docs + test + build + check-bundle + check-vsix-contents on PR/push (Ubuntu), plus a lean Windows job (typecheck + test + build + the two bundle guards). The ExTester/Selenium UI suite (`bun run test:ui`) is not part of CI — see `docs/development.md`'s UI tests section — because of an unfixed upstream headless-Linux limitation in ExTester's window-reuse handshake.
 - `.github/workflows/publish.yml` — on a `v*` tag: Marketplace + Open VSX + GitHub Release
-- `.github/workflows/dependabot-lockfile.yml` — one of the two `pull_request_target` workflows here (a write-capable token over a PR author's tree); the other is `.github/workflows/cla.yml`, which is likewise write-capable (`actions: write`, `pull-requests: write`, `statuses: write`). Its four defences — the `dependabot[bot]` actor gate, `bun install --ignore-scripts`, `persist-credentials: false`, and a `head.sha`-pinned checkout — are pinned by `test/unit/dependabot-lockfile-workflow.test.ts`; change one and that test tells you.
+- `.github/workflows/cla.yml` — the only `pull_request_target` workflow here, so it runs with a write-capable token (`actions: write`, `pull-requests: write`, `statuses: write`) even for fork PRs. It is safe only because it never checks out the PR author's tree. `test/unit/pull-request-target-workflows.test.ts` pins both facts: a second `pull_request_target` workflow, or a checkout added to `cla.yml`, fails that test.
 
 ## Commands
 
