@@ -301,14 +301,14 @@ Full runbook is `docs/releasing.md`. The parts that bite:
 - The GitLab warm-standby mirror (`.gitlab-ci.yml`) runs on a `node:` image
   with Bun npm-installed on top, not on `oven/bun`, whose only `node` is a
   fallback symlink to Bun: `bunx vitest run` honours vitest's `node` shebang,
-  and on the Bun runtime Vitest 5's jsdom environment fails to start (the four
-  `@vitest-environment jsdom` files die with an `EventTarget` error). Two things
+  and on the Bun runtime Vitest 5's jsdom environment fails to start (every
+  `@vitest-environment jsdom` file dies with an `EventTarget` error). Two things
   there are load-bearing for biome's `vcs.useIgnoreFile: true`: git, which ships
   with the `node:` image (without it biome scans `node_modules`), and the
   `.bun-cache/` entry in `.gitignore` — the job's `BUN_INSTALL_CACHE_DIR` has to
   sit inside the project for GitLab to cache it, and without the entry
-  `bun run lint` checks every cached package (reproduced: 7,520 files and 40k
-  errors instead of 257 files).
+  `bun run lint` checks every cached package (reproduced: over 7,000 files and
+  some 40,000 errors, where the repo itself is a few hundred files).
 
 ## Coupled sites — change one, change all
 

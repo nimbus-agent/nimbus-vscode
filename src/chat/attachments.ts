@@ -47,9 +47,11 @@ export const TOTAL_BUDGET = 200_000;
 // the alternative is sending a block of mojibake and letting the model guess.
 //
 // Write the two-character ESCAPE `\0`, never a literal NUL: an earlier draft of
-// this plan contained real control bytes, which rendered as spaces to every
-// reader. Had that shipped, `includes(" ")` would have refused every source
-// file containing a space — i.e. all of them.
+// the implementation plan this shipped from contained real control bytes, which
+// rendered as spaces to every reader. Had that shipped, `includes(" ")` would
+// have refused every source file containing a space — i.e. all of them. (The
+// plan has since been deleted; its review records the finding:
+// `git show a2e59eb:docs/superpowers/plans/2026-08-19-context-grounded-ask-review.md`.)
 export function looksBinary(text: string): boolean {
   return text.includes("\0");
 }
