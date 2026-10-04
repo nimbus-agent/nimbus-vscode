@@ -38,11 +38,15 @@ function declaresPullRequestTarget(source: string): boolean {
 // fetch`, `git -c k=v checkout`, `gh pr -R owner/repo checkout` — so anything
 // on the same line is allowed there. That also counts a line that merely names
 // both words, which fails closed: a false positive reds this file, a miss lets
-// a checkout land. A tool and subcommand on different lines (a `\` continuation,
-// a folded YAML scalar) are not seen.
+// a checkout land. A shell `\` continuation is joined first, so a command split
+// across lines is still seen; a folded YAML scalar (`>`) is not.
+function joinContinuations(source: string): string {
+  return source.replace(/\\\r?\n[ \t]*/g, " ");
+}
+
 function checksOutCode(source: string): boolean {
   return /actions\/checkout@|\bgit\b[^\n]*\b(?:clone|fetch|checkout|pull|worktree)\b|\bgh\b[^\n]*\b(?:checkout|clone)\b/.test(
-    stripComments(source),
+    joinContinuations(stripComments(source)),
   );
 }
 
@@ -92,6 +96,14 @@ describe("the workflow detectors", () => {
     ["git fetch", "      - run: git fetch origin pull/1/head\n"],
     ["git fetch after -C", '      - run: git -C "$dir" fetch origin pull/1/head\n'],
     ["git checkout after -c", "      - run: git -c x=y checkout FETCH_HEAD\n"],
+    [
+      "git fetch across a \\ continuation",
+      "      - run: |\n          git \\\n            fetch origin pull/1/head\n",
+    ],
+    [
+      "git fetch across a CRLF \\ continuation",
+      '      - run: |\r\n          git -C "$dir" \\\r\n            fetch origin pull/1/head\r\n',
+    ],
     ["gh pr checkout", "      - run: gh pr checkout 1\n"],
     ["gh pr checkout after -R", "      - run: gh pr -R owner/repo checkout 1\n"],
   ])("see a checkout through %s", (_form, source) => {
