@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.23.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.22.0...v0.23.0) (2026-10-04)
+
+
+### Features
+
+* **chat:** show the gateway retrieval disclosure with citations ([#127](https://github.com/nimbus-agent/nimbus-vscode/issues/127)) ([a2e59eb](https://github.com/nimbus-agent/nimbus-vscode/commit/a2e59ebeaf3699d4017e587247ccd6d1f5de0ba8))
+
+
+### Bug Fixes
+
+* **deps:** update dependencies to latest and retire Dependabot ([#129](https://github.com/nimbus-agent/nimbus-vscode/issues/129)) ([be9829c](https://github.com/nimbus-agent/nimbus-vscode/commit/be9829c47b8c4510b130e277688ba4a20c54a8de))
+
 ## [0.22.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.21.1...v0.22.0) (2026-09-01)
 
 
