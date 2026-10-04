@@ -270,6 +270,89 @@ describe("runParticipantTurn", () => {
     expect(unregisterStreamWithHitl).toHaveBeenCalledWith("stream-9");
   });
 
+  test("a stream with no id is neither registered nor unregistered for HITL routing", async () => {
+    const registerStreamWithHitl = vi.fn();
+    const unregisterStreamWithHitl = vi.fn();
+    const f = fakeSink();
+    const client = fakeClient({
+      askStream: () =>
+        streamOf(
+          [
+            { type: "token", text: "x" },
+            { type: "done", reply: "x", sessionId: "s" },
+          ],
+          "",
+        ),
+    });
+    await runParticipantTurn(
+      req(),
+      deps({ client: () => client, registerStreamWithHitl, unregisterStreamWithHitl }),
+      f.sink,
+      noCancel,
+    );
+    expect(f.md[0]).toBe("x");
+    expect(registerStreamWithHitl).not.toHaveBeenCalled();
+    expect(unregisterStreamWithHitl).not.toHaveBeenCalled();
+  });
+
+  test("the active selection's own file is excluded from the citations", async () => {
+    // Citing the file the user is already looking at is noise; the selection's
+    // basename is the self-exclusion key.
+    const f = fakeSink();
+    const client = fakeClient({
+      searchRankedWithRetrieval: async () => ({
+        items: [
+          { name: "session.ts", service: "fs", score: 2, canonicalUrl: "file:///w/src/session.ts" },
+          { name: "token.ts", service: "fs", score: 1, canonicalUrl: "file:///w/src/token.ts" },
+        ] as never,
+        retrieval: { vectorRanked: true, reason: null, partial: null, backfill: null },
+        notes: [],
+      }),
+    });
+    await runParticipantTurn(
+      req({
+        prompt: "auth flow",
+        selection: { path: "/home/dev/proj/src/session.ts", languageId: "ts", code: "x" },
+      }),
+      deps({ client: () => client }),
+      f.sink,
+      noCancel,
+    );
+    expect(f.citations).toEqual([{ label: "token.ts", target: "file:///w/src/token.ts" }]);
+  });
+
+  test("a blank question with attached code still streams, but runs no citation search", async () => {
+    // The attachment makes the prompt non-empty, so the turn goes ahead — yet
+    // there is no user text to search the index FOR, and searching "" would
+    // return arbitrary rows dressed up as relevant citations.
+    const searched = vi.fn(async () => ({
+      items: [],
+      retrieval: { vectorRanked: true, reason: null, partial: null, backfill: null },
+      notes: [],
+    }));
+    const prompts: string[] = [];
+    const f = fakeSink();
+    const client = fakeClient({
+      searchRankedWithRetrieval: searched,
+      askStream: (input) => {
+        prompts.push(input);
+        return streamOf([{ type: "done", reply: "explained", sessionId: "s" }]);
+      },
+    });
+    await runParticipantTurn(
+      req({
+        prompt: "   ",
+        attachments: [{ path: "/home/dev/proj/src/a.ts", languageId: "ts", code: "const a = 1;" }],
+      }),
+      deps({ client: () => client }),
+      f.sink,
+      noCancel,
+    );
+    expect(searched).not.toHaveBeenCalled();
+    expect(prompts).toEqual(["File: a.ts (ts)\n```ts\nconst a = 1;\n```"]);
+    expect(f.md).toContain("explained");
+  });
+
   test("aborts the stream signal when cancellation fires, then disposes the listener", async () => {
     let onCancel = (): void => undefined;
     const dispose = vi.fn();
@@ -500,6 +583,35 @@ describe("egress delta footer", () => {
     );
     expect(f.md.join(" ")).toContain("hi"); // the answer still rendered
     expect(f.md.join(" ")).not.toContain("Egress:");
+  });
+
+  test("a ledger that fails only AFTER the answer drops the footer rather than guessing", async () => {
+    // The "before" read succeeded, so the turn had a baseline — but with no
+    // "after" count there is no delta to state, and a guessed zero would be the
+    // one false receipt this footer exists to prevent.
+    const f = fakeSink();
+    const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    let reads = 0;
+    await runParticipantTurn(
+      req({ prompt: "q" }),
+      deps({
+        log,
+        client: () =>
+          fakeClient({
+            egressHead: async () => {
+              reads += 1;
+              if (reads === 1) return { head: "h", count: 5 };
+              throw new Error("ledger locked");
+            },
+          }),
+      }),
+      f.sink,
+      noCancel,
+    );
+    expect(reads).toBe(2);
+    expect(f.md.join(" ")).toContain("hi");
+    expect(f.md.join(" ")).not.toContain("Egress:");
+    expect(log.warn).toHaveBeenCalledWith("participant: egressHead (after) failed: ledger locked");
   });
 
   test("ops commands get the footer too", async () => {

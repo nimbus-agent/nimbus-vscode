@@ -5,6 +5,11 @@ dist-vsix/
 coverage/
 *.vsix
 
+# GitLab CI's bun install cache (BUN_INSTALL_CACHE_DIR in .gitlab-ci.yml). It
+# must sit inside the project to be cached, and biome's vcs.useIgnoreFile reads
+# this file — without the entry `bun run lint` checks every cached package.
+.bun-cache/
+
 # UI test harness: compiled specs, and ExTester's downloaded VS Code + chromedriver
 out/
 test-resources/

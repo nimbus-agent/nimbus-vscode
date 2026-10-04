@@ -312,6 +312,33 @@ describe("reconnect edges", () => {
     expect(second.map((s) => s.kind)).toContain("connected");
     await mgr.dispose();
   });
+
+  // Two failed attempts while a retry is already pending must still mean ONE
+  // retry: stacking a timer per failure would multiply the reconnect attempts
+  // (and the sockets they open) against a Gateway that is down.
+  test("a second failed connect while a retry is pending arms no second timer", async () => {
+    let opens = 0;
+    const { deps } = makeDeps({ openSequence: ["enoent", "enoent", "ok"] });
+    const mgr = createConnectionManager({
+      ...deps,
+      open: async (p) => {
+        opens += 1;
+        return await deps.open(p);
+      },
+    });
+    await mgr.start();
+    expect(mgr.current().kind).toBe("disconnected");
+    expect(vi.getTimerCount()).toBe(1);
+
+    await mgr.start();
+    expect(opens).toBe(2);
+    expect(vi.getTimerCount()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(50);
+    expect(opens).toBe(3);
+    expect(mgr.current().kind).toBe("connected");
+    await mgr.dispose();
+  });
 });
 describe("dispose while a connect is still in flight", () => {
   beforeEach(() => {

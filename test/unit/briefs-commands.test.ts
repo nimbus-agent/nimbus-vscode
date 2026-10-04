@@ -432,6 +432,125 @@ describe("preflight", () => {
     await createBriefCommands(ok.deps).preflight();
     expect(ok.remembered()).toBe("billing");
   });
+
+  test("dismissing the ref prompt cancels before the namespace is ever asked for", async () => {
+    const h = harness({}, undefined, [undefined]);
+    await createBriefCommands(h.deps).preflight();
+    expect(h.prompts).toEqual(["Ref to pre-flight (branch, tag or commit)"]);
+    expect(h.calls).toEqual([]);
+    expect(h.errors).toEqual([]);
+  });
+
+  test("a disconnected client is reported, and nothing is remembered or opened", async () => {
+    const h = harness({ briefs: () => undefined }, undefined, ["release-1.4", "billing"]);
+    await createBriefCommands(h.deps).preflight();
+    expect(h.errors).toEqual(["Nimbus: not connected to the Gateway."]);
+    expect(h.remembered()).toBeUndefined();
+    expect(h.opened).toEqual([]);
+  });
+
+  test("a successful pre-flight opens its rendered result", async () => {
+    const h = harness({}, undefined, ["release-1.4", "billing"]);
+    await createBriefCommands(h.deps).preflight();
+    expect(h.opened).toEqual([
+      {
+        title: "Nimbus — Safe to deploy?.md",
+        content:
+          "No failures reported for `release-1.4` in `billing`.\n\nNo downstreams answered, so nothing was actually checked.",
+      },
+    ]);
+  });
+});
+
+describe("a brief whose send yields nothing opens no tab", () => {
+  // Each brief has its own `brief === undefined` return. Without it, a
+  // disconnected or cancelled send hands `undefined` to the renderer, which
+  // throws inside afterSend — and afterSend LOGS "succeeded but the follow-up
+  // failed", a false claim about a send that never happened. `opened` alone
+  // cannot tell the two apart (a throwing renderer opens nothing either way),
+  // so these tests also assert that nothing reached the error log.
+  function recordingLog(): { log: Logger; errors: string[] } {
+    const errors: string[] = [];
+    const log = {
+      error: (m: string) => errors.push(m),
+      warn: () => undefined,
+      info: () => undefined,
+      debug: () => undefined,
+    } as unknown as Logger;
+    return { log, errors };
+  }
+
+  test("ghost without an editor asks for a file and sends nothing", async () => {
+    const h = harness({ activeEditor: () => undefined });
+    await createBriefCommands(h.deps).ghost();
+    expect(h.calls).toEqual([]);
+    expect(h.infos).toEqual(['Nimbus: Open a file to run "Who knew this code?".']);
+  });
+
+  test("ghost while disconnected reports it, opens nothing and logs no failure", async () => {
+    const rec = recordingLog();
+    const h = harness({ briefs: () => undefined, log: rec.log });
+    await createBriefCommands(h.deps).ghost();
+    expect(h.errors).toEqual(["Nimbus: not connected to the Gateway."]);
+    expect(h.opened).toEqual([]);
+    expect(rec.errors).toEqual([]);
+  });
+
+  test("ghost on success opens the rendered knowledge-holder brief", async () => {
+    const h = harness();
+    await createBriefCommands(h.deps).ghost();
+    expect(h.opened).toEqual([
+      {
+        title: "Nimbus — Who knew this code?.md",
+        content: "No knowledge-holder signals found for `src/a.ts` in the local index.",
+      },
+    ]);
+  });
+
+  test("conflicts cancelled at the gate is silent, opens nothing and logs no failure", async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log }, new EgressCancelled());
+    await createBriefCommands(h.deps).conflicts();
+    expect(h.calls.map((c) => c.brief)).toEqual(["conflicts"]);
+    expect(h.errors).toEqual([]);
+    expect(h.opened).toEqual([]);
+    expect(rec.errors).toEqual([]);
+  });
+
+  test("huddle cancelled at the gate is silent, opens nothing and logs no failure", async () => {
+    const rec = recordingLog();
+    const h = harness({ log: rec.log }, new EgressCancelled());
+    await createBriefCommands(h.deps).huddle();
+    expect(h.calls.map((c) => c.brief)).toEqual(["huddle"]);
+    expect(h.errors).toEqual([]);
+    expect(h.opened).toEqual([]);
+    expect(rec.errors).toEqual([]);
+  });
+
+  test("why without an editor asks for a file and sends nothing", async () => {
+    const h = harness({ activeEditor: () => undefined });
+    await createBriefCommands(h.deps).why();
+    expect(h.calls).toEqual([]);
+    expect(h.infos).toEqual(['Nimbus: Open a file to run "Why is this here?".']);
+  });
+
+  test("janitor while disconnected reports it after the prompts and logs no failure", async () => {
+    const rec = recordingLog();
+    const h = harness({ briefs: () => undefined, log: rec.log }, undefined, ["svc/legacy", "30"]);
+    await createBriefCommands(h.deps).janitor();
+    expect(h.prompts).toHaveLength(2);
+    expect(h.errors).toEqual(["Nimbus: not connected to the Gateway."]);
+    expect(h.opened).toEqual([]);
+    expect(rec.errors).toEqual([]);
+  });
+
+  test("huddle on success opens the rendered brief", async () => {
+    const h = harness();
+    await createBriefCommands(h.deps).huddle();
+    expect(h.opened).toEqual([
+      { title: "Nimbus — Team huddle.md", content: "Nothing to huddle about in this window." },
+    ]);
+  });
 });
 
 describe("retry", () => {

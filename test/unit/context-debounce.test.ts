@@ -54,7 +54,7 @@ describe("createDebouncer", () => {
     expect(calls).toBe(0);
   });
 
-  test("carries the spec's three tiers", () => {
+  test("carries the three documented tiers", () => {
     expect(DEBOUNCE_MS).toEqual({ selection: 300, editor: 150, diagnostics: 500 });
   });
 });

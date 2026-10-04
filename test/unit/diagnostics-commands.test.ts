@@ -312,4 +312,69 @@ describe("priorOccurrences", () => {
     await cmds.priorOccurrences({ nope: true });
     expect(deps.search).not.toHaveBeenCalled();
   });
+
+  // This body is synchronous, so its failure is a throw rather than a
+  // rejection: contain() must report it like any other, not let it escape.
+  test("reports a search that throws once, without escaping as a rejection", async () => {
+    const search = vi.fn((): void => {
+      throw new Error("picker unavailable");
+    });
+    const { cmds, deps } = harness({ search });
+    await expect(cmds.priorOccurrences(arg)).resolves.toBeUndefined();
+    expect(deps.window.showErrorMessage).toHaveBeenCalledTimes(1);
+    expect(deps.window.showErrorMessage).toHaveBeenCalledWith(
+      expect.stringContaining("picker unavailable"),
+    );
+  });
+});
+
+describe("argument narrowing", () => {
+  // VS Code hands a command whatever the code action stored — or nothing, when
+  // it is run from the palette. Each field the handlers read is checked, so a
+  // half-formed argument is refused up front instead of failing mid-send.
+  test.each([
+    ["no argument at all (palette invocation)", undefined],
+    ["null", null],
+    ["a bare string", "a.ts"],
+    ["fullText that is not a string", { ...arg, fullText: 42 }],
+    ["a missing query", { context, documentPath, fullText }],
+    ["a missing documentPath", { context, fullText, query: "2532 Object is possibly" }],
+  ])("refuses %s, warning once and sending nothing", async (_label, bad) => {
+    const { cmds, deps, agentInvoke } = harness();
+    await cmds.fix(bad);
+    expect(agentInvoke).not.toHaveBeenCalled();
+    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.window.showErrorMessage).not.toHaveBeenCalled();
+    expect(deps.log.warn).toHaveBeenCalledTimes(1);
+    expect(deps.log.warn).toHaveBeenCalledWith(
+      "nimbus.diagnosticFix called without a diagnostic argument",
+    );
+  });
+});
+
+describe("fix — early exits", () => {
+  test("reports a disconnected Gateway before reading the document or sending", async () => {
+    const textOfDocument = vi.fn(documents({ [documentPath]: fullText }));
+    const { cmds, deps, agentInvoke } = harness({ client: () => undefined, textOfDocument });
+    await cmds.fix(arg);
+    expect(deps.window.showErrorMessage).toHaveBeenCalledWith("Nimbus: not connected to Gateway.");
+    expect(textOfDocument).not.toHaveBeenCalled();
+    expect(agentInvoke).not.toHaveBeenCalled();
+    expect(deps.openDiff).not.toHaveBeenCalled();
+  });
+
+  test("opens no diff when the agent returns no reply, and says so", async () => {
+    const agentInvoke = vi.fn().mockResolvedValue({});
+    const { cmds, deps } = harness({ client: () => ({ agentInvoke }) });
+    await cmds.fix(arg);
+    expect(agentInvoke).toHaveBeenCalledTimes(1);
+    expect(deps.window.showInformationMessage).toHaveBeenCalledWith(
+      "Nimbus: the agent returned no reply.",
+      {},
+    );
+    expect(deps.openDiff).not.toHaveBeenCalled();
+    expect(deps.window.showWarningMessage).not.toHaveBeenCalled();
+    // An empty answer is a notice, not a failure.
+    expect(deps.window.showErrorMessage).not.toHaveBeenCalled();
+  });
 });

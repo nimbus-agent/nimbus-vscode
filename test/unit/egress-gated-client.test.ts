@@ -150,6 +150,29 @@ describe("gateAgentInvoke progress ordering", () => {
     expect(await invoke("q", { stream: false }, META)).toEqual({ reply: "ok" });
     expect(events).toEqual(["send"]);
   });
+
+  test("with no runner injected, a progress title still sends — bare, after the gate", async () => {
+    // The default runner exists for callers with no progress surface (the
+    // nimbus_ask LM tool): asking for a title must not make the send vanish.
+    const order: string[] = [];
+    const gate = fakeGate("send");
+    const invoke = gateAgentInvoke(
+      async (input: string) => {
+        order.push(`send:${input}`);
+        return { reply: "ok" };
+      },
+      {
+        ...gate,
+        check: async (kind, prompt, meta) => {
+          order.push("gate");
+          return gate.check(kind, prompt, meta);
+        },
+      },
+      "lmTool",
+    );
+    expect(await invoke("q", { stream: false }, META, "Nimbus: asking…")).toEqual({ reply: "ok" });
+    expect(order).toEqual(["gate", "send:q"]);
+  });
 });
 
 describe("gateAskStream", () => {
@@ -353,6 +376,40 @@ describe("gateRawParticipantBriefs", () => {
       { action: "a", files: [], omissions: [] },
     );
     expect(checked).toBe(false);
+  });
+
+  test("expert records its own params and forwards them to agentsExpert, and only there", async () => {
+    const gate = fakeGate("send");
+    const calls: Array<[string, unknown]> = [];
+    const client: RawParticipantBriefClient = {
+      agentsCatchup: async (p) => {
+        calls.push(["catchup", p]);
+        return {} as never;
+      },
+      agentsExpert: async (p) => {
+        calls.push(["expert", p]);
+        return { kind: "expert" } as never;
+      },
+      agentsImpact: async (p) => {
+        calls.push(["impact", p]);
+        return {} as never;
+      },
+    };
+    const meta: EgressMeta = { action: "Owners (agents.expert)", files: [], omissions: [] };
+    const brief = await gateRawParticipantBriefs(client, gate).expert(
+      { topicOrFile: "session.ts", limit: 3 },
+      meta,
+    );
+    expect(brief).toEqual({ kind: "expert" });
+    expect(calls).toEqual([["expert", { topicOrFile: "session.ts", limit: 3 }]]);
+    expect(gate.recorded).toEqual([
+      {
+        kind: "participant",
+        prompt: JSON.stringify({ topicOrFile: "session.ts", limit: 3 }, null, 2),
+        roots: [],
+        ...meta,
+      },
+    ]);
   });
 });
 

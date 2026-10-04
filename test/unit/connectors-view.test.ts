@@ -134,6 +134,28 @@ describe("the connectors view", () => {
     const foreign: SidebarItem = { label: "No connectors registered" };
     expect(await view.getChildren(foreign)).toEqual([]);
   });
+
+  test("with no clock injected — as extension.ts builds it — ages come from the real clock", async () => {
+    const view = createConnectorsView({
+      connection,
+      ops: ops({ list: vi.fn(async () => [status({ lastSyncAt: Date.now() - 3 * 3_600_000 })]) }),
+    });
+    const [row] = await view.getChildren();
+    expect(row?.description).toBe("2 items · synced 3h ago");
+  });
+
+  test("a detail with no telemetry field at all reads as never synced, not as an error", async () => {
+    // An older Gateway can omit `telemetry` entirely rather than send [].
+    const view = createConnectorsView({
+      connection,
+      ops: ops({ detail: vi.fn(async () => status()) }),
+      now: () => NOW,
+    });
+    const [row] = await view.getChildren();
+    const children = await view.getChildren(row);
+    expect(children.map((c) => c.label)).toEqual(["Recent syncs"]);
+    expect(children[0]?.children).toEqual([{ label: "Never synced", iconId: "info" }]);
+  });
 });
 
 describe("unconfigured services", () => {

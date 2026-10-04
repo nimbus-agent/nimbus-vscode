@@ -6,6 +6,7 @@ import { commands, env, Uri, window as vscodeWindow, workspace as vscodeWorkspac
 import type { ChatPanel } from "../../src/chat/chat-panel.js";
 import type { ParticipantDeps } from "../../src/chat-participant/participant-types.js";
 import type { AutoStarter, AutoStartResult } from "../../src/connection/auto-start.js";
+import { DIAGNOSTIC_COMMANDS } from "../../src/diagnostics/actions.js";
 import {
   activateWithDeps,
   createDiffOpener,
@@ -13,6 +14,7 @@ import {
   createSourceOpener,
 } from "../../src/extension.js";
 import type { LmToolsDeps } from "../../src/lm-tools/lm-tools.js";
+import type { GitApiLike, GitRepositoryLike } from "../../src/scm/git-types.js";
 import type { IndexItem } from "../../src/sidebar/index.js";
 import type {
   CancellationTokenLike,
@@ -26,6 +28,16 @@ import type {
   WindowApi,
   WorkspaceApi,
 } from "../../src/vscode-shim.js";
+// The same module instance "vscode" resolves to, imported by path for the
+// members the real API types do not declare (captured providers) or declare
+// read-only (activeTextEditor, workspaceFolders), which a test seeds.
+import {
+  Hover,
+  MarkdownString,
+  languages as stubLanguages,
+  window as stubWindow,
+  workspace as stubWorkspace,
+} from "./vscode-stub.js";
 
 class FakeMemento implements MementoLike {
   private readonly store = new Map<string, unknown>();
@@ -1112,7 +1124,7 @@ describe("activateWithDeps", () => {
     expect(items.some((i) => i.label === "$(database) Q3 Deck")).toBe(true);
   });
 
-  // Degraded state the spec's table requires: "searchRanked throws while
+  // Degraded state the attach design requires: "searchRanked throws while
   // picking → the picker shows files only, with a row explaining the index
   // is unavailable." Before this fix, a thrown searchRanked only produced a
   // `log.warn` — a user with the Gateway down saw a files-only picker
@@ -3794,5 +3806,1475 @@ describe("workflow run wiring", () => {
     await waitForConnect();
     await cmd(f, "nimbus.runWorkflow")();
     expect(f.errorMessages.join(" ")).toMatch(/not connected/i);
+  });
+
+  test.each([
+    ["a string", "nightly-sync"],
+    ["null", null],
+  ])("a tree argument whose payload is %s falls back to the picker", async (_label, payload) => {
+    const workflowRunStream = vi.fn(() => runHandle());
+    const f = makeFixture({
+      quickPickAnswers: pickWorkflow(),
+      warnMessageClicks: ["Send"],
+      openClient: makeFakeClient({
+        workflowList: async () => ({ workflows: [WF_ROW] }),
+        workflowRunStream,
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")({ payload });
+    expect(f.deps.window.showQuickPick).toHaveBeenCalledTimes(1);
+    expect(workflowRunStream).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "nightly-sync" }),
+    );
+  });
+
+  test("a Gateway that drops between listing and running reports the run as not connected", async () => {
+    // The listing succeeded on a live client; by the time the run is started
+    // the connection has gone. The run must refuse rather than reach for a
+    // client that no longer exists.
+    let f: ReturnType<typeof makeFixture> | undefined;
+    const workflowRunStream = vi.fn(() => runHandle());
+    const workflowList = vi.fn(async () => {
+      // Drops the live client synchronously; the re-dial then fails.
+      if (f !== undefined) void cmd(f, "nimbus.reconnect")();
+      return { workflows: [WF_ROW] };
+    });
+    f = makeFixture({
+      openClient: connectsOnce(
+        makeFakeClient({ workflowList, workflowRunStream } as unknown as Partial<ClientLike>),
+      ),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.runWorkflow")({ payload: { workflowName: "nightly-sync" } });
+    expect(workflowList).toHaveBeenCalledTimes(1);
+    expect(workflowRunStream).not.toHaveBeenCalled();
+    expect(f.errorMessages).toContain(
+      "Nimbus: workflow nightly-sync failed — Nimbus: not connected to the Gateway.",
+    );
+    teardown(f);
+  });
+});
+
+// Connects once, then refuses every later attempt — so a test can build state
+// while connected and then lose the Gateway underneath it: nimbus.reconnect
+// drops the live client before it re-dials, and the re-dial fails.
+function connectsOnce(client: () => Promise<ClientLike>): () => Promise<ClientLike> {
+  let opened = false;
+  return async () => {
+    if (opened) throw new Error("ECONNREFUSED");
+    opened = true;
+    return await client();
+  };
+}
+
+// Disposes everything activation registered. Among other things this stops the
+// connection manager, whose reconnect backoff would otherwise keep a 3s timer
+// alive past the test that made the connection fail.
+function teardown(f: Captured): void {
+  for (const s of f.ctx.subscriptions) s.dispose();
+}
+
+const NOT_CONNECTED_YET =
+  'Nimbus is not connected to the Gateway yet. Try again in a moment, or run "Nimbus: Reconnect to Gateway".';
+
+describe("activation reads its settings", () => {
+  test("a short workspace root is named in the debug log as dropped from the leak check", async () => {
+    // Narrowing the leak check silently would read as "we checked everything".
+    const f = makeFixture({
+      cfg: { logLevel: "debug" },
+      workspaceFolders: [{ uri: { fsPath: "/w" } }],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const line = f.outputAppendLines.find((l) => l.includes("egress: leak check skipping"));
+    expect(line).toMatch(/\[debug\] egress: leak check skipping \d+ short root\(s\): /);
+    expect(line?.split("short root(s): ")[1]?.split(", ")).toContain("/w");
+  });
+
+  test("when every root is long enough to search for, nothing is reported as skipped", async () => {
+    // os.tmpdir() is "/tmp" on Linux — always too short — so the temp dir is
+    // pointed at a longer path for this activation: TMPDIR on POSIX, TEMP/TMP
+    // on Windows. That is the situation a macOS or Windows user is in.
+    const names = ["TMPDIR", "TEMP", "TMP"] as const;
+    const saved = names.map((n) => [n, process.env[n]] as const);
+    const longTemp = join(tmpdir(), "nimbus-long-enough-temp-root");
+    for (const n of names) process.env[n] = longTemp;
+    try {
+      expect(tmpdir()).toBe(longTemp);
+      const f = makeFixture({
+        cfg: { logLevel: "debug" },
+        workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      });
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      expect(
+        f.outputAppendLines.some((l) => l.includes("Nimbus VS Code extension activating")),
+      ).toBe(true);
+      expect(f.outputAppendLines.some((l) => l.includes("leak check skipping"))).toBe(false);
+    } finally {
+      for (const [n, v] of saved) {
+        if (v === undefined) delete process.env[n];
+        else process.env[n] = v;
+      }
+    }
+  });
+
+  test("an explicit nimbus.socketPath is dialled as-is, without discovery", async () => {
+    const override = join(tmpdir(), "nimbus-override.sock");
+    const discover = vi.fn(async () => ({ socketPath: TEST_SOCKET_PATH, source: "default" }));
+    const dialled: string[] = [];
+    const f = makeFixture({ cfg: { socketPath: override }, discoverSocket: discover });
+    const client = await makeFakeClient()();
+    f.deps.openClient = async (socketPath) => {
+      dialled.push(socketPath);
+      return client;
+    };
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    expect(dialled).toEqual([override]);
+    expect(discover).not.toHaveBeenCalled();
+  });
+
+  test("the Connectors view lists never-configured services only when the setting asks", async () => {
+    const connectorListStatus = vi.fn(async () => [
+      {
+        serviceId: "airflow",
+        status: "ok" as const,
+        healthState: "not_configured",
+        lastSyncAt: null,
+        nextSyncAt: null,
+        intervalMs: 60_000,
+        itemCount: 0,
+        lastError: null,
+        consecutiveFailures: 0,
+        depth: "summary" as const,
+        enabled: true,
+      },
+    ]);
+    const labelsWith = async (cfg: Record<string, unknown>): Promise<string[]> => {
+      const f = makeFixture({
+        cfg,
+        openClient: makeFakeClient({ connectorListStatus } as unknown as Partial<ClientLike>),
+      });
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      const rows = (await f.treeProviders.get("nimbus.connectorsView")?.getChildren()) ?? [];
+      return (rows as Array<{ label: string }>).map((r) => r.label);
+    };
+    expect(await labelsWith({ "connectors.showUnconfigured": true })).toEqual(["airflow"]);
+    expect((await labelsWith({}))[0]).toBe("No connectors configured");
+  });
+});
+
+describe("status-bar polls that race", () => {
+  // The connector poll runs on every status-bar render; a nimbus.* settings
+  // change is the simplest way to trigger one.
+  const pollAgain = (f: Captured): void => {
+    for (const h of f.configChangeHandlers) h({ affectsConfiguration: (s) => s === "nimbus" });
+  };
+  // Every value the extension has set `nimbus.connected` to, in order. It starts
+  // with the replay of the initial idle state (false), then true on connect.
+  const connectedFlags = (f: Captured & { deps: ActivateDeps }): unknown[] =>
+    (f.deps.commands.executeCommand as unknown as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c) => c[0] === "setContext" && c[1] === "nimbus.connected")
+      .map((c) => c[2]);
+
+  test("an egress poll that FAILS after a newer poll succeeded neither logs nor tears down", async () => {
+    // A transport-shaped error: honoured, it would mark the connection dead.
+    const first = deferred<never>();
+    let call = 0;
+    const egressHead = vi.fn(async () => {
+      call += 1;
+      if (call === 1) return await first.promise;
+      return { head: "freshhead00", count: 99 };
+    });
+    const f = makeFixture({ openClient: makeFakeClient({ egressHead } as never) });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    call = 0;
+    cmd(f, "nimbus.refreshEgress")(); // poll #1: pending
+    await Promise.resolve();
+    cmd(f, "nimbus.refreshEgress")(); // poll #2: supersedes #1
+    await flush();
+    let rejectFirst = (_e: Error): void => undefined;
+    const late = new Promise<never>((_r, reject) => {
+      rejectFirst = reject;
+    });
+    const flagsBefore = connectedFlags(f);
+    first.resolve(late as never);
+    rejectFirst(new Error("socket hang up"));
+    await flush();
+    expect(f.outputAppendLines.some((l) => l.includes("egressHead poll failed"))).toBe(false);
+    // Still connected: the stale failure did not mark the transport dead.
+    expect(flagsBefore.at(-1)).toBe(true);
+    expect(connectedFlags(f)).toEqual(flagsBefore);
+    expect(f.statusItem.text).toContain("99");
+  });
+
+  test("a superseded connector poll's late answer does not repaint the status bar", async () => {
+    const degraded = [
+      {
+        serviceId: "slack",
+        status: "error" as const,
+        lastSyncAt: 1_700_000_000_000,
+        nextSyncAt: null,
+        intervalMs: 60000,
+        itemCount: 42,
+        lastError: "401",
+        consecutiveFailures: 3,
+        depth: "summary" as const,
+        enabled: true,
+      },
+    ];
+    const slow = deferred<typeof degraded>();
+    let call = 0;
+    const connectorListStatus = vi.fn(async () => {
+      call += 1;
+      return call === 2 ? await slow.promise : [];
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ connectorListStatus } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await flush();
+    expect(call).toBe(1);
+    pollAgain(f); // #2: pending, will answer "slack is degraded"
+    pollAgain(f); // #3: answers healthy, first
+    await flush();
+    slow.resolve(degraded);
+    await flush();
+    expect(call).toBe(3);
+    expect(f.statusItem.tooltip ?? "").not.toContain("slack");
+    expect(f.statusItem.text).not.toContain("degraded");
+  });
+
+  test("a superseded connector poll's late FAILURE neither logs nor tears down", async () => {
+    let failSlow = (_e: Error): void => undefined;
+    const slow = new Promise<never>((_r, reject) => {
+      failSlow = reject;
+    });
+    let call = 0;
+    const connectorListStatus = vi.fn(async () => {
+      call += 1;
+      return call === 2 ? await slow : [];
+    });
+    const f = makeFixture({
+      openClient: makeFakeClient({ connectorListStatus } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await flush();
+    pollAgain(f);
+    pollAgain(f);
+    await flush();
+    const flagsBefore = connectedFlags(f);
+    failSlow(new Error("socket hang up"));
+    await flush();
+    expect(call).toBe(3);
+    expect(f.outputAppendLines.some((l) => l.includes("connectorListStatus poll failed"))).toBe(
+      false,
+    );
+    expect(flagsBefore.at(-1)).toBe(true);
+    expect(connectedFlags(f)).toEqual(flagsBefore);
+  });
+});
+
+describe("chat panel messages that carry nothing usable", () => {
+  const handler = (f: Captured): ((msg: unknown) => void) => {
+    const h = f.webviewMessageHandlers.at(-1);
+    if (h === undefined) throw new Error("no webview message handler registered");
+    return h;
+  };
+
+  test("a submitAsk with blank or non-string text starts no stream", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({ openClient: makeFakeClient({ askStream } as never) });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.newConversation")();
+    handler(f)({ type: "submitAsk", text: "   " });
+    handler(f)({ type: "submitAsk", text: 42 });
+    handler(f)({ type: "submitAsk" });
+    await flush();
+    expect(askStream).not.toHaveBeenCalled();
+    // The positive control: the same handler does start a stream for real text.
+    handler(f)({ type: "submitAsk", text: "why is p99 up?" });
+    await flush();
+    expect(askStream).toHaveBeenCalledTimes(1);
+  });
+
+  test("a submitAsk after the Gateway dropped and the panel was rebuilt says so", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({ openClient: connectsOnce(makeFakeClient({ askStream } as never)) });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.newConversation")();
+    const fire = handler(f);
+    f.disposeChatPanel(); // drops the cached controller
+    await cmd(f, "nimbus.reconnect")(); // and the Gateway with it
+    fire({ type: "submitAsk", text: "still there?" });
+    await flush();
+    expect(f.errorMessages).toContain(NOT_CONNECTED_YET);
+    expect(askStream).not.toHaveBeenCalled();
+    teardown(f);
+  });
+
+  test("a hitlResponse with no request id resolves nothing; an unknown decision resolves without answering", async () => {
+    const { f } = makeInlineHitlFixture();
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.ask")();
+    await flush();
+    handle.fireHitl({
+      requestId: "req-z",
+      prompt: "Allow?",
+      streamId: "s-inline",
+    } as Parameters<typeof handle.fireHitl>[0]);
+    await flush();
+
+    handler(f)({ type: "hitlResponse", requestId: "", decision: "approve" });
+    await flush();
+    // Still pending: showPendingHitl reveals the panel only while one is.
+    const revealsBefore = f.panelRevealedCount;
+    await cmd(f, "nimbus.showPendingHitl")();
+    expect(f.panelRevealedCount).toBe(revealsBefore + 1);
+
+    // Neither "approve" nor "reject": resolved as no decision, so nothing is
+    // sent — and the request is no longer pending.
+    handler(f)({ type: "hitlResponse", requestId: "req-z", decision: "maybe" });
+    await flush();
+    expect(f.outputAppendLines.some((l) => l.includes("HITL sendResponse failed"))).toBe(false);
+    const revealsAfter = f.panelRevealedCount;
+    await cmd(f, "nimbus.showPendingHitl")();
+    expect(f.panelRevealedCount).toBe(revealsAfter);
+  });
+
+  test("an openExternal with no url opens nothing", async () => {
+    const openExternal = vi.spyOn(env, "openExternal");
+    try {
+      const f = makeFixture({});
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      await cmd(f, "nimbus.newConversation")();
+      handler(f)({ type: "openExternal", url: "" });
+      handler(f)({ type: "openExternal" });
+      await flush();
+      expect(openExternal).not.toHaveBeenCalled();
+    } finally {
+      openExternal.mockRestore();
+    }
+  });
+
+  test("a detachContext with no id detaches nothing", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      activeEditor: {
+        text: "line0\nline1\n",
+        selectionText: "line1",
+        empty: false,
+        fileName: "/home/dev/proj/src/a.ts",
+      },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachSelectionToAsk")();
+    const id = lastAttachments(f)?.chips[0]?.id ?? "";
+    expect(id.length).toBeGreaterThan(0);
+    const postsBefore = f.postedToWebview.length;
+    handler(f)({ type: "detachContext", id: "" });
+    await flush();
+    expect(f.postedToWebview).toHaveLength(postsBefore);
+    handler(f)({ type: "detachContext", id });
+    await flush();
+    expect(lastAttachments(f)?.chips).toEqual([]);
+  });
+});
+
+describe("attachments, end to end", () => {
+  test("a file attached earlier is re-read at send, so an edit made since is what goes out", async () => {
+    const askStream = doneAskStream();
+    const fileContents: Record<string, string> = {
+      "/home/dev/proj/src/a.ts": "export const v = 1;\n",
+    };
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      findFilesResult: [{ fsPath: "/home/dev/proj/src/a.ts" }],
+      fileContents,
+      openClient: makeFakeClient({ askStream, searchRanked: async () => [] } as never),
+      quickPickAnswers: [{ label: "$(file) src/a.ts", kind: "file", path: "src/a.ts" }],
+      inputBoxAnswers: ["what does this export?"],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+    fileContents["/home/dev/proj/src/a.ts"] = "export const v = 2;\n"; // edited since attaching
+    await cmd(f, "nimbus.ask")();
+    const sent = String(askStream.mock.calls[0]?.[0] ?? "");
+    expect(sent).toContain("export const v = 2;");
+    expect(sent).not.toContain("export const v = 1;");
+  });
+
+  test("an index item whose snippet lookup fails is attached from its metadata, and the failure is logged", async () => {
+    const askStream = doneAskStream();
+    const f = makeFixture({
+      openClient: makeFakeClient({
+        askStream,
+        searchRanked: async () => {
+          throw new Error("index busy");
+        },
+      } as unknown as Partial<ClientLike>),
+      inputBoxAnswers: ["summarise it"],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(
+      f,
+      "nimbus.attachIndexItemToAsk",
+    )({
+      payload: {
+        id: "notion:9",
+        name: "Runbook",
+        service: "notion",
+        itemType: "page",
+        url: "https://notion.example/runbook",
+      },
+    });
+    expect(
+      f.outputAppendLines.some((l) =>
+        l.includes("attach index item: snippet lookup failed: index busy"),
+      ),
+    ).toBe(true);
+    expect(lastAttachments(f)?.chips[0]?.label).toBe("Runbook");
+    await cmd(f, "nimbus.ask")();
+    const sent = String(askStream.mock.calls[0]?.[0] ?? "");
+    expect(sent).toContain(
+      "Name: Runbook\nService: notion\nType: page\nURL: https://notion.example/runbook",
+    );
+  });
+
+  test("attaching an index item after the Gateway dropped still attaches it, without a lookup", async () => {
+    const searchRanked = vi.fn(async () => []);
+    const f = makeFixture({
+      openClient: connectsOnce(makeFakeClient({ searchRanked } as unknown as Partial<ClientLike>)),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.newConversation")(); // the panel exists...
+    await cmd(f, "nimbus.reconnect")(); // ...and then the Gateway goes
+    await cmd(
+      f,
+      "nimbus.attachIndexItemToAsk",
+    )({
+      payload: { id: "gdrive:1", name: "Q3 Deck", service: "gdrive" },
+    });
+    expect(searchRanked).not.toHaveBeenCalled();
+    // No lookup was even attempted, so none failed.
+    expect(f.outputAppendLines.some((l) => l.includes("snippet lookup failed"))).toBe(false);
+    expect(lastAttachments(f)?.chips.map((c) => c.label)).toEqual(["Q3 Deck"]);
+    teardown(f);
+  });
+
+  test("the picker describes a typeless index hit by its service alone, and keeps its url", async () => {
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({
+        searchRanked: async () => [
+          {
+            name: "Q3 Deck",
+            service: "gdrive",
+            indexPrimaryKey: "gdrive:1",
+            url: "https://docs.example/q3",
+          },
+        ],
+      } as never),
+      quickPickAnswers: [undefined],
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+    const items = (f.deps.window.showQuickPick as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0] as Array<{ label: string; description?: string; item?: { url?: string } }>;
+    const row = items.find((i) => i.label === "$(database) Q3 Deck");
+    expect(row?.description).toBe("gdrive");
+    expect(row?.item?.url).toBe("https://docs.example/q3");
+  });
+
+  test("the attach picker while disconnected says so and lists nothing", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachContext")();
+    expect(f.errorMessages).toContain(NOT_CONNECTED_YET);
+    expect(f.deps.workspace.findFiles).not.toHaveBeenCalled();
+    teardown(f);
+  });
+
+  test("a whitespace-only selection is not attached, and says why", async () => {
+    const f = makeFixture({
+      activeEditor: { text: "a\n   \n", selectionText: "   ", empty: false, fileName: "a.ts" },
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.attachSelectionToAsk")();
+    expect(f.errorMessages).toEqual(["Nimbus: select text first."]);
+    expect(lastAttachments(f)).toBeUndefined();
+  });
+});
+
+describe("chat commands while disconnected", () => {
+  const ITEM = { payload: { id: "gdrive:1", name: "Q3 Deck", service: "gdrive" } };
+  const SELECTION = {
+    text: "const a = 1;",
+    selectionText: "const a = 1;",
+    empty: false,
+    fileName: "/home/dev/proj/a.ts",
+  };
+  test.each([
+    ["nimbus.ask", [], { inputBoxAnswers: ["what changed?"] }],
+    [
+      "nimbus.askAboutSelection",
+      [],
+      { inputBoxAnswers: ["Explain this:"], activeEditor: SELECTION },
+    ],
+    ["nimbus.attachSelectionToAsk", [], { activeEditor: SELECTION }],
+    ["nimbus.attachIndexItemToAsk", [ITEM], {}],
+    ["nimbus.askAboutIndexItem", [ITEM], {}],
+    ["nimbus.openSession", ["s-1"], {}],
+    ["nimbus.openAgentChat", [{ id: "ops", label: "Ops" }], {}],
+  ] as const)("%s says the Gateway is not connected and opens no panel", async (id, args, opts) => {
+    const f = makeFixture({ ...opts, openClient: disconnectedClient() } as Parameters<
+      typeof makeFixture
+    >[0]);
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, id)(...args);
+    expect(f.errorMessages).toEqual([NOT_CONNECTED_YET]);
+    expect(f.postedToWebview).toEqual([]);
+    expect(f.webviewMessageHandlers).toEqual([]);
+    teardown(f);
+  });
+
+  test("findRelatedFromIndex and openEgressEntry ignore an argument they cannot read", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.findRelatedFromIndex")({ payload: { nope: true } });
+    await cmd(f, "nimbus.openEgressEntry")({ nope: true });
+    expect(f.quickPicks).toHaveLength(0);
+    expect(f.openedDocs).toEqual([]);
+    expect(f.errorMessages).toEqual([]);
+  });
+});
+
+// Subscribes to a registered tree view's change event — the only trace a
+// refresh() leaves from outside extension.ts.
+function onViewChange(f: Captured, viewId: string): ReturnType<typeof vi.fn> {
+  const provider = f.treeProviders.get(viewId) as unknown as
+    | { onDidChangeTreeData?: (listener: () => void) => unknown }
+    | undefined;
+  if (provider?.onDidChangeTreeData === undefined) throw new Error(`${viewId} has no change event`);
+  const listener = vi.fn();
+  provider.onDidChangeTreeData(listener);
+  return listener;
+}
+
+const BRIEF_BASE = { agentVersion: 1, generatedAt: 0, latencyMs: 1, gaps: [] };
+
+describe("editor integrations reach the Gateway through extension.ts", () => {
+  const hoverDoc = (fsPath: string) => ({ uri: { fsPath, toString: () => `file://${fsPath}` } });
+  const NOT_YET_SETTLED = { isCancellationRequested: false };
+
+  test("the blame hover asks the raw client about the hovered line, repo-relative and one-based", async () => {
+    const agentsWhyPeek = vi.fn(async () => ({
+      subject: null,
+      author: "Ada",
+      authorEmail: null,
+      commitSha: "abcdef1234567",
+      committedAt: null,
+      commitSubject: "fix: clear the retry loop",
+      pr: null,
+      ticket: null,
+      hasMore: false,
+    }));
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      openClient: makeFakeClient({ agentsWhyPeek } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = stubLanguages.lastHoverProvider;
+    if (provider === undefined) throw new Error("no hover provider registered");
+    vi.useFakeTimers();
+    try {
+      const pending = provider.provideHover(
+        hoverDoc("/home/dev/proj/src/a.ts"),
+        { line: 41 },
+        NOT_YET_SETTLED,
+      );
+      // The hover waits for the cursor to settle before it asks anything.
+      await vi.advanceTimersByTimeAsync(150);
+      const hover = await pending;
+      expect(agentsWhyPeek).toHaveBeenCalledWith({ ref: "src/a.ts", line: 42 });
+      expect(hover).toBeInstanceOf(Hover);
+      const contents = (hover as Hover).contents;
+      expect(contents).toBeInstanceOf(MarkdownString);
+      const md = (contents as MarkdownString).value;
+      expect(md).toContain("**Ada**");
+      expect(md).toContain("fix: clear the retry loop");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("the blame hover stays silent while disconnected, and when switched off", async () => {
+    const f = makeFixture({ cfg: { logLevel: "debug" }, openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const provider = stubLanguages.lastHoverProvider;
+    if (provider === undefined) throw new Error("no hover provider registered");
+    vi.useFakeTimers();
+    try {
+      const pending = provider.provideHover(hoverDoc("/r/a.ts"), { line: 0 }, NOT_YET_SETTLED);
+      await vi.advanceTimersByTimeAsync(150);
+      expect(await pending).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(
+      f.outputAppendLines.some((l) =>
+        l.includes("whyPeek hover failed: Nimbus: not connected to the Gateway."),
+      ),
+    ).toBe(true);
+    teardown(f);
+
+    const agentsWhyPeek = vi.fn();
+    const off = makeFixture({
+      cfg: { "briefs.showHoverBlame": false },
+      openClient: makeFakeClient({ agentsWhyPeek } as never),
+    });
+    activateWithDeps(off.ctx, off.deps);
+    await waitForConnect();
+    const offProvider = stubLanguages.lastHoverProvider;
+    expect(
+      await offProvider?.provideHover(hoverDoc("/r/a.ts"), { line: 0 }, NOT_YET_SETTLED),
+    ).toBeUndefined();
+    expect(agentsWhyPeek).not.toHaveBeenCalled();
+  });
+
+  describe("diagnostic code actions", () => {
+    const TEXT = "const a = 1;\nconst x = maybe();\nx.go();\n";
+    const FILE = "/home/dev/proj/src/a.ts";
+    const diagnostic = {
+      message: "Object is possibly 'undefined'.",
+      severity: 0,
+      source: "ts",
+      code: 2532,
+      range: { start: { line: 1, character: 10 }, end: { line: 1, character: 17 } },
+    };
+    const document = { fileName: FILE, languageId: "typescript", getText: () => TEXT };
+
+    // The argument the lightbulb would hand each command, built by the real
+    // provider from the real document — not hand-written here.
+    function offeredArg(): unknown {
+      const provider = stubLanguages.lastCodeActionsProvider;
+      if (provider === undefined) throw new Error("no code actions provider registered");
+      const actions = provider.provideCodeActions(document, diagnostic.range, {
+        diagnostics: [diagnostic],
+      });
+      const arg = actions?.[0]?.command?.arguments?.[0];
+      if (arg === undefined) throw new Error("no diagnostic action was offered");
+      return arg;
+    }
+
+    test("an explain action is offered and runs through the gate with the configured agent", async () => {
+      const agentInvoke = vi.fn(async (_input: string, _opts: unknown) => ({
+        reply: "`maybe()` can return undefined.",
+      }));
+      const f = makeFixture({
+        cfg: { askAgent: "ops" },
+        openClient: makeFakeClient({ agentInvoke } as never),
+      });
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      const arg = offeredArg() as { query: string; documentPath: string; fullText: string };
+      expect(arg.documentPath).toBe(FILE);
+      expect(arg.fullText).toBe(TEXT);
+      expect(arg.query.length).toBeGreaterThan(0);
+      await cmd(f, DIAGNOSTIC_COMMANDS.explain)(arg);
+      expect(agentInvoke).toHaveBeenCalledTimes(1);
+      expect(agentInvoke.mock.calls[0]?.[1]).toEqual({ stream: false, agent: "ops" });
+      expect(f.openedDocs).toEqual([
+        { title: "Nimbus explanation.md", content: "`maybe()` can return undefined." },
+      ]);
+    });
+
+    test("a fix re-reads the open document by its path and diffs against it", async () => {
+      const agentInvoke = vi.fn(async () => ({ reply: "```ts\nconst x = maybe() ?? 0;\n```" }));
+      const diffs: Array<{ left: string; right: string }> = [];
+      const f = makeFixture({ openClient: makeFakeClient({ agentInvoke } as never) });
+      f.deps.workspace.textDocuments = [{ uri: { fsPath: FILE }, getText: () => TEXT }];
+      f.deps.openDiff = async (o) => {
+        diffs.push({ left: o.left, right: o.right });
+      };
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      await cmd(f, DIAGNOSTIC_COMMANDS.fix)(offeredArg());
+      expect(diffs).toEqual([
+        { left: TEXT, right: "const a = 1;\nconst x = maybe() ?? 0;\nx.go();\n" },
+      ]);
+      expect(f.warnMessages.filter((m) => m.includes("not open"))).toEqual([]);
+    });
+
+    test("prior occurrences opens the index search seeded with the diagnostic's query", async () => {
+      const searchRanked = vi.fn(async () => []);
+      const f = makeFixture({ openClient: makeFakeClient({ searchRanked } as never) });
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      const arg = offeredArg() as { query: string };
+      await cmd(f, DIAGNOSTIC_COMMANDS.priorOccurrences)(arg);
+      expect(f.quickPicks).toHaveLength(1);
+      expect(f.quickPicks[0]?.placeholder).toBe("Prior occurrences of this error");
+      expect(f.quickPicks[0]?.value).toBe(arg.query);
+    });
+
+    test("while disconnected no action is offered, and a stale one says so instead of sending", async () => {
+      const f = makeFixture({ openClient: makeFakeClient({ agentInvoke: vi.fn() } as never) });
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      const arg = offeredArg(); // captured while connected...
+      const explain = deferredCommand(f, DIAGNOSTIC_COMMANDS.explain);
+      teardown(f); // ...and then the client is gone
+      const provider = stubLanguages.lastCodeActionsProvider;
+      expect(
+        provider?.provideCodeActions(document, diagnostic.range, { diagnostics: [diagnostic] }),
+      ).toBeUndefined();
+      await explain(arg);
+      expect(f.errorMessages).toEqual(["Nimbus: not connected to Gateway."]);
+      expect(f.openedDocs).toEqual([]);
+    });
+  });
+
+  test("the context panel's two Gateway reads reach the raw client, with the configured limit", async () => {
+    const registerSpy = vi.spyOn(vscodeWindow, "registerWebviewViewProvider");
+    const agentsWhyPeek = vi.fn(async () => ({
+      subject: null,
+      author: "Ada",
+      authorEmail: null,
+      commitSha: null,
+      committedAt: null,
+      commitSubject: null,
+      pr: null,
+      ticket: null,
+      hasMore: false,
+    }));
+    const searchRanked = vi.fn(async () => [
+      { name: "neighbour.ts", service: "github", indexPrimaryKey: "gh:1", score: 1 },
+    ]);
+    const posted: Array<{ type?: string; section?: { id?: string } }> = [];
+    let receive: (raw: unknown) => void = () => undefined;
+    const view = {
+      visible: true,
+      webview: {
+        options: undefined as unknown,
+        html: "",
+        cspSource: "vscode-resource:",
+        asWebviewUri: (u: unknown) => ({ toString: () => `https://webview/${String(u)}` }),
+        onDidReceiveMessage: (h: (raw: unknown) => void) => {
+          receive = h;
+          return { dispose: () => undefined };
+        },
+        postMessage: async (m: unknown) => {
+          posted.push(m as { type?: string; section?: { id?: string } });
+          return true;
+        },
+      },
+      onDidChangeVisibility: () => ({ dispose: () => undefined }),
+      onDidDispose: () => ({ dispose: () => undefined }),
+    };
+    stubWorkspace.workspaceFolders = [{ uri: { fsPath: "/home/dev/proj" } }];
+    stubWindow.activeTextEditor = {
+      document: {
+        fileName: "/home/dev/proj/src/a.ts",
+        uri: { scheme: "file", fsPath: "/home/dev/proj/src/a.ts" },
+        languageId: "typescript",
+        isDirty: false,
+        getText: () => "",
+        lineAt: () => ({ range: { end: {} } }),
+      },
+      selection: { isEmpty: true, active: { line: 3 }, start: { line: 3 }, end: { line: 3 } },
+    };
+    try {
+      const f = makeFixture({
+        cfg: { "search.limit": 7 },
+        openClient: makeFakeClient({ agentsWhyPeek, searchRanked } as never),
+      });
+      activateWithDeps(f.ctx, f.deps);
+      const call = registerSpy.mock.calls.find(([viewId]) => viewId === "nimbus.contextView");
+      const provider = call?.[1] as { resolveWebviewView: (v: unknown) => void } | undefined;
+      if (provider === undefined) throw new Error("the context view provider was not registered");
+      provider.resolveWebviewView(view);
+      await waitForConnect();
+      await flush();
+      receive({ type: "ready" });
+      await flush();
+      // Line 3 in the editor is line 4 on the wire; the path is repo-relative.
+      expect(agentsWhyPeek).toHaveBeenCalledWith({ ref: "src/a.ts", line: 4 });
+      expect(searchRanked).toHaveBeenCalledWith({ name: "src/a.ts", limit: 7 });
+      const sections = posted.filter((m) => m.type === "section").map((m) => m.section?.id);
+      expect(sections).toEqual(expect.arrayContaining(["blame", "related"]));
+      teardown(f);
+    } finally {
+      stubWindow.activeTextEditor = undefined;
+      stubWorkspace.workspaceFolders = undefined;
+      registerSpy.mockRestore();
+    }
+  });
+});
+
+// A registered command handler, captured BEFORE teardown() unregisters it — so
+// a test can invoke it in the state teardown leaves behind (client gone, the
+// manager still reporting its last state), the way an in-flight UI event would.
+function deferredCommand(f: Captured, id: string): (...args: unknown[]) => unknown {
+  const h = f.commandHandlers.get(id);
+  if (h !== undefined) return h;
+  throw new Error(`command ${id} was not registered before teardown`);
+}
+
+describe("a chat panel that outlives its Gateway", () => {
+  test("resuming a session after a reconnect failed says so, and never reaches the stale client", async () => {
+    // The controller is cached for the life of the panel, so it must resolve
+    // the client per call. Here the live client is gone; a call through a
+    // captured one would hit a closed pipe.
+    const getSessionTranscript = vi.fn(async () => ({
+      sessionId: "s-9",
+      turns: [],
+      hasMore: false,
+    }));
+    const f = makeFixture({
+      openClient: connectsOnce(makeFakeClient({ getSessionTranscript } as never)),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.newConversation")();
+    await cmd(f, "nimbus.reconnect")();
+    await cmd(f, "nimbus.openSession")("s-9");
+    expect(getSessionTranscript).not.toHaveBeenCalled();
+    expect(f.postedToWebview.at(-1)).toEqual({ type: "emptyState", sub: "no-transcript" });
+    expect(
+      f.outputAppendLines.some((l) =>
+        l.includes(
+          'getSessionTranscript failed: Nimbus is not connected to the Gateway. Run "Nimbus: Reconnect to Gateway".',
+        ),
+      ),
+    ).toBe(true);
+    teardown(f);
+  });
+});
+
+describe("brief command wiring", () => {
+  test("a brief while disconnected reports it and sends nothing", async () => {
+    const f = makeFixture({ openClient: disconnectedClient() });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.brief.huddle")();
+    expect(f.errorMessages).toEqual(["Nimbus: not connected to the Gateway."]);
+    expect(f.openedDocs).toEqual([]);
+    expect(f.warnMessages).toEqual([]); // no pre-flight modal for a send that cannot happen
+    teardown(f);
+  });
+
+  const whyFor = (p: { ref: string; line?: number }) => ({
+    ...BRIEF_BASE,
+    kind: "why",
+    query: { ref: p.ref, line: p.line ?? null },
+    subject: null,
+    findings: [],
+  });
+
+  test("Why? on a real file asks about the cursor line, repo-relative and one-based", async () => {
+    const agentsWhy = vi.fn(async (p: { ref: string; line?: number }) => whyFor(p));
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      activeEditor: { text: "x", fileName: "/home/dev/proj/src/a.ts", line: 9 },
+      openClient: makeFakeClient({ agentsWhy } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.brief.why")();
+    expect(agentsWhy).toHaveBeenCalledWith({ ref: "src/a.ts", line: 10 });
+    expect(f.openedDocs).toEqual([
+      { title: "Nimbus — Why is this here?.md", content: "No history found for `src/a.ts:10`." },
+    ]);
+  });
+
+  test("a hover link's target wins over the editor; a malformed one falls back to it", async () => {
+    const agentsWhy = vi.fn(async (p: { ref: string; line?: number }) => whyFor(p));
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      activeEditor: { text: "x", fileName: "/home/dev/proj/src/a.ts", line: 9 },
+      openClient: makeFakeClient({ agentsWhy } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.brief.why")({ ref: "src/b.ts", line: 3 });
+    await cmd(f, "nimbus.brief.why")({ ref: "src/b.ts" }); // no line: not a target
+    await cmd(f, "nimbus.brief.why")("src/b.ts:3"); // not an object at all
+    expect(agentsWhy.mock.calls.map((c) => c[0])).toEqual([
+      { ref: "src/b.ts", line: 4 },
+      { ref: "src/a.ts", line: 10 },
+      { ref: "src/a.ts", line: 10 },
+    ]);
+  });
+
+  test("conflicts renders each collision's age against the real clock", async () => {
+    const agentsConflicts = vi.fn(async (p: { file: string }) => ({
+      ...BRIEF_BASE,
+      kind: "conflict",
+      query: { file: p.file },
+      startEntityId: null,
+      collisions: [
+        {
+          peerId: "p1",
+          who: "Sam",
+          service: "github",
+          collisionType: "open_pr",
+          title: "Rework session refresh",
+          snippet: "",
+          modifiedAt: Date.now() - 2 * 3_600_000,
+        },
+      ],
+    }));
+    const f = makeFixture({
+      workspaceFolders: [{ uri: { fsPath: "/home/dev/proj" } }],
+      activeEditor: { text: "x", fileName: "/home/dev/proj/src/a.ts" },
+      openClient: makeFakeClient({ agentsConflicts } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.brief.conflicts")();
+    expect(f.openedDocs[0]?.content).toContain("**Sam** — open pr in github, 2h ago");
+  });
+
+  test("pre-flight prefills the namespace from nimbus.briefs.defaultNamespace", async () => {
+    const agentsPreflight = vi.fn(async (p: { ref: string; namespace: string }) => ({
+      ...BRIEF_BASE,
+      kind: "preflight",
+      query: { ref: p.ref, namespace: p.namespace },
+      downstreams: [],
+      anyFailed: false,
+      anyIncomplete: false,
+    }));
+    const f = makeFixture({
+      cfg: { "briefs.defaultNamespace": "billing" },
+      inputBoxAnswers: ["release-1.4", "billing"],
+      openClient: makeFakeClient({ agentsPreflight } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.brief.preflight")();
+    const prompts = (f.deps.window.showInputBox as unknown as ReturnType<typeof vi.fn>).mock.calls;
+    expect((prompts[1]?.[0] as { value?: string } | undefined)?.value).toBe("billing");
+    expect(agentsPreflight).toHaveBeenCalledWith({ ref: "release-1.4", namespace: "billing" });
+  });
+});
+
+describe("SCM command wiring", () => {
+  function fakeGitRepo(diffs: Record<string, string>): GitRepositoryLike {
+    const paths = Object.keys(diffs);
+    return {
+      rootPath: "/home/dev/proj",
+      changedFiles: async () => paths.map((path) => ({ path, status: "5" })),
+      changedPathsNow: () => paths,
+      stagedPathsNow: () => [],
+      fileDiff: async (_scope, path) => diffs[path] ?? "",
+      untrackedPaths: () => [],
+      log: async () => ["feat: earlier change"],
+      inputBox: { value: "" },
+      branch: () => "main",
+      onDidChange: () => ({ dispose: () => undefined }),
+    };
+  }
+  const gitWith =
+    (repo: GitRepositoryLike): (() => Promise<GitApiLike>) =>
+    async () => ({
+      repositories: () => [repo],
+      onDidOpenRepository: () => ({ dispose: () => undefined }),
+    });
+
+  test("the commit message honours both SCM settings: secret files and the signed trailer", async () => {
+    const repo = fakeGitRepo({
+      "src/a.ts": "@@ -1 +1 @@\n+const a = 1;\n",
+      ".env": "@@ -1 +1 @@\n+API_URL=https://staging.example\n",
+    });
+    const prompts: string[] = [];
+    const egressProveWindow = vi.fn(async () => ({
+      receipt: { digest: "d1", sigB64: "s1", pubkeyB64: "p1" },
+    }));
+    const f = makeFixture({
+      cfg: { "scm.egressProofTrailer": true, "scm.skipSecretFiles": false },
+      openClient: makeFakeClient({
+        agentInvoke: async (input: string) => {
+          prompts.push(input);
+          return { reply: "feat: add a" };
+        },
+        egressProveWindow,
+      } as never),
+    });
+    f.deps.git = gitWith(repo);
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.generateCommitMessage")();
+    // skipSecretFiles=false: the .env diff was sent, not skipped.
+    expect(prompts[0]).toContain("API_URL=https://staging.example");
+    expect(egressProveWindow).toHaveBeenCalledWith({ since: expect.any(Number), sign: true });
+    expect(repo.inputBox.value).toBe("feat: add a\n\nNimbus-Egress-Proof: d1 sig=s1 pubkey=p1");
+  });
+
+  test("the commit message while disconnected reports it before reading any diff", async () => {
+    const repo = fakeGitRepo({ "src/a.ts": "@@ -1 +1 @@\n+a\n" });
+    const changedFiles = vi.spyOn(repo, "changedFiles");
+    const f = makeFixture({ openClient: disconnectedClient() });
+    f.deps.git = gitWith(repo);
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.generateCommitMessage")();
+    expect(f.errorMessages).toEqual(["Nimbus: not connected to Gateway."]);
+    expect(changedFiles).not.toHaveBeenCalled();
+    teardown(f);
+  });
+
+  test("docstrings splice a selection rewrite at the offsets the real editor reports", async () => {
+    const diffs: Array<{ left: string; right: string }> = [];
+    const f = makeFixture({
+      activeEditor: {
+        text: "AAA\nBBB\nCCC\n",
+        selectionText: "BBB",
+        empty: false,
+        fileName: "a.ts",
+      },
+      openClient: makeFakeClient({
+        agentInvoke: async () => ({ reply: "```ts\n// doc\nBBB\n```" }),
+      } as never),
+    });
+    f.deps.openDiff = async (o) => {
+      diffs.push({ left: o.left, right: o.right });
+    };
+    // No injected selectionOffsets: activate() falls back to the real editor's
+    // Position → offset mapping, which the stub editor stands in for.
+    stubWindow.activeTextEditor = {
+      selection: {
+        isEmpty: false,
+        start: { line: 1, character: 0 },
+        end: { line: 1, character: 3 },
+      },
+      document: { offsetAt: (p: { line: number; character: number }) => p.line * 4 + p.character },
+    } as unknown as typeof stubWindow.activeTextEditor;
+    try {
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      await cmd(f, "nimbus.generateDocstrings")();
+    } finally {
+      stubWindow.activeTextEditor = undefined;
+    }
+    expect(diffs).toEqual([{ left: "AAA\nBBB\nCCC\n", right: "AAA\n// doc\nBBB\nCCC\n" }]);
+  });
+
+  test("docstrings with no real editor to measure fall back to a read-only tab", async () => {
+    const diffs: unknown[] = [];
+    const f = makeFixture({
+      activeEditor: { text: "AAA\nBBB\n", selectionText: "BBB", empty: false, fileName: "a.ts" },
+      openClient: makeFakeClient({
+        agentInvoke: async () => ({ reply: "```ts\n// doc\nBBB\n```" }),
+      } as never),
+    });
+    f.deps.openDiff = async (o) => {
+      diffs.push(o);
+    };
+    activateWithDeps(f.ctx, f.deps); // the stub's own activeTextEditor stays undefined
+    await waitForConnect();
+    await cmd(f, "nimbus.generateDocstrings")();
+    expect(diffs).toEqual([]);
+    expect(f.openedDocs).toEqual([{ title: "Nimbus docstrings.md", content: "// doc\nBBB" }]);
+  });
+});
+
+describe("connector command wiring", () => {
+  const ROW = {
+    label: "github",
+    contextValue: "nimbus.connector.active",
+    payload: { serviceId: "github", itemCount: 3 },
+  };
+
+  test("a connector command acts on its row and refreshes the Connectors view", async () => {
+    const connectorPause = vi.fn(async () => ({ ok: true }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ connectorPause } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await flush();
+    const changed = onViewChange(f, "nimbus.connectorsView");
+    await cmd(f, "nimbus.pauseConnector")(ROW);
+    await flush();
+    expect(connectorPause).toHaveBeenCalledWith({ serviceId: "github" });
+    expect(f.infoMessages).toContain("Pausing github: done");
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  test("Refresh Connectors repaints the view without calling the Gateway", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await flush();
+    const changed = onViewChange(f, "nimbus.connectorsView");
+    cmd(f, "nimbus.refreshConnectors")();
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  test("a pushed connector-config change refreshes the view once, debounced", async () => {
+    let pushChange = (): void => undefined;
+    const f = makeFixture({
+      openClient: makeFakeClient({
+        subscribeConnectorConfigChanged: (cb: () => void) => {
+          pushChange = cb;
+          return { dispose: () => undefined };
+        },
+      } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await flush();
+    const changed = onViewChange(f, "nimbus.connectorsView");
+    vi.useFakeTimers();
+    try {
+      pushChange();
+      pushChange(); // a burst collapses into one refresh
+      expect(changed).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(250);
+      expect(changed).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("participant and LM-tool clients", () => {
+  test("the participant gets no client while disconnected, and a forwarded retrieval search once connected", async () => {
+    let offline: ParticipantDeps | undefined;
+    const down = makeFixture({ openClient: disconnectedClient() });
+    down.deps.registerChatParticipant = ({ deps }) => {
+      offline = deps;
+      return { dispose: () => undefined };
+    };
+    activateWithDeps(down.ctx, down.deps);
+    await waitForConnect();
+    expect(offline?.client()).toBeUndefined();
+    teardown(down);
+
+    const retrieval = {
+      items: [],
+      retrieval: { vectorRanked: true, reason: null, partial: null, backfill: null },
+      notes: [],
+    };
+    const searchRankedWithRetrieval = vi.fn(async () => retrieval);
+    let online: ParticipantDeps | undefined;
+    const up = makeFixture({
+      openClient: makeFakeClient({ searchRankedWithRetrieval } as never),
+    });
+    up.deps.registerChatParticipant = ({ deps }) => {
+      online = deps;
+      return { dispose: () => undefined };
+    };
+    activateWithDeps(up.ctx, up.deps);
+    await waitForConnect();
+    await expect(
+      online?.client()?.searchRankedWithRetrieval({ name: "q", limit: 5 }),
+    ).resolves.toBe(retrieval);
+    expect(searchRankedWithRetrieval).toHaveBeenCalledWith({ name: "q", limit: 5 });
+  });
+
+  test("the LM tools get no client while disconnected, and a forwarded search once connected", async () => {
+    let offline: LmToolsDeps | undefined;
+    const down = makeFixture({ openClient: disconnectedClient() });
+    down.deps.registerLmTools = ({ deps }) => {
+      offline = deps;
+      return { dispose: () => undefined };
+    };
+    activateWithDeps(down.ctx, down.deps);
+    await waitForConnect();
+    expect(offline?.client()).toBeUndefined();
+    teardown(down);
+
+    const searchRanked = vi.fn(async () => [{ name: "a.ts" }]);
+    let online: LmToolsDeps | undefined;
+    const up = makeFixture({ openClient: makeFakeClient({ searchRanked } as never) });
+    up.deps.registerLmTools = ({ deps }) => {
+      online = deps;
+      return { dispose: () => undefined };
+    };
+    activateWithDeps(up.ctx, up.deps);
+    await waitForConnect();
+    await expect(online?.client()?.searchRanked({ name: "a" })).resolves.toEqual([
+      { name: "a.ts" },
+    ]);
+    expect(searchRanked).toHaveBeenCalledWith({ name: "a" });
+  });
+});
+
+describe("search picker lifecycle", () => {
+  test("a search that fails after the picker closed reports nothing", async () => {
+    let fail = (_e: Error): void => undefined;
+    const searchRanked = vi.fn(
+      () =>
+        new Promise<never>((_r, reject) => {
+          fail = reject;
+        }),
+    );
+    const f = makeFixture({
+      openClient: makeFakeClient({ searchRanked } as never),
+      searchDebounceMs: 0,
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0];
+    if (qp === undefined) throw new Error("no quick pick opened");
+    qp.setValueAndFire("auth");
+    await flush();
+    expect(searchRanked).toHaveBeenCalledTimes(1);
+    qp.hide();
+    fail(new Error("index went away"));
+    await flush();
+    expect(f.errorMessages).toEqual([]);
+    expect(f.outputAppendLines.some((l) => l.includes("nimbus.search failed"))).toBe(false);
+  });
+
+  test("closing the picker before typing anything disposes it and searches nothing", async () => {
+    const searchRanked = vi.fn(async () => []);
+    const f = makeFixture({ openClient: makeFakeClient({ searchRanked } as never) });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    cmd(f, "nimbus.search")();
+    const qp = f.quickPicks[0];
+    qp?.hide();
+    expect(qp?.disposed).toBe(true);
+    await flush();
+    expect(searchRanked).not.toHaveBeenCalled();
+  });
+});
+
+describe("quick ask — the question box", () => {
+  test.each([
+    ["dismissed", undefined],
+    ["answered with only whitespace", "   "],
+  ])("a question box %s sends nothing and says nothing", async (_label, answer) => {
+    const agentInvoke = vi.fn(async () => ({ reply: "x" }));
+    const f = makeFixture({
+      activeEditor: { text: "const a = 1;", empty: true, fileName: "a.ts" },
+      quickPickAnswers: [{ label: "Custom question…" }],
+      inputBoxAnswers: [answer],
+      openClient: makeFakeClient({ agentInvoke } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.quickAsk")();
+    expect(f.deps.window.showInputBox).toHaveBeenCalledTimes(1);
+    expect(agentInvoke).not.toHaveBeenCalled();
+    expect(f.errorMessages).toEqual([]);
+    expect(f.openedDocs).toEqual([]);
+  });
+});
+
+describe("gateway lifecycle and settings wiring", () => {
+  test("Start Gateway before the first connection attempt starts it with no socket yet", async () => {
+    const spawn = vi.fn(async (): Promise<AutoStartResult> => ({ kind: "ok" }));
+    const f = makeFixture({ autoStarter: { spawn } });
+    activateWithDeps(f.ctx, f.deps);
+    // Not awaited: the connection manager is still idle — discovery has not
+    // answered yet — so there is no socket path to pass along.
+    await cmd(f, "nimbus.startGateway")();
+    expect(spawn).toHaveBeenCalledWith("");
+  });
+
+  test("the troubleshooter reports a connected socket whose Gateway does not answer ping", async () => {
+    const f = makeFixture({
+      warnMessageClicks: [undefined],
+      openClient: makeFakeClient({
+        gatewayPing: async () => {
+          throw new Error("ping timed out");
+        },
+      } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.troubleshootConnection")();
+    expect(f.warnMessages).toEqual([
+      `Socket ${TEST_SOCKET_PATH} is connected, but the Gateway is not responding to ping: ping timed out.`,
+    ]);
+    expect(f.deps.window.showErrorMessage).not.toHaveBeenCalled();
+  });
+
+  test("the Workflows view loads through the live client, and Refresh Workflows repaints it", async () => {
+    const workflowList = vi.fn(async () => ({ workflows: [] }));
+    const f = makeFixture({ openClient: makeFakeClient({ workflowList } as never) });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await flush();
+    const rows = (await f.treeProviders.get("nimbus.workflowsView")?.getChildren()) as Array<{
+      label: string;
+    }>;
+    expect(workflowList).toHaveBeenCalledTimes(1);
+    expect(rows.map((r) => r.label)).toEqual(["No saved workflows"]);
+    const changed = onViewChange(f, "nimbus.workflowsView");
+    cmd(f, "nimbus.refreshWorkflows")();
+    expect(changed).toHaveBeenCalledTimes(1);
+  });
+
+  test("a settings change outside nimbus.* does not re-poll; nimbus.agents repaints the Agents view", async () => {
+    const egressHead = vi.fn(async () => ({ head: "h", count: 1 }));
+    const f = makeFixture({ openClient: makeFakeClient({ egressHead } as never) });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await flush();
+    const agentsChanged = onViewChange(f, "nimbus.agentsView");
+    egressHead.mockClear();
+    for (const h of f.configChangeHandlers)
+      h({ affectsConfiguration: (s) => s === "editor.fontSize" });
+    await flush();
+    expect(egressHead).not.toHaveBeenCalled();
+    expect(agentsChanged).not.toHaveBeenCalled();
+    for (const h of f.configChangeHandlers) {
+      h({ affectsConfiguration: (s) => s === "nimbus" || s === "nimbus.agents" });
+    }
+    await flush();
+    expect(agentsChanged).toHaveBeenCalledTimes(1);
+    expect(egressHead).toHaveBeenCalledTimes(1);
+  });
+
+  test("changing nimbus.statusBarPollMs re-arms the poll at the new period", async () => {
+    const f = makeFixture({});
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+    const clearIntervalSpy = vi.spyOn(globalThis, "clearInterval");
+    try {
+      f.cfgValues["statusBarPollMs"] = 5_000;
+      for (const h of f.configChangeHandlers) {
+        h({ affectsConfiguration: (s) => s === "nimbus" || s === "nimbus.statusBarPollMs" });
+      }
+      expect(clearIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(setIntervalSpy).toHaveBeenCalledTimes(1);
+      expect(setIntervalSpy.mock.calls[0]?.[1]).toBe(5_000);
+    } finally {
+      setIntervalSpy.mockRestore();
+      clearIntervalSpy.mockRestore();
+      teardown(f);
+    }
+  });
+
+  test("a broken egress chain with no row or reason still says it broke, without inventing either", async () => {
+    const f = makeFixture({
+      openClient: makeFakeClient({ egressVerify: async () => ({ ok: false }) } as never),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    await cmd(f, "nimbus.verifyEgress")();
+    expect(f.errorMessages).toEqual(["Egress chain broke at row ?."]);
+  });
+});
+
+describe("views racing deactivation", () => {
+  // teardown() closes the client but leaves the manager's last state —
+  // "connected" — in place: the window a load can still land in.
+  test("the Sessions and Index views load nothing once the client is gone, rather than throwing", async () => {
+    const sessionList = vi.fn(async () => ({ sessions: [] }));
+    const queryItems = vi.fn(async () => ({ items: [] }));
+    const f = makeFixture({
+      openClient: makeFakeClient({ sessionList, queryItems } as unknown as Partial<ClientLike>),
+    });
+    activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    const sessions = f.treeProviders.get("nimbus.sessionsView");
+    const index = f.treeProviders.get("nimbus.indexView");
+    teardown(f);
+    const sessionRows = (await sessions?.getChildren()) as Array<{ label: string }>;
+    const indexRows = (await index?.getChildren()) as Array<{ label: string }>;
+    expect(sessionRows.map((r) => r.label)).toEqual(["No saved sessions yet"]);
+    expect(indexRows.map((r) => r.label)).toEqual(["No indexed items yet"]);
+    expect(sessionList).not.toHaveBeenCalled();
+    expect(queryItems).not.toHaveBeenCalled();
+  });
+});
+
+describe("openers: edges of the virtual documents", () => {
+  test("the read-only opener resolves an unknown or malformed URI to an empty document", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    try {
+      const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+      await createReadonlyJsonOpener(ctx)("a.md", "AAA");
+      const provider = spy.mock.calls[0]?.[1] as {
+        provideTextDocumentContent(uri: { path: string }): string;
+      };
+      expect(provider.provideTextDocumentContent({ path: "/1/a.md" })).toBe("AAA");
+      expect(provider.provideTextDocumentContent({ path: "/99/a.md" })).toBe("");
+      expect(provider.provideTextDocumentContent({ path: "" })).toBe("");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("the diff opener keeps the newest ten diffs and forgets older ones", async () => {
+    const spy = vi.spyOn(vscodeWorkspace, "registerTextDocumentContentProvider");
+    try {
+      const ctx: ExtensionContextLike = { subscriptions: [], workspaceState: new FakeMemento() };
+      const openDiff = createDiffOpener(ctx);
+      for (let i = 1; i <= 11; i += 1) {
+        await openDiff({ title: "T", left: `L${i}`, right: `R${i}`, fileName: "a.ts" });
+      }
+      const provider = spy.mock.calls[0]?.[1] as {
+        provideTextDocumentContent(uri: { path: string }): string;
+      };
+      // 20 documents fit — two per diff — so the first diff is the one evicted.
+      expect(provider.provideTextDocumentContent({ path: "/1/original/a.ts" })).toBe("");
+      expect(provider.provideTextDocumentContent({ path: "/1/nimbus/a.ts" })).toBe("");
+      expect(provider.provideTextDocumentContent({ path: "/2/original/a.ts" })).toBe("L2");
+      expect(provider.provideTextDocumentContent({ path: "/11/nimbus/a.ts" })).toBe("R11");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("the proof saver suggests the workspace folder, and saves nothing when cancelled", async () => {
+    const dialog = vi.spyOn(stubWindow, "showSaveDialog").mockResolvedValue(undefined as never);
+    const writeFile = vi.spyOn(stubWorkspace.fs, "writeFile");
+    stubWorkspace.workspaceFolders = [{ uri: Uri.file("/home/dev/proj") as never }];
+    try {
+      const f = makeFixture({
+        realProofSave: true,
+        quickPickAnswers: [{ label: "Last 7 days" }],
+        openClient: makeFakeClient({
+          egressProveWindow: async () => ({ rows: [], verify: { ok: true } }),
+        } as never),
+      });
+      activateWithDeps(f.ctx, f.deps);
+      await waitForConnect();
+      await cmd(f, "nimbus.proveEgressWindow")();
+      const options = dialog.mock.calls[0]?.[0] as {
+        filters: Record<string, string[]>;
+        defaultUri?: { toString(): string };
+      };
+      expect(options.filters).toEqual({ HTML: ["html"], JSON: ["json"] });
+      expect(options.defaultUri?.toString()).toMatch(/^\/home\/dev\/proj\/egress-proof-\d+\.html$/);
+      expect(writeFile).not.toHaveBeenCalled();
+      expect(f.infoMessages.some((m) => /proof saved/i.test(m))).toBe(false);
+    } finally {
+      dialog.mockRestore();
+      writeFile.mockRestore();
+      stubWorkspace.workspaceFolders = undefined;
+    }
   });
 });

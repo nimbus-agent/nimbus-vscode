@@ -35,7 +35,8 @@ export const NEEDS_GATEWAY = "Needs the Nimbus Gateway.";
  * The two Gateway calls this panel makes, and nothing else. A narrow structural
  * seam rather than the whole client: these modules stay pure and unit-testable,
  * and the surface a collector can reach is visible in one place. Both calls
- * reach no model — see the plan's Global Constraints.
+ * reach no model, which is why the panel sits outside the egress gate — see
+ * docs/architecture.md (the src/context/ row and "The src/context/ cadence").
  */
 export interface ContextClientLike {
   agentsWhyPeek(p: { ref: string; line?: number }): Promise<WhyPeek>;
@@ -88,10 +89,7 @@ export interface SignalSection {
 // for help with.
 const WARNING = 1;
 
-export async function problemsSection(
-  snapshot: ContextSnapshot,
-  _deps: SignalDeps,
-): Promise<SignalSection> {
+export function problemsSection(snapshot: ContextSnapshot, _deps: SignalDeps): SignalSection {
   const base = { id: "problems" as const, title: SECTION_TITLES.problems };
   if (snapshot.path === undefined) return { ...base, rows: [], empty: "No file open." };
   const rows = snapshot.diagnostics
@@ -108,10 +106,7 @@ export async function problemsSection(
   return { ...base, rows };
 }
 
-export async function gitSection(
-  snapshot: ContextSnapshot,
-  _deps: SignalDeps,
-): Promise<SignalSection> {
+export function gitSection(snapshot: ContextSnapshot, _deps: SignalDeps): SignalSection {
   const base = { id: "git" as const, title: SECTION_TITLES.git };
   const git = snapshot.git;
   if (git === undefined) return { ...base, rows: [], empty: "No git repository here." };
@@ -279,10 +274,7 @@ export async function relatedSection(
 // Degraded connectors, read from the summary the status-bar poll already
 // computed — see SignalDeps.connectorHealth. Makes no Gateway call of its
 // own, which is why it is registered as a local signal below.
-export async function connectorsSection(
-  _snapshot: ContextSnapshot,
-  deps: SignalDeps,
-): Promise<SignalSection> {
+export function connectorsSection(_snapshot: ContextSnapshot, deps: SignalDeps): SignalSection {
   const { names } = deps.connectorHealth();
   return {
     id: "connectors",
@@ -300,7 +292,16 @@ export interface SignalSpec {
   readonly id: SignalId;
   /** Whether collecting this signal needs the Gateway socket. */
   readonly needsGateway: boolean;
-  readonly collect: (snapshot: ContextSnapshot, deps: SignalDeps) => Promise<SignalSection>;
+  /**
+   * A local read answers synchronously — it is a pass over data already in
+   * hand — and a Gateway-backed one with a promise. The controller lifts either
+   * into the same promise, and a synchronous throw there is handled exactly as
+   * a rejection is.
+   */
+  readonly collect: (
+    snapshot: ContextSnapshot,
+    deps: SignalDeps,
+  ) => SignalSection | Promise<SignalSection>;
   /**
    * What a cached result for this snapshot would be keyed on, or undefined when
    * the signal is not worth caching. Local reads return undefined: they cost

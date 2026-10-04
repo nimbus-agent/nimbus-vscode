@@ -33,10 +33,11 @@ string `querySql(` anywhere under `src/`. Two consequences they don't spell out:
   a user from either section. `marked` and `dompurify` are in `dependencies` and
   are inlined identically. Do not "fix" this.
 - **A missing Gateway capability is a blocked feature, not a workaround.** New
-  capability is reached by bumping the pinned `@nimbus-dev/client` (`^0.17.0`)
-  first. This is why `CLAUDE.md` records the share surface as *blocked upstream*
-  rather than deferred: the pinned client exposes no `share*` RPCs, so the feature
-  cannot be written here at all.
+  capability is reached by bumping the pinned `@nimbus-dev/client` (`^0.18.0`
+  today — read the pin off `package.json`, not this line) first. This is why
+  `CLAUDE.md` records the share surface as *blocked upstream* rather than
+  deferred: the pinned client exposes no `share*` RPCs, so the feature cannot be
+  written here at all.
 
 `scripts/check-bundle.mjs` is the runtime half — it regex-scans `dist/extension.js`
 for `require("…")` and fails on any specifier outside node builtins + `vscode`.
@@ -52,9 +53,9 @@ instruction. Taken literally all five were false, and following them sent you
 refactoring code that was already correct. **All five were corrected
 together** in the quality sweep; if you find a sixth restatement, correct it too
 rather than half the set — the remaining copies keep sending the next reader the
-same way. (`docs/superpowers/plans|specs/` still carry the old wording and are
-left alone on purpose: those are dated records of what a plan said at the time,
-not live guidance.)
+same way. (The dated design specs and plans that also carried the old wording
+were deleted once their work shipped; git history keeps them, and they are not
+live guidance.)
 
 The real shape, which is what the five now say:
 
@@ -192,8 +193,15 @@ stops shipping, silently, leaving a broken walkthrough step. Nothing validates
 that the `media.markdown` paths in `package.json` resolve. Only `quick-ask.md`
 has any content guard at all (§6).
 
-Also: `**/*.map` is the **last** line of `.vscodeignore` (last match wins), so
-sourcemaps are excluded even from the re-included `dist/**`.
+Also: `**/*.map` is the **last** line of `.vscodeignore`, but it does **not**
+keep source maps out. vsce does not apply last-match-wins: a file matching any
+`!` re-include ships, so `!dist/**` and `!media/**` re-include
+`dist/extension.js.map` and the webview maps (probed: 18 files become 19 the
+moment a map exists). Released artifacts carry none only because CI and
+`publish.yml` build in production mode, which emits no maps. A local
+`bun run package` after `bun run watch` or a `NODE_ENV=development` build ships
+them, and `check-vsix-contents` cannot notice — `dist/` and `media/` are
+allowlisted wholesale.
 
 ## 6. `DEFAULT_QUICK_ASK_PRESETS` — one list, five copies
 
@@ -236,7 +244,7 @@ cannot then be configured away — Terraform, Dockerfiles, `.github/workflows/*.
 or YAML that looks like Kubernetes/Helm; `filePresetsFor` returns `[]` for anything
 else (`filePresetsFor` in `src/quick-ask-presets.ts`, wired at the `opsPresets`
 call in `src/extension.ts`). And `bun run check-settings-docs` catches **none** of
-this — for each of the 17 `nimbus.*` properties it asserts only that a
+this — for each of the 18 `nimbus.*` properties it asserts only that a
 `### \`nimbus.x\`` heading exists in `docs/settings.md` and a `| \`nimbus.x\` |`
 row exists in `README.md` — and, since the quality sweep, that no `### \`nimbus.x\``
 heading or README row names a setting `package.json` does **not** contribute, so a
@@ -248,18 +256,17 @@ and every word of prose are unchecked.
 
 `coverage.exclude` in `vitest.config.ts` and `sonar.coverage.exclusions` in
 `sonar-project.properties` are independent lists. A file must be in **both** to
-leave both denominators. Two divergences exist, both deliberate, both now named
-with a reason in `test/unit/coverage-exclusions.test.ts` — which fails on a
-**third**, in either direction:
+leave both denominators. One divergence exists, deliberately, named with a
+reason in `test/unit/coverage-exclusions.test.ts` — which fails on any other, in
+either direction:
 
-- `src/scm/real-git.ts` — excluded in vitest, **not** in Sonar. So vitest emits no
-  lcov record and Sonar scores it 0.0%. That row is an artifact of the asymmetry,
-  not a coverage gap; read it that way before "fixing" it. Adding it to
-  `sonar.coverage.exclusions` would hide the number rather than earn it.
 - `src/chat/webview/main.ts` — excluded in Sonar, deliberately measured by vitest
   under jsdom.
-- `src/briefs/real-hover.ts` is in **neither** list — it is measured by both, and
-  now has a test of its own (`test/unit/briefs-real-hover.test.ts`).
+- `src/briefs/real-hover.ts` and `src/scm/real-git.ts` are in **neither** list —
+  both are measured by both tools, each through a test of its own
+  (`test/unit/briefs-real-hover.test.ts`, `test/unit/scm-real-git.test.ts`).
+  `real-git.ts` used to be a second divergence (vitest-only, so Sonar scored it
+  0.0%); it earned its number with that test rather than a second exclusion.
 
 Sonar's gate blocks via `sonar.qualitygate.wait=true`, but the whole analysis step
 is `if: env.SONAR_TOKEN != ''` — so **a green Sonar check does not prove a scan
@@ -291,9 +298,17 @@ Full runbook is `docs/releasing.md`. The parts that bite:
   the source of truth is `scripts/release/credential-registry.ts` in
   `nimbus-agent/Nimbus`. Update the registry first, the mirror second. Drift can
   only cause a spurious warning — a live probe is never softened by a date.
-- The GitLab warm-standby mirror (`.gitlab-ci.yml`) carries an
-  `apt-get install git` step that is load-bearing: `oven/bun` ships without git,
-  and biome's `vcs.useIgnoreFile: true` then scans `node_modules`.
+- The GitLab warm-standby mirror (`.gitlab-ci.yml`) runs on a `node:` image
+  with Bun npm-installed on top, not on `oven/bun`, whose only `node` is a
+  fallback symlink to Bun: `bunx vitest run` honours vitest's `node` shebang,
+  and on the Bun runtime Vitest 5's jsdom environment fails to start (every
+  `@vitest-environment jsdom` file dies with an `EventTarget` error). Two things
+  there are load-bearing for biome's `vcs.useIgnoreFile: true`: git, which ships
+  with the `node:` image (without it biome scans `node_modules`), and the
+  `.bun-cache/` entry in `.gitignore` — the job's `BUN_INSTALL_CACHE_DIR` has to
+  sit inside the project for GitLab to cache it, and without the entry
+  `bun run lint` checks every cached package (reproduced: over 7,000 files and
+  some 40,000 errors, where the repo itself is a few hundred files).
 
 ## Coupled sites — change one, change all
 
@@ -301,7 +316,11 @@ Full runbook is `docs/releasing.md`. The parts that bite:
   `scripts/check-vsix-contents.mjs`. Under `resources/`, neither — see §5.
 - New CI gate → `.github/workflows/ci.yml` **and** `.gitlab-ci.yml`, whose
   `build-test` job re-lists the same seven `bun run` gates in order and whose own
-  header says it is kept in sync with `package.json` scripts.
+  header says it is kept in sync with `package.json` scripts, **and**
+  `.github/workflows/publish.yml`, which re-runs the same gates before packaging
+  so a release cannot publish what a PR would have been blocked for. The gate is
+  also spelled out by hand in `CONTRIBUTING.md`, `docs/development.md`, the PR
+  template and the `verify-extension` skill.
 - New `nimbus.*` setting → `package.json` **and** `docs/settings.md` (`###`
   heading) **and** the `README.md` table row (`check-settings-docs` enforces all
   three).
@@ -318,14 +337,12 @@ Full runbook is `docs/releasing.md`. The parts that bite:
 - New contributed command / view / LM tool → `package.json` **and** the matching
   `test/unit/manifest-*.test.ts`, which pin the manifest against the source SSoT
   (`BRIEF_CATALOG`, `DIAGNOSTIC_COMMANDS`, …).
-- Any edit to `.github/workflows/dependabot-lockfile.yml` → four safety properties
-  are pinned by `test/unit/dependabot-lockfile-workflow.test.ts` (actor gate,
-  `--ignore-scripts`, `persist-credentials: false`, `head.sha` checkout). It is the
-  only `pull_request_target` workflow that checks out **the PR author's tree** with
-  a write-capable token; a unit test failing there is the intended signal.
-  `cla.yml` is the other `pull_request_target` workflow — also write-capable
-  (`actions`/`pull-requests`/`statuses: write`) — but it checks out nothing and has
-  no pinning test.
+- A new `pull_request_target` workflow, or a checkout step added to `cla.yml` →
+  `test/unit/pull-request-target-workflows.test.ts` fails, on purpose. `cla.yml` is
+  the only workflow allowed that trigger: it runs with a write-capable token
+  (`actions`/`pull-requests`/`statuses: write`) even for fork PRs, and is safe only
+  because it checks out nothing. (The Dependabot lockfile-sync workflow, which did
+  check out a PR's tree, was deleted along with Dependabot.)
 - Any new agent-bound call → route it through `src/egress/gated-client.ts`. Do not
   widen `ALLOWED` in `egress-choke-point.test.ts`.
 

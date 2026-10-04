@@ -90,6 +90,13 @@ describe("formatAuditDetail", () => {
     expect(JSON.parse(detail?.content ?? "{}").action).toBe("not json");
   });
 
+  test("an entry with no action payload shows null, not an empty string", () => {
+    const detail = formatAuditDetail({ ...base, actionJson: "" });
+    const parsed = JSON.parse(detail?.content ?? "{}");
+    expect(parsed.action).toBeNull();
+    expect("action" in parsed).toBe(true);
+  });
+
   test("returns undefined for an unparseable row", () => {
     expect(formatAuditDetail({ nope: true })).toBeUndefined();
   });

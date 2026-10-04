@@ -8,12 +8,11 @@ import { describe, expect, test } from "vitest";
 //   * `sonar.coverage.exclusions` in sonar-project.properties — what leaves
 //     SonarCloud's.
 //
-// Nothing connected them, and they drifted: `src/scm/real-git.ts` sits in the
-// first and not the second, so vitest emits no lcov record for it and Sonar
-// scores the file 0.0% — an artifact of the mismatch, not a coverage gap, and it
-// has been read as a gap more than once. The properties file's own comment says
-// the two lists must be kept in step while describing only ONE of the two
-// divergences, so the comment was itself out of date.
+// Nothing connected them, and they drifted: `src/scm/real-git.ts` once sat in
+// the first and not the second, so vitest emitted no lcov record for it and
+// Sonar scored the file 0.0% — an artifact of the mismatch rather than a measured
+// gap, and it was read as a gap more than once. It is now in NEITHER list: it
+// has its own test (test/unit/scm-real-git.test.ts) and both tools measure it.
 //
 // This test does not decide what belongs on either list. It asserts only that
 // every divergence is DELIBERATE — named below with a reason — so a new one has
@@ -26,15 +25,10 @@ const REPO_ROOT = join(__dirname, "..", "..");
 /**
  * Files deliberately excluded in one tool and measured by the other.
  *
- * The key is the file; the value is why the asymmetry is correct. Both entries
- * are load-bearing today — read the reason before "fixing" either one.
+ * The key is the file; the value is why the asymmetry is correct. The entry is
+ * load-bearing today — read the reason before "fixing" it.
  */
 const KNOWN_DIVERGENCES: Readonly<Record<string, string>> = {
-  "src/scm/real-git.ts":
-    "vitest-only. The thin adapter over VS Code's built-in git extension, excluded " +
-    "from the vitest denominator like the other real-*.ts seams. It is NOT in " +
-    "sonar.coverage.exclusions, so Sonar reports it at 0.0% — deliberately left " +
-    "visible there rather than hidden by a second exclusion.",
   "src/chat/webview/main.ts":
     "sonar-only. jsdom actually exercises this webview entry point, so vitest " +
     "measures it (~95% statements); Sonar excludes it as browser glue. Removing " +

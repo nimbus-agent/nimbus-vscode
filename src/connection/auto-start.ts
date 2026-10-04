@@ -44,7 +44,7 @@ export function createAutoStarter(deps: AutoStartDeps): AutoStarter {
           deps.log.info(`Gateway socket ready at ${socketPath} after ${Date.now() - start}ms`);
           return { kind: "ok" };
         }
-        await new Promise((r) => setTimeout(r, pollMs));
+        await new Promise((r) => setTimeout(r, pollMs)); // NOSONAR S9382: a retry loop — this wait spaces out the next pingSocket, which runs only because the previous one failed
       }
       return { kind: "timeout", socketPath };
     },

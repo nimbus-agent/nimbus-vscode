@@ -794,4 +794,118 @@ describe("ChatController", () => {
     expect(postedTypes(posted)).toContain("emptyState");
     expect(warn).toHaveBeenCalled();
   });
+
+  test("a failed transcript load for a superseded resume posts no empty state", async () => {
+    // The failure arm of hydrate() has its own supersede check: the user has
+    // already moved on (here, to a new conversation), so an "emptyState" for
+    // the session they left must not paint over the fresh one.
+    let failTranscript = (): void => undefined;
+    const gate = new Promise<void>((r) => {
+      failTranscript = r;
+    });
+    const warn = vi.fn();
+    const client = fakeChatClient({
+      getSessionTranscript: async () => {
+        await gate;
+        throw new Error("transcript gone");
+      },
+    });
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(client, { panel, log: { error: vi.fn(), warn, info: vi.fn(), debug: vi.fn() } }),
+    );
+    const pResume = ctrl.resume("old", 50);
+    await Promise.resolve();
+    await Promise.resolve();
+    await ctrl.newConversation();
+    failTranscript();
+    await pResume;
+    expect(postedTypes(posted)).toEqual(["attachments", "reset", "attachments", "reset"]);
+    // Still logged: the failure is real, it is only no longer worth showing.
+    expect(warn).toHaveBeenCalledWith("getSessionTranscript failed: transcript gone");
+  });
+
+  test("an event type this controller does not know is skipped, and the stream carries on", async () => {
+    // A newer Gateway may emit an event this build has never heard of. It must
+    // neither end the turn nor reach the webview; what follows it still counts.
+    const unknown = { type: "retrievalDisclosure", items: [] } as unknown as StreamEvent;
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () =>
+            streamOf([
+              unknown,
+              { type: "token", text: "hello" },
+              { type: "done", reply: "hello", sessionId: "" },
+            ]),
+        }),
+        { panel },
+      ),
+    );
+    await ctrl.start("hi");
+    expect(postedTypes(posted)).toEqual(["userMessage", "token", "done"]);
+    expect(ctrl.isStreaming()).toBe(false);
+  });
+
+  test("a stream that throws after the user stopped it posts no error over the cancel", async () => {
+    let throwNow = (): void => undefined;
+    const gate = new Promise<void>((r) => {
+      throwNow = r;
+    });
+    const log = { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() };
+    const handle = {
+      streamId: "s7",
+      cancel: vi.fn(async () => undefined),
+      [Symbol.asyncIterator](): AsyncIterator<StreamEvent> {
+        return {
+          async next(): Promise<IteratorResult<StreamEvent>> {
+            await gate;
+            throw new Error("socket hang up");
+          },
+        };
+      },
+    } as unknown as AskStreamHandle;
+    const unregister = vi.fn();
+    const { panel, posted } = capturingPanel();
+    const ctrl = createChatController(
+      baseDeps(fakeChatClient({ askStream: () => handle }), {
+        panel,
+        log,
+        unregisterStreamWithHitl: unregister,
+      }),
+    );
+    const pStart = ctrl.start("hi");
+    await Promise.resolve();
+    await ctrl.stop();
+    throwNow();
+    await pStart;
+    expect(postedTypes(posted)).toEqual(["userMessage", "cancelled"]);
+    // Logged, and the stream still unregistered from HITL routing.
+    expect(log.error).toHaveBeenCalledWith("ask: stream failed: socket hang up");
+    expect(unregister).toHaveBeenCalledWith("s7");
+  });
+
+  test("a stream with no id is never registered or unregistered for HITL routing", async () => {
+    const register = vi.fn();
+    const unregister = vi.fn();
+    const ctrl = createChatController(
+      baseDeps(
+        fakeChatClient({
+          askStream: () =>
+            streamOf(
+              [
+                { type: "token", text: "a" },
+                { type: "done", reply: "a", sessionId: "" },
+              ],
+              "",
+            ),
+        }),
+        { registerStreamWithHitl: register, unregisterStreamWithHitl: unregister },
+      ),
+    );
+    await ctrl.start("hi");
+    expect(register).not.toHaveBeenCalled();
+    expect(unregister).not.toHaveBeenCalled();
+  });
 });

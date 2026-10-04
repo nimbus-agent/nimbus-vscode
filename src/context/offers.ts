@@ -30,7 +30,8 @@ function offerFor(spec: BriefSpec, snapshot: ContextSnapshot): Offer | undefined
     case "none":
     case "prompted":
       // Prompted briefs ask for a resource ref or a ref plus namespace, neither
-      // of which is an editor path. Pre-filling the branch is a PR 3 concern.
+      // of which is an editor path. Pre-filling the branch was planned and did
+      // not ship — see docs/ROADMAP.md, Phase 3, "Context panel actions".
       return base;
     default: {
       // A new BriefContext member fails the build here rather than silently

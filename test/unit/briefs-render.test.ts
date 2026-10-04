@@ -106,6 +106,30 @@ describe("renderWhy", () => {
       renderWhy(why({ gaps: [{ category: "empty_index", detail: "index is empty" }] })),
     ).toContain("_Data gaps: index is empty_");
   });
+
+  test("a file-level query (no line) names the file without a trailing colon", () => {
+    const out = renderWhy(why({ query: { ref: "src/auth/session.ts", line: null } }));
+    expect(out).toBe("No history found for `src/auth/session.ts`.");
+  });
+
+  test("a finding with no detail renders its label alone, with no dangling dash", () => {
+    const out = renderWhy(
+      why({
+        query: { ref: "src/auth/session.ts", line: null },
+        findings: [
+          {
+            lane: "authorship",
+            title: "Robin Hale",
+            detail: "",
+            url: null,
+            occurredAt: null,
+            entityId: null,
+          },
+        ],
+      }),
+    );
+    expect(out).toBe("Why `src/auth/session.ts`:\n\n### Authorship\n- **Robin Hale**");
+  });
 });
 
 describe("renderGhost", () => {
@@ -147,6 +171,35 @@ describe("renderGhost", () => {
     );
     expect(out).toContain("**unattributed** — low confidence, contact #general");
   });
+
+  test("counts the related items an expert's signal rests on, singular and plural", () => {
+    const item = { title: "Session refresh", snippet: "", service: "github", modifiedAt: 0 };
+    const out = renderGhost(
+      ghost([
+        {
+          peerId: "peer-1",
+          expert: "Robin Hale",
+          rank: "high",
+          context: [item, item],
+          suggestedContact: "#team-auth",
+        },
+        {
+          peerId: "peer-2",
+          expert: "Sam Okafor",
+          rank: "medium",
+          context: [item],
+          suggestedContact: "#team-auth",
+        },
+      ]),
+    );
+    expect(out).toContain(
+      "- **Robin Hale** — high confidence, contact #team-auth — 2 related items\n",
+    );
+    expect(out).toContain(
+      "- **Sam Okafor** — medium confidence, contact #team-auth — 1 related item",
+    );
+    expect(out).not.toContain("1 related items");
+  });
 });
 
 describe("renderConflicts", () => {
@@ -182,6 +235,24 @@ describe("renderConflicts", () => {
     );
     expect(out).toContain("**Sam Okafor** — open pr in auth, 3h ago: Rework session refresh");
   });
+
+  test("a collision with no known author reads as unattributed, not blank", () => {
+    const out = renderConflicts(
+      conflicts([
+        {
+          peerId: "peer-2",
+          who: null,
+          service: "jira",
+          collisionType: "assigned_ticket",
+          title: "Session drops",
+          snippet: "",
+          modifiedAt: NOW - 3 * 60 * 60 * 1000,
+        },
+      ]),
+      NOW,
+    );
+    expect(out).toContain("- **unattributed** — assigned ticket in jira, 3h ago: Session drops");
+  });
 });
 
 describe("renderHuddle", () => {
@@ -210,6 +281,35 @@ describe("renderHuddle", () => {
     expect(out).toContain("**Robin Hale** — 1 PR, 1 incident");
     expect(out).toContain("Fix retry");
     expect(out).toContain("Auth outage");
+  });
+
+  test("an unattributed contributor with only tickets counts just the tickets", () => {
+    const out = renderHuddle(
+      huddle([
+        {
+          peerId: "peer-2",
+          who: null,
+          prs: [],
+          tickets: [
+            { title: "NIM-88", snippet: "", service: "jira", modifiedAt: NOW - 7_200_000 },
+            { title: "NIM-89", snippet: "", service: "jira", modifiedAt: NOW - 7_200_000 },
+          ],
+          incidents: [],
+        },
+      ]),
+      NOW,
+    );
+    expect(out).toBe(
+      "Team huddle:\n- **unattributed** — 2 tickets\n  - NIM-88 (jira, 2h ago)\n  - NIM-89 (jira, 2h ago)",
+    );
+  });
+
+  test("a contributor with nothing in any lane reads as no activity, with no item list", () => {
+    const out = renderHuddle(
+      huddle([{ peerId: "peer-3", who: "Dana", prs: [], tickets: [], incidents: [] }]),
+      NOW,
+    );
+    expect(out).toBe("Team huddle:\n- **Dana** — no activity");
   });
 });
 

@@ -1,11 +1,13 @@
 import { confirmationMessage, type EgressMeta } from "../egress/preflight.js";
 import { errMsg } from "../logging.js";
+import { oneShotInvokeOptions } from "../quick-ask.js";
 import { normalizeInline, parseRankedItem } from "../search.js";
 
-// The client slice the LM tools need. The `meta` argument is the guardrail: the
-// raw NimbusClient no longer satisfies this shape, so only a wrapper from
-// src/egress/gated-client.ts fits. Kept minimal so the pure handlers stay
-// trivially fakeable.
+// The client slice the LM tools need. The `meta` argument documents that only a
+// wrapper from src/egress/gated-client.ts belongs here, but does not enforce it:
+// a raw NimbusClient still satisfies this shape, since TypeScript accepts a
+// function with fewer parameters — test/unit/egress-choke-point.test.ts is the
+// guard. Kept minimal so the pure handlers stay trivially fakeable.
 export interface LmToolsClientLike {
   searchRanked(params: { name: string; limit?: number }): Promise<unknown[]>;
   agentInvoke(
@@ -98,16 +100,13 @@ export async function runNimbusAskTool(deps: LmToolsDeps, input: unknown): Promi
   if (question === undefined) return 'Invalid input: "question" (a non-empty string) is required.';
   const client = deps.client();
   if (client === undefined) return NOT_CONNECTED;
-  const agent = deps.askAgent();
+  const options = oneShotInvokeOptions(deps.askAgent());
   try {
-    const result = await client.agentInvoke(
-      question,
-      {
-        stream: false,
-        ...(agent.length > 0 ? { agent } : {}),
-      },
-      { action: ASK_ACTION, files: [], omissions: [] },
-    );
+    const result = await client.agentInvoke(question, options, {
+      action: ASK_ACTION,
+      files: [],
+      omissions: [],
+    });
     return result.reply ?? "(the agent returned no reply)";
   } catch (e) {
     deps.log.warn(`lm-tools: agentInvoke failed: ${errMsg(e)}`);

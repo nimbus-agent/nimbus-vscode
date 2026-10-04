@@ -1,7 +1,6 @@
-import { randomUUID } from "node:crypto";
-
 import * as vscode from "vscode";
 import { errMsg, type Logger } from "../logging.js";
+import { renderWebviewDocument } from "../webview-document.js";
 import type { ChatPanel, ChatPanelFactory, WebviewPanelLike } from "./chat-panel.js";
 import { createReadyBuffer } from "./ready-buffer.js";
 
@@ -103,25 +102,9 @@ function wrapWebviewPanel(
   };
 }
 
-function renderChatHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "webview.js"));
-  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "webview.css"));
-  const nonce = randomUUID().replaceAll("-", "");
-  const csp =
-    `default-src 'none'; ` +
-    `style-src ${webview.cspSource} 'unsafe-inline'; ` +
-    `font-src ${webview.cspSource}; ` +
-    `script-src 'nonce-${nonce}';`;
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="${csp}" />
-<title>Nimbus</title>
-<link rel="stylesheet" href="${styleUri.toString()}" />
-</head>
-<body>
-<main id="root">
+// The chat UI's mount points inside <main id="root">; webview/main.ts renders
+// into them.
+const CHAT_ROOT = `
   <section id="empty-mount" aria-live="polite"></section>
   <section id="transcript" aria-live="polite" aria-relevant="additions"></section>
   <section id="hitl-mount" aria-live="assertive"></section>
@@ -140,8 +123,16 @@ function renderChatHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string 
       <button type="button" id="input-stop" disabled>Stop</button>
     </form>
   </footer>
-</main>
-<script nonce="${nonce}" src="${scriptUri.toString()}"></script>
-</body>
-</html>`;
+`;
+
+function renderChatHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "webview.js"));
+  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "webview.css"));
+  return renderWebviewDocument({
+    cspSource: webview.cspSource,
+    title: "Nimbus",
+    styleUri: styleUri.toString(),
+    scriptUri: scriptUri.toString(),
+    root: CHAT_ROOT,
+  });
 }

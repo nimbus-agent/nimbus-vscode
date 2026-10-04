@@ -18,7 +18,9 @@ Egress, Agents, Index, Connectors, Sessions, Workflows, in that order.
 Rows come from `connectorListStatus()` and sort **unhealthy first** — `error`,
 then `backoff`, `paused`, `syncing`, `ok`, then everything unconfigured, ties
 broken by `serviceId` — so a health surface puts the connector that needs
-attention on top rather than burying it alphabetically. A disabled connector
+attention on top rather than burying it alphabetically. The cost is accepted on
+purpose: a row moves when its connector recovers or breaks mid-view, which is
+what a health surface should do. A disabled connector
 (`enabled: false`) always shows a slashed-circle icon and reads *disabled*
 regardless of its underlying `status`.
 
@@ -113,6 +115,14 @@ burst of notifications from one multi-field `setConfig` costs one refresh, not
 one per notification), any mutation this extension itself issues, a
 connection-state change, and the `view/title` refresh command.
 
+That notification is treated as an **invalidation signal, not a row patch**.
+Its payload carries `service`, `intervalMs`, `depth` and `enabled`, but none of
+`status`, `itemCount` or `lastSyncAt` — most of what a row shows — so the view
+refetches rather than reconciling a row from half its fields. It also fires
+only for config mutations: a sync, re-index, authentication, add or remove
+emits none, which is why every mutation this extension issues refreshes the
+view itself.
+
 ## Row commands
 
 Ten commands, all palette-visible; nine of them routed through the one
@@ -138,7 +148,9 @@ nothing.
 Sync interval is entered as a human string (`15m`, `2h`), parsed and validated
 client-side by `src/connectors/interval.ts` against the Gateway's 60-second
 floor before the call, so a too-short interval is rejected in the input box
-rather than by a round trip.
+rather than by a round trip. It is written through `connectorSetConfig`, like
+depth and enabled; `connectorSetInterval` covers the same ground and is never
+called, so the adapter does not wrap it.
 
 ### Two concurrency guards
 
@@ -206,8 +218,9 @@ of implying the action was called off.
 
 Against **Gateway 7.1.0 with `@nimbus-dev/client` 0.17.0, the consent request
 never reaches the editor at all**, so none of the three gated calls can be
-approved or denied from VS Code. Established on the wire during the F5 pass of
-2026-09-01:
+approved or denied from VS Code. The client pinned today, 0.18.0, has not
+changed this: its `subscribeHitl` still registers on `agent.hitlBatch`.
+Established on the wire during the F5 pass of 2026-09-01:
 
 - The Gateway emits the consent request as a `consent.request` notification.
 - The client's `subscribeHitl` registers its handler on `agent.hitlBatch`.

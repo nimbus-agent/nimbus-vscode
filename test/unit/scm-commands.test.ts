@@ -44,7 +44,7 @@ function fakeRepo(opts: FakeRepoOpts = {}): GitRepositoryLike {
     // The SCM trio never reads this; only the context panel's union does.
     stagedPathsNow: () => [],
     fileDiff: async (_scope: DiffScope, path: string) => diffs[path] ?? "",
-    untrackedPaths: async () => opts.untracked ?? [],
+    untrackedPaths: () => opts.untracked ?? [],
     log: async () => opts.log ?? ["feat: earlier change"],
     inputBox: { value: opts.inputBoxValue ?? "" },
     branch: () => "main",
@@ -410,6 +410,78 @@ describe("generateCommitMessage", () => {
     await createScmCommands(h.deps).generateCommitMessage();
     expect(h.warns.some((w) => w.includes("omitted"))).toBe(true);
   });
+
+  test("a prove that returns no signed receipt leaves the draft as-is and logs why", async () => {
+    const repo = fakeRepo();
+    const warnings: string[] = [];
+    const h = harness(
+      {
+        egressProofTrailer: () => true,
+        client: () => ({
+          agentInvoke: async () => ({ reply: "feat: add a" }),
+          egressProveWindow: async () => ({}),
+        }),
+        log: { ...silentLog, warn: (m: string) => warnings.push(m) } as unknown as Logger,
+      },
+      [repo],
+    );
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(repo.inputBox.value).toBe("feat: add a");
+    expect(warnings).toEqual([
+      "scm: egress trailer skipped — no signed receipt (signing key missing?)",
+    ]);
+    expect(h.errors).toEqual([]);
+  });
+
+  test("a reply that is only an empty code fence counts as no reply", async () => {
+    const repo = fakeRepo();
+    const h = harness({ client: () => ({ agentInvoke: async () => ({ reply: "```\n```" }) }) }, [
+      repo,
+    ]);
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(h.infos).toEqual(["Nimbus: the agent returned no reply."]);
+    expect(repo.inputBox.value).toBe("");
+  });
+
+  test("names the size reason when the staged files were too large, even beside a binary", async () => {
+    // Both buckets hold a file, so "non-textual" must NOT win: a diff that is
+    // both huge and contains a binary is more actionably reported as too large.
+    const big = "@@ -1 +1 @@\n+".concat("x".repeat(60_000), "\n");
+    const binary =
+      "diff --git a/logo.png b/logo.png\nBinary files a/logo.png and b/logo.png differ\n";
+    const h = harness({}, [
+      fakeRepo({
+        files: [
+          { path: "src/big.ts", status: "modified" },
+          { path: "logo.png", status: "modified" },
+        ],
+        diffs: { "src/big.ts": big, "logo.png": binary },
+      }),
+    ]);
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(h.errors).toEqual(["Nimbus: the staged diff is too large to summarise."]);
+    expect(h.invoked).toEqual([]);
+  });
+
+  test("keeps the draft in a read-only tab when the git extension itself went away mid-invoke", async () => {
+    const repo = fakeRepo();
+    let gitCalls = 0;
+    const api: GitApiLike = {
+      repositories: () => [repo],
+      onDidOpenRepository: () => ({ dispose: () => undefined }),
+    };
+    const h = harness({
+      // Present when the command starts, gone by the time it writes back.
+      git: async () => (++gitCalls === 1 ? api : undefined),
+    });
+    await createScmCommands(h.deps).generateCommitMessage();
+    expect(gitCalls).toBe(2);
+    expect(repo.inputBox.value).toBe("");
+    expect(h.opened).toEqual([{ title: "Nimbus commit message.md", content: "feat: add a" }]);
+    expect(h.warns).toEqual([
+      "Nimbus: that repository closed while the message was being drafted — showing the draft instead.",
+    ]);
+  });
 });
 
 describe("reviewChanges", () => {
@@ -565,6 +637,40 @@ describe("reviewChanges", () => {
     expect(h.errors[0]).toContain("binary");
     expect(h.opened).toEqual([]);
   });
+
+  test("names the size reason when the only changed file is too large to review", async () => {
+    const big = "@@ -1 +1 @@\n+".concat("x".repeat(60_000), "\n");
+    const h = harness({}, [
+      fakeRepo({
+        files: [{ path: "src/big.ts", status: "modified" }],
+        diffs: { "src/big.ts": big },
+      }),
+    ]);
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.errors).toEqual([
+      "Nimbus: nothing reviewable — the changed diff is too large to review.",
+    ]);
+    expect(h.invoked).toEqual([]);
+    expect(h.opened).toEqual([]);
+  });
+
+  test("opens no findings tab when the agent returns no reply, and says so", async () => {
+    const h = harness({ client: () => ({ agentInvoke: async () => ({ reply: "" }) }) });
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.opened).toEqual([]);
+    expect(h.infos).toEqual(["Nimbus: the agent returned no reply."]);
+    expect(h.errors).toEqual([]);
+  });
+
+  test("errors when the git extension is unavailable, sending nothing", async () => {
+    const h = harness({ git: async () => undefined });
+    await createScmCommands(h.deps).reviewChanges();
+    expect(h.errors).toEqual([
+      "Nimbus: the built-in Git extension is disabled — enable it to use this command.",
+    ]);
+    expect(h.invoked).toEqual([]);
+    expect(h.opened).toEqual([]);
+  });
 });
 
 interface FakeEditorOpts {
@@ -652,6 +758,21 @@ describe("generateTests", () => {
     await createScmCommands(h.deps).generateTests();
     expect(h.invoked[0]).toContain("(truncated)");
     expect(h.warns.some((w) => w.includes("truncated"))).toBe(true);
+  });
+
+  test("opens no buffer when the agent returns no reply, and says so", async () => {
+    const untitled: Array<{ fileName: string; content: string }> = [];
+    const h = harness({
+      ...editorDeps(),
+      client: () => ({ agentInvoke: async () => ({}) }),
+      openUntitled: async (o) => {
+        untitled.push(o);
+      },
+    });
+    await createScmCommands(h.deps).generateTests();
+    expect(untitled).toEqual([]);
+    expect(h.infos).toEqual(["Nimbus: the agent returned no reply."]);
+    expect(h.errors).toEqual([]);
   });
 });
 
@@ -755,6 +876,21 @@ describe("generateDocstrings", () => {
     const h = harness();
     await createScmCommands(h.deps).generateDocstrings();
     expect(h.errors[0]).toContain("open a file");
+  });
+
+  test("opens no diff when the agent returns no reply, and says so", async () => {
+    const diffs: unknown[] = [];
+    const h = harness({
+      ...editorDeps({ text: "def f(): pass\n", languageId: "python", fileName: "/p/a.py" }),
+      client: () => ({ agentInvoke: async () => ({ reply: "   " }) }),
+      openDiff: async (o) => {
+        diffs.push(o);
+      },
+    });
+    await createScmCommands(h.deps).generateDocstrings();
+    expect(diffs).toEqual([]);
+    expect(h.opened).toEqual([]);
+    expect(h.infos).toEqual(["Nimbus: the agent returned no reply."]);
   });
 });
 

@@ -31,63 +31,29 @@ export interface BriefSpec {
   readonly command: string;
   readonly context: BriefContext;
   /**
-   * Whether this call routes through the egress gate. True for every
-   * model-composed brief. The one false entry will be `whyPeek` in PR 2: it is
-   * synchronous, takes no timeoutMs, and carries no `brief` string or
-   * AgentBriefBase, so it never reaches a model.
+   * Whether this call routes through the egress gate. True for every entry: the
+   * one ungated brief call, `whyPeek`, is synchronous, takes no timeoutMs, and
+   * carries no `brief` string or AgentBriefBase, so it never reaches a model —
+   * and it is a hover, not a row, so it is not in this catalog at all.
    */
   readonly gated: boolean;
 }
 
+// Builds one catalog row. The two fields every row shares are derived rather
+// than spelled out six times, where one row could drift from the rest: the
+// command is always `nimbus.brief.<id>` (the form briefs/commands.ts already
+// uses in its log lines), and every catalog brief is gated (see `gated`).
+function gatedBrief(id: BriefId, label: string, iconId: string, context: BriefContext): BriefSpec {
+  return { id, label, iconId, command: `nimbus.brief.${id}`, context, gated: true };
+}
+
 export const BRIEF_CATALOG: readonly BriefSpec[] = [
-  {
-    id: "why",
-    label: "Why is this here?",
-    iconId: "history",
-    command: "nimbus.brief.why",
-    context: "fileAndLine",
-    gated: true,
-  },
-  {
-    id: "ghost",
-    label: "Who knew this code?",
-    iconId: "person",
-    command: "nimbus.brief.ghost",
-    context: "file",
-    gated: true,
-  },
-  {
-    id: "conflicts",
-    label: "Who else is touching this?",
-    iconId: "git-merge",
-    command: "nimbus.brief.conflicts",
-    context: "file",
-    gated: true,
-  },
-  {
-    id: "huddle",
-    label: "Team huddle",
-    iconId: "organization",
-    command: "nimbus.brief.huddle",
-    context: "none",
-    gated: true,
-  },
-  {
-    id: "janitor",
-    label: "Is this idle?",
-    iconId: "trash",
-    command: "nimbus.brief.janitor",
-    context: "prompted",
-    gated: true,
-  },
-  {
-    id: "preflight",
-    label: "Safe to deploy?",
-    iconId: "rocket",
-    command: "nimbus.brief.preflight",
-    context: "prompted",
-    gated: true,
-  },
+  gatedBrief("why", "Why is this here?", "history", "fileAndLine"),
+  gatedBrief("ghost", "Who knew this code?", "person", "file"),
+  gatedBrief("conflicts", "Who else is touching this?", "git-merge", "file"),
+  gatedBrief("huddle", "Team huddle", "organization", "none"),
+  gatedBrief("janitor", "Is this idle?", "trash", "prompted"),
+  gatedBrief("preflight", "Safe to deploy?", "rocket", "prompted"),
 ];
 
 // Throws rather than returning undefined: every caller has a compile-time

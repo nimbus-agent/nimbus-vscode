@@ -83,7 +83,8 @@ That is what keeps the logic unit-testable: tests alias `vscode` to a stub
 (`test/unit/vscode-stub.ts`, wired in `vitest.config.ts`) and exercise the real
 code paths without a running editor — including, where it is worth it, a
 `real-*.ts` adapter itself (`test/unit/diagnostics-provider.test.ts`,
-`test/unit/briefs-real-hover.test.ts`). Keep `src/` and `test/` self-contained.
+`test/unit/briefs-real-hover.test.ts`, `test/unit/scm-real-git.test.ts`). Keep
+`src/` and `test/` self-contained.
 
 ## Module map
 
@@ -92,11 +93,11 @@ code paths without a running editor — including, where it is worth it, a
 | `src/extension.ts` | Activation entry: registers commands, wires the connection manager, status bar, and HITL router. |
 | `src/sidebar/` | Activity-bar tree views (Audit, Sessions, Index, Agents, Egress, Workflows) over a shared `tree-view.ts` seam, plus quick-actions. Pure parse/format modules (`audit.ts`, `egress.ts`, `workflows.ts`, …) stay `vscode`-free, over shared helpers in `parse-helpers.ts` (`nodePayload`, which digs a row's payload out of a tree node — remembering that `typeof null === "object"` — and `parseAll`, the filter-map that drops unparseable rows) and one `NOT_CONNECTED_ROW` exported from `tree-view.ts`, so "not connected" cannot come to mean two different things in two panels of the same sidebar. `tree-view.ts`'s `createDataView` is also what `src/connectors/connectors-view.ts` builds on, for the eighth container view, Connectors — Workflows and Connectors are the two views with lazily-loaded children (`loadChildren`), because eager children would cost one round trip per row on every open. |
 | `src/workflows/` | The run surface: pure `run.ts` (pre-flight manifest, outcome wording, run report) plus `commands.ts`, which holds the injected seams. The run is gated under the `"workflow"` kind; `workflowCancel` is deliberately **not** gated, since it stops egress rather than causing any. |
-| `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). Attachments live here too: `attachments.ts` is the pure, `vscode`-free core — the `Attachment` union (`file` / `selection` / `index`), refusal precedence (secret beats non-textual beats too-large), line-boundary clamping, and `buildAttachedContext`, the single traversal that produces both the prompt blocks and the chips from one pass — the property that lets Ask keep recording instead of prompting (see the egress section below). `attachment-paths.ts` converts between the repo-relative paths chips and block headers show and the absolute paths the `vscode` shim reads by, and checks workspace containment. `attachment-cache.ts` is the synchronous read cache behind it: files are primed into the cache when attached and re-primed for every currently-attached file immediately before each send — resolution happens **at send, not at attach**, so a file edited after attaching sends what's on screen now, while a `selection` attachment's text was already captured at attach and is never re-read. |
-| `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. |
+| `src/chat/` | Chat controller + panel, the message protocol, session store, and the browser `webview/` bundle (Ask UI, streaming render). Attachments live here too: `attachments.ts` is the pure, `vscode`-free core — the `Attachment` union (`file` / `selection` / `index`), refusal precedence (secret — decided from the path alone, before the assembler reads a byte — then unreadable or empty, then binary, then over budget), the budgets (64,000 characters per attachment and 200,000 per turn; without the turn ceiling, ten attachments at the per-file one would send 640,000), line-boundary clamping, and `buildAttachedContext`, the single traversal that produces both the prompt blocks and the chips from one pass — the property that lets Ask keep recording instead of prompting (see the egress section below). `attachment-paths.ts` converts between the repo-relative paths chips and block headers show and the absolute paths the `vscode` shim reads by, and checks workspace containment. `attachment-cache.ts` is the synchronous read cache behind it: files are primed into the cache when attached and re-primed for every currently-attached file immediately before each send — resolution happens **at send, not at attach**, so a file edited after attaching sends what's on screen now, while a `selection` attachment's text was already captured at attach and is never re-read (a stored range drifts under edits, so the range travels as provenance only). Reuse from the SCM trio is deliberately narrow: `attachments.ts` borrows `isSecretPath` from `src/scm/diff.ts` and nothing else, since the budgeting helpers there are diff-shaped (hunks, `{path, diff}` entries) and mean nothing for a continuous file. |
+| `src/chat-participant/` | Chat participant: pure turn handler + the `real-participant.ts` vscode-glue adapter. Citations come from `searchRankedWithRetrieval`, which returns the Gateway's own notes on what the search could not do (keyword-only, an index still backfilling) alongside the hits; those notes are rendered after the citations, and nothing is added when there is nothing to disclose. |
 | `src/lm-tools/` | The `nimbus_search` / `nimbus_ask` Language Model tools (`contributes.languageModelTools`): pure `lm-tools.ts` handlers + the `real-lm-tools.ts` vscode-glue adapter. |
 | `src/search.ts` | Pure parse/rank helpers behind Search and Find related (`searchRanked` results → Quick Pick items). |
-| `src/quick-ask.ts` | Pure quick-ask helpers: context clamping, path redaction, prompt building, reply extraction. Shared by quick-ask, ask-about-selection and the chat participant. |
+| `src/quick-ask.ts` | Pure quick-ask helpers: context clamping, path redaction, prompt building, reply extraction, plus the one-shot `agentInvoke` options and the empty-reply notice (`oneShotInvokeOptions`, `replyOrNotify`). Shared by quick-ask, ask-about-selection and the chat participant — and, for the one-shot pieces, by the SCM trio, the diagnostic actions and the `nimbus_ask` LM tool, so every one-shot surface sends the same options and reports an empty answer the same way. |
 | `src/quick-ask-presets.ts` | Resolves the configurable quick-ask preset actions (Explain / Fix / Review / Docstring / Write tests), plus the infra-file ops presets (Blast radius / Ownership / Recent changes) prepended to them. |
 | `src/connection/` | Connection manager, the troubleshooter, and optional `nimbus start` auto-start. |
 | `src/hitl/` | Human-in-the-loop consent: router + modal / toast / details surfaces. |
@@ -105,6 +106,8 @@ code paths without a running editor — including, where it is worth it, a
 | `src/context/` | The ambient context panel (`nimbus.contextView`), the container's one `WebviewView`. Pure core — `snapshot.ts` (what is on screen, as plain data), `signals.ts` (the five sections: problems, git, blame, related, connector *Sources*), `offers.ts` (which briefs are satisfiable right now, derived from `BRIEF_CATALOG` so a new brief is offered for free), `debounce.ts` (selection 300 ms / editor 150 ms / diagnostics 500 ms), `controller.ts` (per-signal LRU caching, coalescing and invalidation epochs) and `protocol.ts` (the host↔webview contract **plus** its validation: a webview is untrusted input, so a posted command must pass both a catalog-derived id allowlist and a per-command argument check before any `executeCommand`) — plus `webview/` (the `media/context.js` browser bundle) and `real-context-view.ts`, the only file here touching `vscode`. Its two Gateway-backed signals reach no model, so the panel sits outside the pre-flight gate; `test/unit/egress-choke-point.test.ts` fails if that ever changes. |
 | `src/logging.ts` | Output-channel logger. **Never** `console` in `src/` (Biome's `noConsole`). |
 | `src/command-failure.ts` | `reportCommandFailure` — what a throw out of a command handler means, in one place: an `EgressCancelled` from the pre-flight preview is a normal outcome and stays silent; anything else is logged *and* surfaced. Shared by the SCM and diagnostics command families, which each held a byte-identical copy, so the two cannot drift into disagreeing about what a cancellation is. |
+| `src/html-escape.ts` | `escapeHtml`, the one HTML escaper behind every webview surface — the chat webview, the context panel and the consent-details page. It imports nothing, so all three bundles can inline it; the two webview renderers re-export it rather than keeping a copy each. |
+| `src/webview-document.ts` | `renderWebviewDocument`: the HTML shell, and the Content-Security-Policy, that both bundled webviews are served in — nothing loads by default, and the bundle's one script is admitted by a nonce minted per render. The `real-*` adapters supply only their URIs, title and root markup. |
 | `src/settings.ts` | Typed accessors over `nimbus.*` configuration. |
 | `src/scm/` | Dev-workflow trio (Generate Commit Message, Review Changes, Generate Tests, Generate Docstrings): pure diff/commit-message/review/generate modules behind a `GitApiLike` seam, plus `commands.ts` and `real-git.ts` (see below). |
 | `src/egress/` | The pre-flight gate: every agent-bound call routes through `gated-client.ts` (see below). Pure `leak-check.ts` / `preflight.ts`, the `gate.ts` decision table, and the `skip-store.ts` memento wrapper. |
@@ -114,8 +117,9 @@ code paths without a running editor — including, where it is worth it, a
 ## The `src/egress/` choke point
 
 Before anything reaches the agent, it passes through one seam that can render
-exactly what would leave — paths already redacted — and refuse to send it. The
-gate is the point; the transparency is the payoff.
+what would leave — paths already redacted — and refuse to send it. That rendering
+is the exact outbound text for every kind but `workflow`, whose preview is a
+manifest (see the table). The gate is the point; the transparency is the payoff.
 
 **Eight** outbound paths route through it — one per `EgressKind` in
 `src/egress/preflight.ts`. The **five where the extension assembles the context**
@@ -132,7 +136,7 @@ truth:
 | Built-in briefs (6 commands) | `brief` | `agents*` | **prompts** — extension derives the parameters from the editor |
 | Workflow run / dry run | `workflow` | `workflowRunStream` | **prompts** — and its preview is a **manifest**, not the literal bytes: the extension sends a workflow name and the Gateway expands the saved steps, so `buildRunManifest` states that in its omissions rather than implying byte-exactness |
 | Diagnostic actions (explain, fix) | `diagnostic` | `agentInvoke` | **prompts** — extension assembles the snippet around the squiggle |
-| Ask panel | `ask` | `askStream` | routes and records; no prompt — the user typed it. Attachments (`src/chat/attachments.ts`) widen what actually goes out, but not the exemption's premise: the composer's chips are themselves a standing preview, accurate because `buildAttachedContext` is the one traversal that produces both the sent blocks and the chips, guarded by a test that fails if they could ever diverge. The `EgressKind` count stays at **eight** |
+| Ask panel | `ask` | `askStream` | routes and records; no prompt — the user typed it. Attachments (`src/chat/attachments.ts`) widen what actually goes out, but not the exemption's premise: the composer's chips are themselves a standing preview, accurate because `buildAttachedContext` is the one traversal that produces both the sent blocks and the chips, guarded by a test that fails if they could ever diverge. The `EgressKind` count stays at **eight** — and if that property ever fails, Ask must start prompting under a ninth kind rather than keep the exemption |
 | `@nimbus` participant (incl. its 3 ops briefs) | `participant` | `askStream`, `agents*` | routes and records; no prompt — a modal must not interrupt a chat turn, and a slash-command argument is text the user just typed |
 | LM tools (`nimbus_ask`) | `lmTool` | `agentInvoke` | native `prepareInvocation` card, rendered inline by the *calling* chat |
 
@@ -197,8 +201,9 @@ untyped on our side. Resolving the API itself (`getExtension`/`activate`/
 a shape mismatch discovered later, per-repository call (e.g. a `RawChange`
 missing `.uri.fsPath`) is not caught here — `commands.ts` catches it, at the
 per-command level, alongside its other failure modes. It mirrors
-`chat-participant/real-participant.ts` and is excluded from coverage for the
-same reason: the pure modules carry the logic and the tests.
+`chat-participant/real-participant.ts`: the pure modules carry the logic. Unlike
+that adapter it is measured for coverage — `test/unit/scm-real-git.test.ts`
+drives it through the `vscode` stub, standing in a fake git extension.
 
 Diffs are always fetched **per file**: `collectDiff` lists changed files via
 `changedFiles(scope)`, then calls `fileDiff(scope, path)` once per path. Paths
@@ -207,6 +212,56 @@ of a combined diff — there is no unified-diff parser anywhere in `src/scm/`.
 Output is always a suggestion (the SCM input box, an untitled buffer, a
 read-only tab, or a diff view); the extension never writes to disk and never
 applies a `WorkspaceEdit`.
+
+## The `src/context/` cadence
+
+The ambient context panel talks to the Gateway with no user action, so what it
+collects, and when, is the design. The decisions below are what keeps an
+always-on panel cheap and correct, and the alternatives that were weighed and
+dropped:
+
+- **Visibility is the master switch.** While the view is hidden nothing is
+  collected; becoming visible collects once. Window focus is deliberately not a
+  second pause condition: collection is driven by events, and an unfocused
+  window fires no editor, selection or diagnostic events, so there is nothing to
+  suppress.
+- **Debounce per event source** (`debounce.ts`): selection 300 ms, active
+  editor 150 ms (tab cycling), diagnostics 500 ms (a language server re-lints in
+  bursts); git changes ride the editor tier, because the git extension fires on
+  every working-tree update while the user types.
+- **Cache keys follow what each RPC depends on.** Blame keys on `path:line`, so
+  moving within a line, or scrolling (which fires no cursor event), costs
+  nothing; Related keys on the path plus the selection, already clamped to the
+  300-character index-query limit (`NORMALIZED_QUERY_MAX_CHARS`) rather than the
+  50,000-character model-context one, since it is an index query. Local signals
+  are never cached. The LRU holds 50 entries per signal — a starting figure,
+  never measured.
+- **Invalidation is by event, never by timer.** Save drops that path's entries;
+  a git change drops everything, because a commit or a branch switch changes
+  blame for lines already visited; any connection change clears everything and
+  re-collects while visible, so losing the Gateway replaces stale answers
+  instead of leaving them looking current. Deliberately **not** a trigger:
+  `onDidChangeTextDocument`. Document `version` is in no cache key either —
+  blame answers about committed content, so a per-keystroke refetch would cost
+  an RPC at every cursor rest and return the same answer. A dirty file gets a
+  banner saying its history may not line up instead, and blame is not
+  suppressed for it, exactly as the hover behaves.
+- **Gateway-backed sections post one by one** as they resolve (the local ones
+  ride the first render), fenced by a generation counter so a slow reply about a
+  line the cursor has left is dropped; a collector that throws renders an error
+  row in its own section and nowhere else.
+- **Related excludes the open file by an exact match** of the item's
+  `rawMeta.file` against the file's repo-relative path (and its
+  workspace-relative one), then de-duplicates. A suffix match was tried and
+  rejected: it also drops a different file sharing a directory-aligned tail
+  (`packages/service-b/src/index.ts` against an open `src/index.ts`). An index
+  holding several checkouts of one repository, git worktrees included,
+  legitimately shows one row per checkout.
+- **Height is VS Code's decision, not the manifest's.** `initialSize` and
+  `visibility: "collapsed"` were added and measured inert on clean
+  `--user-data-dir` profiles, then reverted: a webview view placed first in its
+  container already opens at full height, and no manifest default can rewrite a
+  layout a profile has already stored.
 
 ## Conventions
 
@@ -217,14 +272,16 @@ TypeScript **strict**, **no `any`** (use `unknown` for external data). Biome
 ## Current surface
 
 Implemented: **Ask** (streaming chat panel, with a Stop affordance that cancels
-an in-flight generation), **Search** (Quick Pick over the local index),
+an in-flight generation, and file / selection / index-item attachments shown as
+sized chips before they are sent), **Search** (Quick Pick over the local index),
 **Ask/Search Selection**, **Find related** (pivot from a selection or Index item
 to ranked neighbors), **Quick Ask** (one-shot editor quick-ask over
 `agentInvoke`, reply in a read-only tab); a native `@nimbus` **Chat participant**
 in VS Code's built-in Chat view (the ops slash commands `/incident`, `/deploys`,
 `/owns`, `/blast`, `#file`/selection context, streaming answers, local-index
-citations — the Copilot three, explain/fix/test, were retired to Quick Ask
-presets); the **Language Model tools** `nimbus_search` and `nimbus_ask`, which
+citations with the Gateway's own notes when that search was incomplete — the
+Copilot three, explain/fix/test, were retired to Quick Ask presets); the
+**Language Model tools** `nimbus_search` and `nimbus_ask`, which
 let other chat extensions and agents call Nimbus as a tool; a
 **dev-workflow trio** over VS Code's built-in git extension — `Generate Commit
 Message` (staged diff → SCM input box), `Review Changes` (all local changes →
@@ -242,9 +299,14 @@ a **Connectors** view (`nimbus.connectorsView`, `src/connectors/`, see
 registered connector sorted unhealthy-first, sync telemetry and health-state
 history loaded on expand, and nine commands (sync, full re-sync, pause,
 resume, configure, re-index, authenticate, add MCP connector, remove)
-normalised through one adapter into `applied` / `denied` / `failed`, so a
-consent denial is never reported as a failure; plus connection + HITL
-plumbing and **Restricted Mode** support
+normalised through one adapter into `applied` / `denied` / `failed` (plus
+`unreachable` / `abandoned` for the three consent-gated calls), so a consent
+denial is never reported as a failure; the **ambient context panel**
+(`nimbus.contextView`, see *The `src/context/` cadence* above); the six
+**built-in briefs** and **blame on hover**; the **diagnostic actions** on the
+lightbulb; the **"Preview what leaves" pre-flight gate** in front of every
+agent-bound call among them (see *The `src/egress/` choke point* above); plus
+connection + HITL plumbing and **Restricted Mode** support
 (`capabilities.untrustedWorkspaces` = `limited` with `extensionKind: ["ui"]` — in
 an untrusted workspace the workspace-level `nimbus.socketPath` and
 `nimbus.autoStartGateway` settings are ignored, so a workspace cannot redirect

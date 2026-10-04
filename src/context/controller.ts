@@ -206,8 +206,10 @@ export function createController(deps: ControllerDeps): ContextController {
         // Called INSIDE the try on purpose. A collector that throws
         // synchronously would otherwise escape before the cleanup below, so its
         // in-flight entry would survive forever and every later collection for
-        // the same key would await a promise that can only reject.
-        pending = spec.collect(snapshot, deps.signalDeps);
+        // the same key would await a promise that can only reject. A local
+        // collector answers synchronously; Promise.resolve lifts that answer and
+        // hands a Gateway collector's own promise back unchanged.
+        pending = Promise.resolve(spec.collect(snapshot, deps.signalDeps));
         if (key !== undefined) {
           flightFor(spec.id).set(key, { promise: pending, path, epoch: epochAtStart });
         }

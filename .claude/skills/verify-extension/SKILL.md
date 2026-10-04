@@ -37,10 +37,12 @@ Gateway round-trip actually works. For any change to a command handler, the
 sidebar, the chat webview, or client IPC usage, launch the extension and exercise
 the real flow:
 
-**The built-in briefs' modal-gate and no-send flows are now automated** —
-`bun run test:ui` drives a real VS Code (ExTester/Selenium) against a fake
-Gateway and covers exactly this for `Why is this here?` / `Who knew this
-code?` / `Team huddle` / `Is this idle?` / `Safe to deploy?` (see
+**Some flows are automated against a real VS Code** — `bun run test:ui` drives
+one (ExTester/Selenium) against a fake Gateway: the built-in briefs' modal gate
+and no-send paths (`Why is this here?` / `Who knew this code?` / `Team huddle` /
+`Is this idle?` / `Safe to deploy?`), the context panel, Ask attachments,
+*Show Last Outbound Payload* after a gated send, and the Workflows view plus the
+run and cancel surface (see
 [`docs/development.md`](../../../docs/development.md#ui-tests)). This suite
 is **local-only** — it does not run in CI (an unfixed upstream ExTester
 limitation breaks its folder-open handshake under headless Linux) — so run it
@@ -51,7 +53,9 @@ manual pass below for anything it doesn't cover, and it does **not** cover the
 it); that surface is still manual-only.
 
 1. Open the repo in VS Code and press **F5** (the "Run Extension" launch config)
-   to open an Extension Development Host window with the extension loaded.
+   to open an Extension Development Host window with the extension loaded. To
+   judge anything about layout, launch with a throwaway `--user-data-dir`
+   instead: `--profile` keeps the view layout VS Code stored on earlier runs.
 2. Ensure a Nimbus Gateway is running (or set `nimbus.autoStartGateway`), so IPC
    calls resolve.
 3. Drive the specific change end to end and observe the real behavior — e.g. for

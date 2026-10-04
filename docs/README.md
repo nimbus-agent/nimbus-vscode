@@ -6,12 +6,12 @@ the top-level [README](../README.md); for the contributor quickstart see
 
 | Doc | For | Covers |
 | --- | --- | --- |
-| [architecture.md](./architecture.md) | Contributors | The IPC-only seam, the esbuild bundling model and why it's load-bearing, the Webview boundary, and the `vscode-shim` test seam. |
+| [architecture.md](./architecture.md) | Contributors | The IPC-only seam, the esbuild bundling model and why it's load-bearing, the Webview boundary, the `vscode-shim` test seam, the module map, the egress choke point, the SCM seam, and the context panel's cadence — the design decisions, and the rejected alternatives, that outlive the specs they came from. |
 | [connectors.md](./connectors.md) | Users & contributors | The Connectors view — rows, telemetry, health history, the nine mutations and their concurrency guards, the credential catalog's drift risk, and why built-in connector onboarding is absent. |
 | [development.md](./development.md) | Contributors | Clone → build → run in an Extension Development Host (F5), watch mode, debugging, and how the test suite stubs `vscode`. |
 | [settings.md](./settings.md) | Users & contributors | Every `nimbus.*` setting, its default, and when to change it. |
 | [releasing.md](./releasing.md) | Maintainers | The tag-driven publish flow, required secrets, and how to recover a failed release. |
-| [ROADMAP.md](./ROADMAP.md) | Contributors & maintainers | Where the extension is going, phased by SDK-readiness: what's buildable on the existing `@nimbus-dev/client` vs. what's gated on new Gateway/client RPCs. |
+| [ROADMAP.md](./ROADMAP.md) | Contributors & maintainers | Where the extension is going, phased by SDK-readiness: what's buildable on the existing `@nimbus-dev/client` vs. what's gated on new Gateway/client RPCs — plus what shipped surfaces were designed to do and did not, and what their real-editor passes never checked. |
 
 > These docs expand on the load-bearing notes in [CLAUDE.md](../CLAUDE.md) rather
 > than duplicating them. When a fact lives in `package.json`, `biome.json`, or a

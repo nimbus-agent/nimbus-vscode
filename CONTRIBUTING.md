@@ -25,6 +25,9 @@ be posted publicly anywhere: follow [SECURITY.md](./SECURITY.md).
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+
+- [Node.js](https://nodejs.org) 22.12+ — the scripts run on it, Vitest included
+  (`bunx` honours its `node` shebang): Vitest 5 requires 22.12+, and on Bun's
+  own runtime its jsdom environment fails to start
 - VS Code 1.95+ (for running the extension host — matches `engines.vscode`)
 - A running [Nimbus Gateway](https://nimbus-agent.dev/user-guide/install/) for manual testing
 
@@ -39,7 +42,7 @@ bun install
 ```bash
 bun run typecheck   # tsc --noEmit (strict)
 bun run lint        # biome check . (whole repo)
-bun run test        # vitest run
+bun run test        # vitest run (never plain `bun test`: Bun's runner hangs on this suite)
 bun run build       # esbuild bundles into dist/ + media/
 ```
 
@@ -50,8 +53,11 @@ test setup.
 
 ## Docs
 
-Deeper reference lives in [`docs/`](./docs/): architecture, development,
-settings, and the release runbook.
+Deeper reference lives in [`docs/`](./docs/): architecture (including the
+design decisions behind each surface), connectors, development, settings, the
+release runbook, and the roadmap. Design specs and implementation plans are
+working documents: once their work ships they are deleted, after anything
+durable moves into those docs — git history keeps the originals.
 
 ## Architecture notes
 
@@ -81,6 +87,43 @@ settings, and the release runbook.
 
   CI runs the same set on Ubuntu, plus a lean Windows job (typecheck, test,
   build, bundle guards).
+
+## Updating dependencies
+
+No bot opens dependency-update PRs here. A maintainer updates dependencies in
+periodic bulk PRs: run `bun outdated`, raise the ranges in `package.json`, run
+`bun install`, then run the full gate above and open one `chore(deps):` PR.
+GitHub's Dependabot *alerts* stay on for security advisories; only its update
+PRs were retired.
+
+A range bump is not the whole job for these:
+
+- **`bun.lock`** — commit it with `package.json`. CI installs with
+  `bun install --frozen-lockfile`, so a range change without its regenerated
+  lockfile fails every job.
+- **`@nimbus-dev/client`** — leave it out of a bulk update. It is bumped on
+  purpose, in its own PR, when the extension surfaces new Gateway capability.
+- **`vitest` and `@vitest/coverage-v8`** — always the same version, in one
+  change: the coverage provider declares the exact `vitest` version as its peer.
+- **`@types/vscode`** — follows `engines.vscode`, not npm's latest. The types
+  decide which VS Code APIs the code may call, so types newer than the
+  `engines.vscode` floor let code compile against APIs the oldest supported
+  VS Code lacks. `vsce package` rejects a declared `@types/vscode` range whose
+  major.minor is newer than `engines.vscode`, but it reads the range in
+  `package.json`, not the version `bun.lock` resolved — check that too. That is
+  why the range is a tilde on the floor's minor (`~1.95.0`): a caret let the
+  lockfile resolve 1.125.0. Raise the two together, deliberately, never as
+  part of a bulk update.
+- **The UI-test harness** — `vscode-extension-tester` (pinned exactly),
+  `mocha`, `chai` and their `@types`. CI typechecks `test/ui/` but never runs
+  it, so after bumping any of them run `bun run test:ui` yourself (see
+  [docs/development.md](./docs/development.md#ui-tests)).
+- **GitHub Actions** — third-party actions are pinned by full commit SHA with
+  the version in a trailing comment (`@<sha> # v7.0.0`); update the two
+  together. Bun is pinned in two places that move together: the workflows'
+  `bun-version` input and the `npm install -g bun@…` line in `.gitlab-ci.yml`.
+  That job runs on a `node:` image rather than `oven/bun`, matching the Node
+  the GitHub runners ship, because Vitest needs a real Node.
 
 ## Releases
 

@@ -1,6 +1,12 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
 
+import { escapeHtml } from "../../html-escape.js";
+
+// Still part of this renderer's surface: the escaping every function below
+// relies on is the shared one, re-exported rather than redefined here.
+export { escapeHtml };
+
 export function renderMarkdown(src: string): string {
   if (src.length === 0) return "";
   const raw = marked.parse(src, {
@@ -9,18 +15,6 @@ export function renderMarkdown(src: string): string {
     gfm: true,
   });
   return DOMPurify.sanitize(raw);
-}
-
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
-export function escapeHtml(s: string): string {
-  return s.replaceAll(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c);
 }
 
 export type TurnRole = "user" | "assistant";

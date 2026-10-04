@@ -1,4 +1,5 @@
 import { asRecord } from "./sidebar/parse-helpers.js";
+import type { WindowApi } from "./vscode-shim.js";
 
 // Max characters of code context attached to a quick-ask prompt. Whole-file
 // context on a large/minified file is clamped to this so a one-shot agentInvoke
@@ -41,6 +42,14 @@ export function redactPath(filePath: string): string {
   return segments.at(-1) ?? filePath;
 }
 
+// The options of every one-shot (non-streaming) agentInvoke — Quick Ask, the SCM
+// trio, the diagnostic actions and the nimbus_ask LM tool alike: the agent the
+// `nimbus.askAgent` setting names, or no `agent` key at all when that setting is
+// blank, so the Gateway uses its default.
+export function oneShotInvokeOptions(agent: string): { stream: boolean; agent?: string } {
+  return agent.length > 0 ? { stream: false, agent } : { stream: false };
+}
+
 // Extract the reply from an agentInvoke result ({ reply?: string } & Record<...>).
 // Returns a trimmed non-empty reply, else undefined (missing/non-string/blank).
 export function extractReply(result: unknown): string | undefined {
@@ -49,6 +58,21 @@ export function extractReply(result: unknown): string | undefined {
   if (typeof reply !== "string") return undefined;
   const trimmed = reply.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+// What an editor surface tells the user when a one-shot call came back with
+// nothing to show.
+export const NO_REPLY_NOTICE = "Nimbus: the agent returned no reply.";
+
+// extractReply, raising NO_REPLY_NOTICE when there is no reply — so Quick Ask,
+// the SCM trio and the diagnostic actions report an empty answer identically.
+export function replyOrNotify(
+  result: unknown,
+  window: Pick<WindowApi, "showInformationMessage">,
+): string | undefined {
+  const reply = extractReply(result);
+  if (reply === undefined) void window.showInformationMessage(NO_REPLY_NOTICE, {});
+  return reply;
 }
 
 // Validate a quick-ask question for the input box: an error message for a

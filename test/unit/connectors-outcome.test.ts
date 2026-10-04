@@ -40,6 +40,14 @@ describe("the four wire shapes", () => {
     ).toEqual({ kind: "applied", detail: "1204 items deleted" });
   });
 
+  test("an approval with nothing to add carries no detail, rather than an empty one", () => {
+    // "Removing github: done" — not "Removing github: done · " with a dangling
+    // separator from an empty detail string.
+    const outcome = fromGated({ ok: true }, () => "");
+    expect(outcome).toEqual({ kind: "applied" });
+    expect("detail" in outcome).toBe(false);
+  });
+
   test("a thrown denial is denied — reindex rejects where the others resolve", () => {
     expect(fromThrown(new Error("HITL denied: owner rejected the request"))).toEqual({
       kind: "denied",

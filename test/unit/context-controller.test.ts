@@ -693,19 +693,26 @@ describe("createController", () => {
     expect(first?.sections?.map((s) => s.id)).toEqual(["problems", "blame"]);
   });
 
-  test("a local signal that throws renders an error row in the first render", async () => {
+  // Both shapes a failure can take. The shipped local collectors answer
+  // synchronously, so for them it is a throw rather than a rejection — and it
+  // must land in the same error row, never escape collect() and cost the render.
+  test.each([
+    {
+      shape: "rejects",
+      collect: async (): Promise<SignalSection> => {
+        throw new Error("local exploded");
+      },
+    },
+    {
+      shape: "throws synchronously",
+      collect: (): SignalSection => {
+        throw new Error("local exploded");
+      },
+    },
+  ])("a local signal that $shape renders an error row in the first render", async ({ collect }) => {
     const posted: Array<{ type: string; sections?: SignalSection[] }> = [];
     const controller = createController({
-      signals: [
-        {
-          id: "problems",
-          needsGateway: false,
-          collect: async () => {
-            throw new Error("local exploded");
-          },
-          cacheKey: () => undefined,
-        },
-      ],
+      signals: [{ id: "problems", needsGateway: false, collect, cacheKey: () => undefined }],
       signalDeps: {
         client: () => undefined,
         now: () => 0,
@@ -785,5 +792,98 @@ describe("createController", () => {
     h.log.lines.length = 0;
     await h.controller.collect(snap(2, 3));
     expect(h.log.lines.join("\n")).toContain("cached");
+  });
+});
+
+describe("invalidation scope and the render fence", () => {
+  const atPath = (generation: number, path: string): ContextSnapshot =>
+    buildSnapshot({ generation, editor: { ...editor, path } });
+
+  test("invalidatePath drops only that path's cached entries; another file's survive", async () => {
+    const seen: string[] = [];
+    const h = harness({
+      collect: async (s) => {
+        seen.push(s.path ?? "");
+        return section(1);
+      },
+    });
+    await h.controller.collect(atPath(1, "src/a.ts"));
+    await h.controller.collect(atPath(2, "src/b.ts"));
+    h.controller.invalidatePath("src/a.ts");
+    await h.controller.collect(atPath(3, "src/b.ts")); // still cached
+    await h.controller.collect(atPath(4, "src/a.ts")); // dropped, so fetched again
+    expect(seen).toEqual(["src/a.ts", "src/b.ts", "src/a.ts"]);
+  });
+
+  test("another path's in-flight answer still posts, but an invalidation mid-flight keeps it out of the cache", async () => {
+    // invalidatePath deletes only matching in-flight entries, yet it moves
+    // EVERY signal's epoch — so b's answer, already on its way, reaches the
+    // view but is not trusted enough to cache.
+    const seen: string[] = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const h = harness({
+      collect: async (s) => {
+        seen.push(s.path ?? "");
+        if (seen.length === 1) await gate;
+        return section(seen.length);
+      },
+    });
+    const first = h.controller.collect(atPath(1, "src/b.ts"));
+    await Promise.resolve();
+    h.controller.invalidatePath("src/a.ts");
+    release?.();
+    await first;
+    const sections = h.posted.filter((m) => m.type === "section");
+    expect(sections.map((m) => m.section?.rows.length)).toEqual([1]);
+    await h.controller.collect(atPath(2, "src/b.ts"));
+    expect(seen).toEqual(["src/b.ts", "src/b.ts"]);
+  });
+
+  test("a render overtaken while its local reads resolve is never posted", async () => {
+    // Collection 1's local read is slow; collection 2 starts and renders first.
+    // When collection 1 finally resumes, its snapshot is no longer the current
+    // one — posting it would repaint the panel with the line the user left.
+    const posted: Array<{ type: string; generation?: number }> = [];
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let calls = 0;
+    const controller = createController({
+      signals: [
+        {
+          id: "problems",
+          needsGateway: false,
+          collect: async () => {
+            calls += 1;
+            if (calls === 1) await gate;
+            return { id: "problems", title: "Problems", rows: [] };
+          },
+          cacheKey: () => undefined,
+        },
+      ],
+      signalDeps: {
+        client: () => undefined,
+        now: () => 0,
+        searchLimit: () => 20,
+        connectorHealth: () => ({ count: 0, names: [] }),
+      },
+      connection: {
+        current: () => ({ kind: "connected" }) as ConnectionState,
+        onState: () => ({ dispose: () => undefined }),
+      },
+      post: (m) => posted.push(m as { type: string; generation?: number }),
+      isVisible: () => true,
+      log: silentLog as never,
+    });
+    const first = controller.collect(snap(1, 1));
+    await controller.collect(snap(2, 2));
+    release?.();
+    await first;
+    expect(calls).toBe(2);
+    expect(posted.map((m) => [m.type, m.generation])).toEqual([["render", 2]]);
   });
 });

@@ -1,5 +1,6 @@
 import type { HitlRequest } from "@nimbus-dev/client";
 
+import { escapeHtml } from "../html-escape.js";
 import type { HitlDecision } from "./hitl-router.js";
 
 export type HitlDetailsRenderInput = {
@@ -44,18 +45,6 @@ document.getElementById("reject").addEventListener("click", () =>
 </script>
 </body>
 </html>`;
-}
-
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
-function escapeHtml(s: string): string {
-  return s.replaceAll(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c);
 }
 
 export type DetailsDecisionMessage = {

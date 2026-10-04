@@ -1,6 +1,6 @@
 # Welcome to Nimbus
 
-Nimbus is a **local-first** AI agent for your editor. It talks to a Nimbus Gateway running on *your* machine — this extension makes no cloud calls — and every byte it sends off-device is recorded in a verifiable **egress ledger**.
+Nimbus is a **local-first** AI agent for your editor. It talks to a Nimbus Gateway running on *your* machine — this extension makes no cloud calls — and every action it takes off-device is recorded in a verifiable **egress ledger**.
 
 This short walkthrough gets you connected and shows you Ask, Search, and Quick Ask.
 

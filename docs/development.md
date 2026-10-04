@@ -6,6 +6,9 @@ these commands see [architecture.md](./architecture.md).
 ## Prerequisites
 
 - [Bun](https://bun.sh) v1.2+ (package manager + test runner)
+- [Node.js](https://nodejs.org) 22.12+ — the scripts run on it, Vitest included (`bunx` honours
+  its `node` shebang): Vitest 5 requires 22.12+, and on Bun's own runtime its jsdom
+  environment fails to start
 - VS Code 1.95+ (to run the Extension Development Host — matches `engines.vscode` in `package.json`)
 - A running [Nimbus Gateway](https://nimbus-agent.dev/user-guide/install/) for manual testing
   (Ask/Search need a Gateway to talk to over IPC)
@@ -22,7 +25,7 @@ bun install
 | --- | --- |
 | `bun run typecheck` | `tsc --noEmit` (strict, no emit) |
 | `bun run lint` | `biome check .` (the whole repo — `src/`, `test/`, `scripts/`) |
-| `bun run test` | `vitest run` (unit tests) |
+| `bun run test` | `vitest run` (unit tests). Use this, or `bunx vitest run`, never plain `bun test`: Bun's own runner ignores `vitest.config.ts`'s `vscode` alias and hangs |
 | `bun run test:coverage` | tests with V8 coverage |
 | `bun run test:ui` | ExTester/Selenium UI suite against a real VS Code — see "UI tests" below |
 | `bun run build` | esbuild bundles into `dist/` + `media/` |
@@ -60,12 +63,23 @@ the command palette, or right-click a selection → *Ask About Selection* /
 - Extension-host logs go to the **Nimbus** output channel
   ([`src/logging.ts`](../src/logging.ts)) — set `nimbus.logLevel` to `debug` for
   the most detail. See [settings.md](./settings.md).
+- To judge anything about layout — which views open collapsed, how tall the
+  Context view is — launch with a throwaway profile directory
+  (`code --extensionDevelopmentPath=. --user-data-dir <empty temp dir> .`).
+  `--profile <name>` is not a clean slate: it carries the view state VS Code
+  stored on earlier runs, and a stored layout overrides every manifest default.
+  The context panel's height checks were misread this way, under `--profile`,
+  until a clean `--user-data-dir` settled them.
 
 ## UI tests
 
 `bun run test:ui` drives a real VS Code (via [ExTester](https://github.com/redhat-developer/vscode-extension-tester)/Selenium) against a fake Gateway
-(`test/ui/fake-gateway.ts`) that records every request, to prove the built-in
-briefs' modal-gate and no-send flows against actual UI, not a `vscode` stub.
+(`test/ui/fake-gateway.ts`) that records every request, to prove flows against
+actual UI rather than a `vscode` stub. Its eight specs (`test/ui/specs/`) cover
+a harness smoke test, the built-in briefs' modal gate and their no-send paths,
+the context panel (sections, blame, an offer routed through the gate), Ask
+attachments (attach, send, detach), *Show Last Outbound Payload* after a real
+gated send, and the Workflows view plus the run and cancel surface.
 It needs a desktop session — on headless Linux, run it under `xvfb-run -a bun
 run test:ui`. The first run downloads a full copy of VS Code plus a matching
 chromedriver (~200 MB, cached into the gitignored `test-resources/`); later
@@ -81,11 +95,11 @@ A follow-up will wire CI back up once a workaround is verified against a real
 run.
 
 **What it does not cover:** the `@nimbus` chat participant — including
-`/blast`'s basename redaction — because ExTester 8.23.0 ships no Chat-view
+`/blast`'s basename redaction — because ExTester 8.28.0 ships no Chat-view
 page object; VS Code's built-in Chat view is reachable only by typing into
 it, which the harness's page-objects-only rules can't drive. That surface
 stays manual-only (see the `verify-extension` skill) and is proven at the
-unit level (`src/chat-participant/` tests) instead.
+unit level instead (`test/unit/participant*.test.ts`, `ops-commands.test.ts`).
 
 ## Tests
 
@@ -97,7 +111,8 @@ the narrow `*Like` interfaces in [`src/vscode-shim.ts`](../src/vscode-shim.ts)
 and confining the real `vscode` import to `src/extension.ts` and the seven
 `real-*.ts` adapters. Because the alias applies to every test, an adapter *can*
 be unit-tested too where that is worth it
-(`test/unit/diagnostics-provider.test.ts`). Webview tests run under jsdom.
+(`test/unit/diagnostics-provider.test.ts`, `briefs-real-hover.test.ts`,
+`scm-real-git.test.ts`). Webview tests run under jsdom.
 
 When adding code:
 

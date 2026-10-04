@@ -29,7 +29,8 @@ import { waitForModal } from "../helpers/modal.js";
 //   - `grep -ril chat node_modules/vscode-extension-tester` / the
 //     page-objects package: no hits anywhere in either package (not even in
 //     internal .d.ts files) — vscode-extension-tester 8.23.0 has no model of
-//     the Chat view's input box or response stream at all.
+//     the Chat view's input box or response stream at all. (Re-checked the
+//     same three ways against 8.28.0 / page-objects 1.25.0: still none.)
 // The task's rules require page objects only (no raw CSS/XPath), so driving
 // the Chat view honestly is not available here. That rules out Outcome 1.
 //

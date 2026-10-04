@@ -153,4 +153,24 @@ describe("renderPeek", () => {
     expect(out).toContain("**Robin Hale**");
     expect(out).toContain("`a1b2c3d`");
   });
+
+  test("a line known only by an unnumbered PR renders just that, with no empty head line", () => {
+    // No author, time or sha: the author/age/sha line is omitted outright
+    // rather than rendered as an empty " · " row, and a PR the Gateway could
+    // not number reads "PR #?" rather than "PR #null".
+    const out = renderPeek(
+      peek({
+        author: null,
+        commitSha: null,
+        committedAt: null,
+        commitSubject: null,
+        pr: { number: null, title: "Rework session refresh", url: null },
+        ticket: null,
+      }),
+      TARGET,
+      NOW,
+    );
+    const link = encodeURIComponent(JSON.stringify([{ ref: "src/auth/session.ts", line: 41 }]));
+    expect(out).toBe(`PR #?\n\n[Why? →](command:nimbus.brief.why?${link})`);
+  });
 });

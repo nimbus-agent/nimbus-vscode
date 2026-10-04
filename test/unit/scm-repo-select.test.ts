@@ -15,7 +15,7 @@ function fakeRepo(rootPath: string): GitRepositoryLike {
     changedPathsNow: () => [],
     stagedPathsNow: () => [],
     fileDiff: async () => "",
-    untrackedPaths: async () => [],
+    untrackedPaths: () => [],
     log: async () => [],
     inputBox: { value: "" },
     branch: () => "main",
@@ -49,6 +49,11 @@ describe("repoLabel", () => {
   });
   test("falls back to the raw root when there is no separator", () => {
     expect(repoLabel(fakeRepo("proj"))).toBe("proj");
+  });
+  test("a repository at the filesystem root is labelled by the root, never an empty string", () => {
+    // `git init /` in a container: every segment is empty once the
+    // separators are stripped, so there is no basename to take.
+    expect(repoLabel(fakeRepo("/"))).toBe("/");
   });
 });
 

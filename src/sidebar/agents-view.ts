@@ -16,6 +16,6 @@ export function createAgentsView(deps: {
 }): SidebarView {
   return createDataView({
     connection: deps.connection,
-    loadData: async () => agentsTreeRows(deps.loadAgents(), deps.activeAgentId()),
+    loadData: () => agentsTreeRows(deps.loadAgents(), deps.activeAgentId()),
   });
 }

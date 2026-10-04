@@ -1,3 +1,4 @@
+import { redactPath } from "../quick-ask.js";
 import { isSecretPath } from "../scm/diff.js";
 
 /**
@@ -23,7 +24,7 @@ export interface ResolvedAttachment {
   readonly attachment: Attachment;
   /** Primary chip text: the path, or the index item's name. */
   readonly label: string;
-  /** Secondary chip text: what happened, in the vocabulary the spec fixes. */
+  /** Secondary chip text: what happened, in the fixed chip vocabulary. */
   readonly detail: string;
   readonly outcome: AttachmentOutcome;
   /** The exact body this attachment contributes. Absent when refused. */
@@ -46,9 +47,11 @@ export const TOTAL_BUDGET = 200_000;
 // the alternative is sending a block of mojibake and letting the model guess.
 //
 // Write the two-character ESCAPE `\0`, never a literal NUL: an earlier draft of
-// this plan contained real control bytes, which rendered as spaces to every
-// reader. Had that shipped, `includes(" ")` would have refused every source
-// file containing a space — i.e. all of them.
+// the implementation plan this shipped from contained real control bytes, which
+// rendered as spaces to every reader. Had that shipped, `includes(" ")` would
+// have refused every source file containing a space — i.e. all of them. (The
+// plan has since been deleted; its review records the finding:
+// `git show a2e59eb:docs/superpowers/plans/2026-08-19-context-grounded-ask-review.md`.)
 export function looksBinary(text: string): boolean {
   return text.includes("\0");
 }
@@ -77,17 +80,11 @@ function isAbsolutePath(path: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("/") || path.startsWith("\\\\");
 }
 
-function basename(path: string): string {
-  const normalized = path.replaceAll("\\", "/");
-  const idx = normalized.lastIndexOf("/");
-  return idx < 0 ? normalized : normalized.slice(idx + 1);
-}
-
 // What a `file`/`selection` attachment shows: the repo-relative path as-is,
 // or just the basename when it is an absolute path the workspace root could
-// not account for.
+// not account for — reduced by the same redactPath those other surfaces use.
 function displayPath(path: string): string {
-  return isAbsolutePath(path) ? basename(path) : path;
+  return isAbsolutePath(path) ? redactPath(path) : path;
 }
 
 function labelOf(a: Attachment): string {
@@ -178,7 +175,7 @@ function budgetedBody(a: Attachment, raw: string, remaining: number): string | u
   return body.length === 0 ? undefined : body;
 }
 
-// One attachment's verdict, decided in the order the spec fixes: secret, then
+// One attachment's verdict, decided in a fixed order: secret, then
 // unreadable, then non-textual, then budget. `remaining` is what is left of the
 // turn budget when this attachment's turn comes.
 function resolveAttachment(

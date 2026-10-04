@@ -219,8 +219,8 @@ describe("buildIndexMetadataBlock", () => {
 
   // The entire point of this helper versus buildAskPrompt: it carries no
   // instruction. It is prepended AHEAD of the user's own typed question by
-  // the attachment assembler, and the spec requires the user's text to read
-  // last, as the instruction — an imperative here would upstage it.
+  // the attachment assembler, and the attachment design requires the user's
+  // text to read last, as the instruction — an imperative here would upstage it.
   test("carries no imperative — unlike buildAskPrompt, which is written to seed a fresh turn on its own", () => {
     const item: IndexItem = { id: "i", name: "Q3 Deck", service: "gdrive" };
     expect(buildIndexMetadataBlock(item)).not.toContain("Tell me about");

@@ -215,6 +215,34 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
     return sawContent;
   };
 
+  // Leaving the current conversation — for "New conversation" and for resuming
+  // a different session alike, so the two cannot drift apart — drops everything
+  // that belongs to it:
+  //
+  // - Its attachments, which are session-scoped. Not cleared, they would
+  //   genuinely be SENT with the next turn of whatever conversation comes next
+  //   — not a display-only bug. Cleared but not re-posted, the composer would
+  //   keep showing chips for attachments that will not be sent: its chips are
+  //   this surface's pre-flight preview, and "reset" clears the transcript and
+  //   the pending turn-manifest buffer but never the composer's own
+  //   #attach-mount (see main.ts), so the now-empty set is posted explicitly.
+  // - Any in-flight hydrate, superseded by the generation bump.
+  // - Any in-flight stream, which is cancelled.
+  //
+  // Returns that cancellation when there was a stream to cancel, and undefined
+  // when there was not — rather than a resolved promise — so a caller with
+  // nothing to wait for moves straight on, without an extra await tick that
+  // would shift when its follow-up hydrate starts.
+  const leaveConversation = (): Promise<void> | undefined => {
+    attached.clear();
+    postAttachments(true);
+    generation += 1;
+    if (active === undefined) return undefined;
+    const handle = active;
+    active = undefined;
+    return handle.cancel();
+  };
+
   return {
     async start(input): Promise<void> {
       if (active !== undefined) {
@@ -318,20 +346,8 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await handle.cancel();
     },
     async newConversation(): Promise<void> {
-      attached.clear();
-      // The composer's chips are the pre-flight preview for this surface — a
-      // stale chip after "New conversation" would show an attachment that
-      // will not actually be sent. "reset" clears the transcript and the
-      // pending turn-manifest buffer, but never the composer's own
-      // #attach-mount (see main.ts), so the (now empty) attachment state must
-      // be posted explicitly rather than assumed to follow from the reset.
-      postAttachments(true);
-      generation += 1; // clearing the conversation supersedes any in-flight hydrate
-      if (active !== undefined) {
-        const handle = active;
-        active = undefined;
-        await handle.cancel();
-      }
+      const cancelling = leaveConversation();
+      if (cancelling !== undefined) await cancelling;
       await deps.sessionStore.clear();
       post({ type: "reset" });
     },
@@ -350,21 +366,8 @@ export function createChatController(deps: ChatControllerDeps): ChatController {
       await hydrate(sid, limit);
     },
     async resume(sessionId, limit): Promise<void> {
-      // Attachments are session-scoped, exactly like newConversation()
-      // already treats them — resuming a DIFFERENT session must not carry the
-      // previous session's chips along. They would genuinely be sent (this is
-      // not a display-only bug), which is worse than the stale-chip case
-      // newConversation() guards against: nothing untrue is shown, but
-      // "session-scoped" stops meaning that the moment a resume forgets to
-      // clear them.
-      attached.clear();
-      postAttachments(true);
-      generation += 1; // switching sessions supersedes any in-flight hydrate
-      if (active !== undefined) {
-        const handle = active;
-        active = undefined;
-        await handle.cancel();
-      }
+      const cancelling = leaveConversation();
+      if (cancelling !== undefined) await cancelling;
       await deps.sessionStore.set(sessionId);
       post({ type: "reset" });
       await hydrate(sessionId, limit);

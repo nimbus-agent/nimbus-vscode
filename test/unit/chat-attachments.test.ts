@@ -249,6 +249,46 @@ describe("buildAttachedContext", () => {
     expect(built.totalChars).toBeLessThanOrEqual(TOTAL_BUDGET);
   });
 
+  test("one line longer than the attachment budget (a minified bundle) is omitted, never half-sent", () => {
+    // No line boundary falls inside the budget, so there is no whole line to
+    // send — and a cut mid-line is exactly what clampToLineBoundary refuses.
+    const minified = "x".repeat(PER_ATTACHMENT_BUDGET + 10);
+    const built = buildAttachedContext(
+      [file("bundle.min.js")],
+      reader({ "bundle.min.js": minified }).read,
+    );
+    expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "budget" });
+    expect(built.chips[0]?.detail).toBe("omitted · turn budget reached");
+    expect(built.blocks).toBe("");
+    expect(built.totalChars).toBe(0);
+  });
+
+  test("blocks can fill the turn budget to the last character, and the next one is refused", () => {
+    // Index snippets with no newline: each block is its header line, the body,
+    // and the one newline blockFor pads on — so a body sized to the budget minus
+    // that overhead produces a block of EXACTLY the budget it was given.
+    const header = (name: string): string => `--- index item: github/${name} ---`;
+    const exact = (name: string, budget: number): Attachment =>
+      indexItem(name, "x".repeat(budget - header(name).length - 2));
+    const list = [
+      exact("a", PER_ATTACHMENT_BUDGET),
+      exact("b", PER_ATTACHMENT_BUDGET),
+      exact("c", PER_ATTACHMENT_BUDGET),
+      exact("d", TOTAL_BUDGET - 3 * PER_ATTACHMENT_BUDGET),
+      indexItem("e", "one more line\n"),
+    ];
+    const built = buildAttachedContext(list, reader({}).read);
+    expect(built.chips.slice(0, 4).map((c) => c.outcome.state)).toEqual([
+      "sent",
+      "sent",
+      "sent",
+      "sent",
+    ]);
+    expect(built.totalChars).toBe(TOTAL_BUDGET);
+    expect(built.chips[4]?.outcome).toEqual({ state: "refused", reason: "budget" });
+    expect(built.blocks).not.toContain("one more line");
+  });
+
   test("a missing file is refused as unreadable, and the turn survives", () => {
     const built = buildAttachedContext([file("gone.ts")], reader({}).read);
     expect(built.chips[0]?.outcome).toEqual({ state: "refused", reason: "unreadable" });

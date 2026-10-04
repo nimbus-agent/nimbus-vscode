@@ -46,6 +46,27 @@ describe("renderMarkdown", () => {
     const html = renderMarkdown("line one\nline two");
     expect(html).toMatch(/<br>/);
   });
+  // An assistant turn is model output, so untrusted: marked turns it into HTML,
+  // and DOMPurify is the only thing between that HTML and the webview's DOM.
+  // Every other case here is about formatting, so without this one a DOMPurify
+  // bump that left the sanitizer inert would pass the suite — and inert is its
+  // failure mode: `sanitize` hands its input back untouched when it finds no
+  // usable DOM to work with.
+  test("strips script, inline event handlers and javascript: links from model output", () => {
+    const html = renderMarkdown(
+      [
+        "<script>alert(1)</script>",
+        "",
+        'look <img src="x" onerror="alert(2)"> and [click](javascript:alert(3))',
+      ].join("\n"),
+    );
+    expect(html).not.toMatch(/<script/i);
+    expect(html).not.toMatch(/onerror/i);
+    expect(html).not.toMatch(/javascript:/i);
+    // Sanitized, not emptied: the harmless parts of the same markup survive.
+    expect(html).toContain('<img src="x">');
+    expect(html).toContain(">click</a>");
+  });
 });
 
 describe("renderTurn", () => {
@@ -201,5 +222,21 @@ describe("renderEmptyState", () => {
     const html = renderEmptyState({ sub: "permission-denied" });
     expect(html).toContain("empty-permission-denied");
     expect(html).toContain('data-action="openLogs"');
+    expect(html).not.toContain("Socket:");
+  });
+  test("disconnected with no known socket omits the socket line rather than printing an empty one", () => {
+    const html = renderEmptyState({ sub: "disconnected", socketPath: "" });
+    expect(html).toContain('data-action="startGateway"');
+    expect(html).not.toContain("Socket:");
+  });
+  test("permission-denied names the socket it could not open, escaped", () => {
+    const html = renderEmptyState({
+      sub: "permission-denied",
+      socketPath: "/run/<user>/nimbus.sock",
+    });
+    expect(html).toContain(
+      '<p class="muted">Socket: <code>/run/&lt;user&gt;/nimbus.sock</code></p>',
+    );
+    expect(html).not.toContain("<user>");
   });
 });

@@ -158,4 +158,17 @@ describe("buildDiagnosticContext", () => {
   test("does not flag truncation for an ordinary file", () => {
     expect(build(lines(200), at(100)).truncated).toBe(false);
   });
+
+  test("a stale diagnostic past the end of a shrunken file stays in bounds", () => {
+    // Diagnostics can lag an edit: one reported at line 60 can reach the
+    // provider after the file shrank to 10 lines. Its context window then
+    // starts beyond the last line, and the snippet falls back to the document
+    // itself rather than an empty or inverted slice; the splice offsets clamp
+    // to the real last line.
+    const text = lines(10);
+    const ctx = build(text, at(60));
+    expect(ctx.snippet).toBe(text);
+    expect(ctx.offsets).toEqual({ start: text.indexOf("line 9"), end: text.length });
+    expect(ctx.startLine).toBe(61);
+  });
 });

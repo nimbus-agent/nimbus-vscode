@@ -1,5 +1,3 @@
-import { randomUUID } from "node:crypto";
-
 import * as vscode from "vscode";
 import { toRelativeRef } from "../briefs/params.js";
 import type { ConnectorHealthSummary } from "../connectors/health.js";
@@ -7,6 +5,7 @@ import { errMsg, type Logger } from "../logging.js";
 import type { GitApiLike, GitRepositoryLike } from "../scm/git-types.js";
 import { repoContaining } from "../scm/repo-select.js";
 import type { SidebarConnection } from "../sidebar/tree-view.js";
+import { renderWebviewDocument } from "../webview-document.js";
 import { createController } from "./controller.js";
 import { createDebouncer, DEBOUNCE_MS } from "./debounce.js";
 import { validateInbound } from "./protocol.js";
@@ -181,7 +180,7 @@ export function registerContextView(deps: {
     );
   };
 
-  // One debouncer per event source, at the spec's tiers. Becoming visible and
+  // One debouncer per event source, at debounce.ts's tiers. Becoming visible and
   // the webview's ready handshake collect immediately: both are single events
   // the user is waiting on, not bursts.
   const onSelection = createDebouncer(DEBOUNCE_MS.selection, recollect);
@@ -197,7 +196,7 @@ export function registerContextView(deps: {
   // path:line, with no mention of HEAD — so without this the panel would keep
   // reporting the pre-commit author and sha for every line already visited.
   // (Carrying HEAD on GitSummary and folding it into blame's key is the
-  // narrower fix; it is a seam change, deferred to PR 3.)
+  // narrower fix; it is a seam change, and has not been made.)
   const onGit = createDebouncer(DEBOUNCE_MS.editor, () => {
     controller.invalidateAll();
     recollect();
@@ -251,7 +250,7 @@ export function registerContextView(deps: {
   // runs — subscribing only to what is there at activation is how this trigger
   // ends up never firing at all. Re-attaching on every open also covers a repo
   // closing: its listener is disposed with the rest.
-  // Guards the two async chains below against a teardown that lands while
+  // Guards the two async paths below against a teardown that lands while
   // deps.git() is still pending: without it, a subscription can be created
   // AFTER dispose() has already run and never gets torn down.
   let gitWiringDisposed = false;
@@ -266,26 +265,31 @@ export function registerContextView(deps: {
   };
 
   let openSub: { dispose(): void } | undefined;
-  void deps
-    .git()
-    .then((api) => {
-      const sub = api?.onDidOpenRepository(() => {
-        void attachGitListeners()
-          // Same reasoning as onGit: a repository appearing can change the
-          // branch, the changed-file count and every cached blame answer.
-          .then(() => onGit.trigger())
-          .catch((e: unknown) => deps.log.warn(`context panel git re-attach failed: ${errMsg(e)}`));
-      });
-      if (gitWiringDisposed) {
-        sub?.dispose();
-        return;
-      }
-      openSub = sub;
-      void attachGitListeners().catch((e: unknown) =>
-        deps.log.warn(`context panel git listeners failed: ${errMsg(e)}`),
-      );
-    })
-    .catch((e: unknown) => deps.log.warn(`context panel git init failed: ${errMsg(e)}`));
+  // Awaited in sequence rather than nested inside a then() callback, with each
+  // half still reporting its own failure: resolving the git extension and
+  // subscribing to the repositories it opens later is "init"; the first attach
+  // to the repositories it already has is "listeners".
+  const wireGit = async (): Promise<void> => {
+    const api = await deps.git();
+    const sub = api?.onDidOpenRepository(() => {
+      void attachGitListeners()
+        // Same reasoning as onGit: a repository appearing can change the
+        // branch, the changed-file count and every cached blame answer.
+        .then(() => onGit.trigger())
+        .catch((e: unknown) => deps.log.warn(`context panel git re-attach failed: ${errMsg(e)}`));
+    });
+    if (gitWiringDisposed) {
+      sub?.dispose();
+      return;
+    }
+    openSub = sub;
+    try {
+      await attachGitListeners();
+    } catch (e: unknown) {
+      deps.log.warn(`context panel git listeners failed: ${errMsg(e)}`);
+    }
+  };
+  wireGit().catch((e: unknown) => deps.log.warn(`context panel git init failed: ${errMsg(e)}`));
 
   const disposable = vscode.Disposable.from(
     vscode.window.registerWebviewViewProvider(VIEW_ID, provider),
@@ -322,25 +326,9 @@ export function registerContextView(deps: {
   return Object.assign(disposable, { recollect });
 }
 
-function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
-  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "context.js"));
-  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "context.css"));
-  const nonce = randomUUID().replaceAll("-", "");
-  const csp =
-    `default-src 'none'; ` +
-    `style-src ${webview.cspSource} 'unsafe-inline'; ` +
-    `font-src ${webview.cspSource}; ` +
-    `script-src 'nonce-${nonce}';`;
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="${csp}" />
-<title>Nimbus Context</title>
-<link rel="stylesheet" href="${styleUri.toString()}" />
-</head>
-<body>
-<main id="root">
+// The panel's two mounts inside <main id="root">; webview/main.ts renders into
+// them.
+const CONTEXT_ROOT = `
   <!--
     aria-live is scoped to the informational half only, as real-chat-panel.ts
     scopes it to its own sections. The offers are focusable buttons: a live
@@ -351,8 +339,16 @@ function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
   -->
   <section id="signals" aria-live="polite"></section>
   <section id="offers"></section>
-</main>
-<script nonce="${nonce}" src="${scriptUri.toString()}"></script>
-</body>
-</html>`;
+`;
+
+function renderHtml(webview: vscode.Webview, mediaRoot: vscode.Uri): string {
+  const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "context.js"));
+  const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(mediaRoot, "context.css"));
+  return renderWebviewDocument({
+    cspSource: webview.cspSource,
+    title: "Nimbus Context",
+    styleUri: styleUri.toString(),
+    scriptUri: scriptUri.toString(),
+    root: CONTEXT_ROOT,
+  });
 }

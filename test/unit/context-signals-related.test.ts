@@ -221,6 +221,17 @@ describe("relatedSection", () => {
     expect(section.rows.map((r) => r.label)).toEqual(["an-incident"]);
   });
 
+  test("an item with no service carries no detail, rather than an empty one", async () => {
+    const section = await relatedSection(
+      buildSnapshot({ generation: 14, editor }),
+      deps(stub([item("orphan.ts", ""), item("b.ts", "github")])),
+    );
+    expect(section.rows).toEqual([
+      { label: "orphan.ts", iconId: "file" },
+      { label: "b.ts", detail: "github", iconId: "file" },
+    ]);
+  });
+
   test("says the file has no neighbours when every hit is from the file itself", async () => {
     const section = await relatedSection(
       buildSnapshot({ generation: 13, editor }),

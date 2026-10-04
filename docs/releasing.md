@@ -58,8 +58,11 @@ affected — it records dependencies, not this package's own version.
 > release on a manual approval, which defeats the Release Please automation.
 > Add one only if you want that trade.
 
-Also confirm no **tag protection rule / ruleset** (or "require signed tags") blocks
-the Release Bot App from creating `v*` tags (Settings → Rules/Tags).
+Release tags are protected: the **Protected release tags** ruleset on `refs/tags/v*`
+blocks deleting, moving or force-pushing a `vX.Y.Z` tag once it exists, and it has
+no bypass actors, so that includes admins. It does not block *creating* one, which
+is what the Release Bot App does. If a rule is ever added that does (or "require
+signed tags"), exempt the App (Settings → Rules).
 
 ## Manual release (fallback)
 
@@ -72,9 +75,9 @@ but no auto notes (Release Please normally writes those).
 
 | Symptom | Cause / fix |
 | --- | --- |
-| Release PR opens, but no tag/publish after merge | The Release Bot App token wasn't minted (missing `RELEASE_BOT_CLIENT_ID`/`RELEASE_BOT_PRIVATE_KEY`, the App uninstalled from this repo, or its Contents/Pull-requests/Issues permissions revoked) → the tag was created by `GITHUB_TOKEN` (or not at all) and didn't trigger `publish.yml`. Check the App installation and its repository permissions, then recover by tag state: **no `vX.Y.Z` tag exists** → re-run `release-please` (it creates the tag → publish fires), or push the tag from your machine (`git tag vX.Y.Z <sha> && git push origin vX.Y.Z`). **Tag already exists** (created by `GITHUB_TOKEN`) → re-pushing it is a no-op and won't re-trigger; delete and recreate it from your machine (`git push origin :vX.Y.Z` then `git tag vX.Y.Z <sha> && git push origin vX.Y.Z`), or publish the built `.vsix` by hand (`vsce publish` / `ovsx publish`). |
+| Release PR opens, but no tag/publish after merge | The Release Bot App token wasn't minted (missing `RELEASE_BOT_CLIENT_ID`/`RELEASE_BOT_PRIVATE_KEY`, the App uninstalled from this repo, or its Contents/Pull-requests/Issues permissions revoked) → the tag was created by `GITHUB_TOKEN` (or not at all) and didn't trigger `publish.yml`. Check the App installation and its repository permissions, then recover by tag state: **no `vX.Y.Z` tag exists** → re-run `release-please` (it creates the tag → publish fires), or push the tag from your machine (`git tag vX.Y.Z <sha> && git push origin vX.Y.Z`). **Tag already exists** (created by `GITHUB_TOKEN`) → re-pushing it is a no-op and won't re-trigger, and it cannot be deleted and recreated either: the *Protected release tags* ruleset (above) rejects the delete. Publish that version by hand from the tagged commit (build, then `vsce publish` / `ovsx publish` the `.vsix`), or abandon it and ship the next version. |
 | No release PR appears after merging `feat:`/`fix:` PRs | PR titles weren't Conventional Commits (nothing to release), or `release-please` didn't run — check the Actions tab. |
-| Tag push rejected | A tag protection rule / ruleset (or required signed tags) blocks the Release Bot App. Adjust the rule or exempt the actor. |
+| Tag push rejected | If the tag already exists at another commit, the push is a move, which the *Protected release tags* ruleset rejects by design: ship the next version instead. Otherwise a rule (or required signed tags) blocks the Release Bot App from creating tags: adjust the rule or exempt the App. |
 | `publish.yml` fails at "Resolve version from tag" | Tag isn't `vMAJOR.MINOR.PATCH` (optionally `-prerelease`). |
 | `publish.yml` fails at "Verify required publish secrets" | `VSCE_PAT`/`OVSX_PAT` missing or expired. Check **repository** secrets first — that is where both currently live (see the note above); check the `release` environment only if they have since been moved there. Rotate, then re-run the failed job (safe — version derives from the tag). |
 | `publish.yml` fails before any step with "not allowed to deploy to release" | The tag or branch is outside the `release` environment's deployment branch policy (`main` + `v*`). Expected for a non-`v*` tag; otherwise widen the policy under Settings → Environments → release. |

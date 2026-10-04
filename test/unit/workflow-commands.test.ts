@@ -269,6 +269,45 @@ describe("createWorkflowCommands — run", () => {
     expect(h.gateCalls).toHaveLength(1);
   });
 
+  test("each picker row states its step count, and its description only when it has one", async () => {
+    let offered: readonly unknown[] = [];
+    const multi: WorkflowRow = {
+      ...ROW,
+      id: "wf-2",
+      name: "release",
+      description: null,
+      steps_json: JSON.stringify([{ run: "a" }, { run: "b" }, { run: "c" }]),
+    };
+    // Valid JSON, but not a list of steps — and a string, which HAS a length,
+    // so only the array check stops it being counted as "22 steps".
+    const odd: WorkflowRow = {
+      ...ROW,
+      id: "wf-3",
+      name: "odd",
+      description: null,
+      steps_json: JSON.stringify("collect then summarise"),
+    };
+    const h = makeHarness({
+      workflows: [ROW, multi, odd],
+      pick: (items) => {
+        offered = items;
+        return undefined;
+      },
+    });
+    await createWorkflowCommands(h.deps).run();
+    expect(offered).toEqual([
+      {
+        label: "nightly-sync",
+        description: "1 step",
+        detail: "Sync everything overnight",
+        row: ROW,
+      },
+      { label: "release", description: "3 steps", row: multi },
+      { label: "odd", description: "steps unreadable", row: odd },
+    ]);
+    expect(h.gateCalls).toEqual([]);
+  });
+
   test("a cancel that rejects is logged, not thrown into the run", async () => {
     // handle.cancel() rejecting must not take down a run that is still healthy.
     const logged: string[] = [];

@@ -46,4 +46,10 @@ describe("relativeOrBasename", () => {
     // genuine mismatch, not a match — falls back to the basename.
     expect(relativeOrBasename("/home/dev/Proj", "/home/dev/proj/src/a.ts")).toBe("a.ts");
   });
+
+  test("a separator-only path outside the root has no basename, and comes back unchanged", () => {
+    // Every segment is empty, so there is nothing to reduce it to; it names no
+    // directory and no user, so returning it as-is leaks nothing.
+    expect(relativeOrBasename("/home/dev/proj", "/")).toBe("/");
+  });
 });

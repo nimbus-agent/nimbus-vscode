@@ -1,7 +1,7 @@
 // Pure path logic shared by the git adapter. No vscode import — this is the
 // one place the "never send an absolute path to the agent" rule is enforced
 // in code, so it is unit-tested directly rather than only through real-git.ts
-// (which is vscode glue and excluded from coverage).
+// (which is vscode glue, tested separately through the vscode stub).
 
 function basename(path: string): string {
   const segments = path.split(/[\\/]+/).filter((s) => s.length > 0);

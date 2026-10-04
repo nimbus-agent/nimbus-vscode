@@ -83,8 +83,8 @@ const IPC_TIMEOUT = "ipc request timed out";
  *
  * On those, a timeout is not a slow Gateway: it is the consent request going
  * unanswered because it never reached anyone. Gateway 7.1.0 raises connector
- * consent as a `consent.request` notification, while `@nimbus-dev/client`
- * 0.17.0's `subscribeHitl` listens on `agent.hitlBatch` — a method absent from
+ * consent as a `consent.request` notification, while `@nimbus-dev/client`'s
+ * `subscribeHitl` (0.17.0, and still 0.18.0) listens on `agent.hitlBatch` — a method absent from
  * that Gateway's binary entirely — so the extension's HITL surface never fires
  * and the call blocks until the client's request timeout. The Gateway then
  * records the request as `rejected — client disconnected`.

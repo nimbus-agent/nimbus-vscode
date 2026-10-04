@@ -67,9 +67,10 @@ import { createLogger, errMsg, type Logger } from "./logging.js";
 import {
   buildQuickAskPrompt,
   clampContext,
-  extractReply,
+  oneShotInvokeOptions,
   QUICK_ASK_MAX_CONTEXT_CHARS,
   redactPath,
+  replyOrNotify,
   validateQuestion,
 } from "./quick-ask.js";
 import { filePresetsFor, type QuickAskPreset, resolvePresets } from "./quick-ask-presets.js";
@@ -431,8 +432,8 @@ export function activateWithDeps(
   // refreshed before each send. Priming at attach is not an optimisation: the
   // controller renders provisional chips the moment attach() is called, and an
   // unprimed cache would render a perfectly good file as "unreadable · not
-  // sent". The spec's own wording ("about 4 KB, measured when attached")
-  // requires a real measurement at attach time. The cache logic itself lives
+  // sent". A provisional chip shows an estimated size from the moment a file
+  // is attached, which needs a real measurement then. The cache logic itself lives
   // in attachment-cache.ts, pure and unit-tested with an injected
   // openTextDocument — nothing here but the vscode-facing wiring.
   const attachmentCache = createAttachmentCache({
@@ -452,14 +453,17 @@ export function activateWithDeps(
     // No `attachmentCache.clear()` here: `cacheFile` already overwrites or
     // deletes its own path per call, and the assembler only ever reads paths
     // that are actually attached — a clear buys nothing. It used to run
-    // first and race a file attached DURING this function's per-file awaits:
+    // first and race a file attached DURING this function's awaits:
     // that entry got wiped by the clear() that ran before its own cacheFile()
     // had a chance to land, and it resolved as "unreadable · not sent" despite
     // being perfectly readable.
-    for (const a of ctl.attachments()) {
-      if (a.kind !== "file") continue;
-      await cacheFile(a.path);
-    }
+    //
+    // The reads run together: each cacheFile() touches only its own path's
+    // entry and never rejects (a failed read clears that entry instead).
+    const reads = ctl.attachments().flatMap((a) => (a.kind === "file" ? [cacheFile(a.path)] : []));
+    // Most turns attach no file. Awaiting an empty Promise.all would still
+    // cost every one of those sends an extra microtask turn, so skip it.
+    if (reads.length > 0) await Promise.all(reads);
   };
 
   let chatController: ChatController | undefined;
@@ -628,7 +632,7 @@ export function activateWithDeps(
   //
   // A non-selectable status row (mirroring `statusPick` in search.ts —
   // selectable in the QuickPick's own terms, but a no-op in the handler
-  // below) covers the two degraded states the spec calls out: no Gateway
+  // below) covers the two degraded states the attach design names: no Gateway
   // connection, or a `searchRanked` that throws. Both leave the picker
   // showing files only; without this row that looks identical to "the index
   // has nothing for this workspace", which is a different and much less
@@ -1174,12 +1178,21 @@ export function activateWithDeps(
     await ctl.start(input.trim());
   });
 
-  register("nimbus.askAboutSelection", async () => {
+  // Ask, Search and Attach Selection all act on the editor's selection, and
+  // refuse the same way when there is none to act on.
+  const SELECT_TEXT_FIRST = "Nimbus: select text first.";
+  const selectionEditor = (): TextEditorLike | undefined => {
     const editor = deps.window.activeTextEditor;
     if (editor === undefined || editor.selection.isEmpty) {
-      void deps.window.showErrorMessage("Nimbus: select text first.");
-      return;
+      void deps.window.showErrorMessage(SELECT_TEXT_FIRST);
+      return undefined;
     }
+    return editor;
+  };
+
+  register("nimbus.askAboutSelection", async () => {
+    const editor = selectionEditor();
+    if (editor === undefined) return;
     const selection = editor.document.getText(editor.selection);
     const trimmed = typeof selection === "string" ? selection.trim() : "";
     if (trimmed.length === 0) return;
@@ -1300,11 +1313,8 @@ export function activateWithDeps(
   });
 
   register("nimbus.searchSelection", () => {
-    const editor = deps.window.activeTextEditor;
-    if (editor === undefined || editor.selection.isEmpty) {
-      void deps.window.showErrorMessage("Nimbus: select text first.");
-      return;
-    }
+    const editor = selectionEditor();
+    if (editor === undefined) return;
     runSearch(editor.document.getText(editor.selection));
   });
 
@@ -1335,11 +1345,8 @@ export function activateWithDeps(
   register("nimbus.attachContext", () => attachPicker());
 
   register("nimbus.attachSelectionToAsk", () => {
-    const editor = deps.window.activeTextEditor;
-    if (editor === undefined || editor.selection.isEmpty) {
-      void deps.window.showErrorMessage("Nimbus: select text first.");
-      return;
-    }
+    const editor = selectionEditor();
+    if (editor === undefined) return;
     // Captured NOW: a stored range drifts under edits, and the assembler wants
     // the text as it looked at attach time, not a pointer that can go stale.
     const text = editor.document.getText(editor.selection);
@@ -1347,7 +1354,7 @@ export function activateWithDeps(
     // selection is not usefully "selected text" either, and a silent no-op
     // here would look identical to the command doing nothing at all.
     if (text.trim().length === 0) {
-      void deps.window.showErrorMessage("Nimbus: select text first.");
+      void deps.window.showErrorMessage(SELECT_TEXT_FIRST);
       return;
     }
     const ctl = ensureChatController();
@@ -1499,9 +1506,7 @@ export function activateWithDeps(
       languageId: editor.document.languageId,
       truncated,
     });
-    const agent = settings.askAgent();
-    const options: { stream: boolean; agent?: string } = { stream: false };
-    if (agent.length > 0) options.agent = agent;
+    const options = oneShotInvokeOptions(settings.askAgent());
     try {
       const invoke = gateRawAgentInvoke(client, egressGate, "quickAsk", runWithProgress);
       const result = await invoke(
@@ -1521,11 +1526,8 @@ export function activateWithDeps(
         },
         "Nimbus: asking…",
       );
-      const reply = extractReply(result);
-      if (reply === undefined) {
-        void deps.window.showInformationMessage("Nimbus: the agent returned no reply.", {});
-        return;
-      }
+      const reply = replyOrNotify(result, deps.window);
+      if (reply === undefined) return;
       await openReadonlyJson("Nimbus reply.md", reply);
     } catch (e) {
       // Cancelling at the preview is a normal outcome, like dismissing the
