@@ -42,7 +42,8 @@ const OPS_PRESETS: readonly QuickAskPreset[] = Object.freeze([
 const K8S_HINT_RE = /\b(apiVersion|kind|helm|chart)\b/i;
 
 // Return the ops presets when (fileName, languageId) identifies an infra file:
-// Terraform, Kubernetes/Helm YAML, Dockerfiles, GitHub workflow definitions.
+// Terraform, Kubernetes/Helm YAML, Dockerfiles, Compose files, and GitHub or
+// GitLab workflow definitions.
 // `contentHead` (the file's first chunk) disambiguates generic YAML.
 export function filePresetsFor(
   fileName: string,
@@ -53,12 +54,15 @@ export function filePresetsFor(
   const isTerraform =
     languageId === "terraform" || base.endsWith(".tf") || base.endsWith(".tfvars");
   const isDockerfile = languageId === "dockerfile" || /(^|\/)dockerfile[^/]*$/.test(base);
+  const isCompose = /(^|\/)(docker-)?compose(\.[\w-]+)?\.ya?ml$/.test(base);
   const isWorkflow = /\.github\/workflows\/[^/]+\.ya?ml$/.test(base);
+  const isGitlabCi = /(^|\/)\.gitlab-ci\.ya?ml$/.test(base);
   const isK8sYaml =
     (languageId === "yaml" || base.endsWith(".yaml") || base.endsWith(".yml")) &&
     (K8S_HINT_RE.test(contentHead) ||
       /(^|\/)(k8s|kubernetes|helm|charts?|manifests?)\//.test(base));
-  if (isTerraform || isDockerfile || isWorkflow || isK8sYaml) return [...OPS_PRESETS];
+  if (isTerraform || isDockerfile || isCompose || isWorkflow || isGitlabCi || isK8sYaml)
+    return [...OPS_PRESETS];
   return [];
 }
 
