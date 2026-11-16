@@ -61,6 +61,7 @@ import { createPreflightSkipStore } from "./egress/skip-store.js";
 import { createModalSurface } from "./hitl/hitl-modal.js";
 import { createHitlRouter, type HitlDecision } from "./hitl/hitl-router.js";
 import { createToastSurface } from "./hitl/hitl-toast.js";
+import { createTypedConfirmSurface } from "./hitl/hitl-typed.js";
 import type { LmToolsDeps } from "./lm-tools/lm-tools.js";
 import { registerNimbusLmTools } from "./lm-tools/real-lm-tools.js";
 import { createLogger, errMsg, type Logger } from "./logging.js";
@@ -831,14 +832,21 @@ export function activateWithDeps(
     showInline: showInlineInWebview,
     showToast: createToastSurface(deps.window),
     showModal: createModalSurface(deps.window),
-    sendResponse: async (requestId, decision) => {
+    askTyped: createTypedConfirmSurface(deps.window),
+    sendResponse: async (requestId, decision, typed) => {
       const c = nimbus();
       if (c === undefined) {
         log.warn("HITL response dropped: no Gateway connection");
         return;
       }
       try {
-        await sendConsentResponse(c, requestId, decision);
+        await c.consentRespond({
+          requestId,
+          approved: decision === "approve",
+          ...(typed === undefined ? {} : { typed }),
+          // Every answer reaching here was given by a person (a click or typed text).
+          answerSource: "human",
+        });
       } catch (e) {
         log.error(`HITL sendResponse failed: ${errMsg(e)}`);
       }
@@ -1910,19 +1918,6 @@ export function deactivate(): void {
 }
 
 export { renderDetailsHtml } from "./hitl/hitl-details-webview.js";
-
-async function sendConsentResponse(
-  client: NimbusClient,
-  requestId: string,
-  decision: HitlDecision,
-): Promise<void> {
-  const ipc = (
-    client as unknown as {
-      ipc: { call: (m: string, p: unknown) => Promise<unknown> };
-    }
-  ).ipc;
-  await ipc.call("consent.respond", { requestId, decision });
-}
 
 // A view/item/context command receives the tree NODE, not command.arguments,
 // and its payload is untyped by design (SidebarItem is generic across views).

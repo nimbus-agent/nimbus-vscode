@@ -141,6 +141,7 @@ export interface WindowApi {
     ...items: string[]
   ): Thenable<string | undefined>;
   showInputBox(opts?: {
+    title?: string;
     prompt?: string;
     value?: string;
     placeHolder?: string;
