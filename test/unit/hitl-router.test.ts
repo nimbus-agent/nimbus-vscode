@@ -105,6 +105,47 @@ describe("HitlRouter", () => {
       expect(deps.sendResponse).toHaveBeenCalledWith("req-1", "reject");
     });
 
+    test("two typed requests are asked one at a time, and the second does not reject the first", async () => {
+      const deps = makeDeps({ chatVisibleAndFocused: false });
+      const open: string[] = [];
+      const answers = new Map<string, (typed: string | undefined) => void>();
+      vi.mocked(deps.askTyped).mockImplementation(
+        (req) =>
+          new Promise<string | undefined>((resolve) => {
+            open.push(req.requestId);
+            answers.set(req.requestId, resolve);
+          }),
+      );
+      const router = createHitlRouter(deps);
+      const first = router.handle({ ...CONFIRM, requestId: "a" });
+      const second = router.handle({ ...CONFIRM, requestId: "b" });
+      await Promise.resolve();
+      await Promise.resolve();
+      // Only the first box is open: VS Code would have replaced it with the second.
+      expect(open).toEqual(["a"]);
+      expect(deps.sendResponse).not.toHaveBeenCalled();
+      answers.get("a")?.("typed-a");
+      await first;
+      expect(open).toEqual(["a", "b"]);
+      answers.get("b")?.(undefined);
+      await second;
+      expect(vi.mocked(deps.sendResponse).mock.calls).toEqual([
+        ["a", "approve", "typed-a"],
+        ["b", "reject"],
+      ]);
+    });
+
+    test("a typed prompt that fails does not block the next one", async () => {
+      const deps = makeDeps({ chatVisibleAndFocused: false });
+      vi.mocked(deps.askTyped)
+        .mockRejectedValueOnce(new Error("window closed"))
+        .mockResolvedValueOnce("typed-b");
+      const router = createHitlRouter(deps);
+      await expect(router.handle({ ...CONFIRM, requestId: "a" })).rejects.toThrow("window closed");
+      await router.handle({ ...CONFIRM, requestId: "b" });
+      expect(deps.sendResponse).toHaveBeenCalledWith("b", "approve", "typed-b");
+    });
+
     test("an ordinary request never opens the input box", async () => {
       const deps = makeDeps({ chatVisibleAndFocused: false });
       await createHitlRouter(deps).handle(REQ);

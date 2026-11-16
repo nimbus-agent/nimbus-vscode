@@ -27,6 +27,17 @@ export interface HitlRouter {
 
 export function createHitlRouter(deps: HitlRouterDeps): HitlRouter {
   const pending = new Map<string, HitlRequest>();
+  // Typed prompts are shown ONE AT A TIME. VS Code has a single quick input: opening a second
+  // box replaces the first, which then resolves as dismissed, and a dismissed typed prompt is a
+  // rejection. Without this queue a second request arriving mid-prompt would reject the first
+  // although the person never dismissed it.
+  let typedQueue: Promise<unknown> = Promise.resolve();
+  const askTypedInTurn = (req: HitlRequest): Promise<string | undefined> => {
+    const turn = typedQueue.then(() => deps.askTyped(req));
+    // The queue moves on whether this prompt was answered, dismissed or failed.
+    typedQueue = turn.catch(() => undefined);
+    return turn;
+  };
 
   const emitCount = (): void => {
     deps.onCountChange(pending.size);
@@ -40,7 +51,7 @@ export function createHitlRouter(deps: HitlRouterDeps): HitlRouter {
       // A type-to-confirm request has ONE surface: the input box. No inline card, toast or
       // modal button can approve it, and nothing here ever answers it on the person's behalf.
       if (req.confirmText !== undefined) {
-        const typed = await deps.askTyped(req);
+        const typed = await askTypedInTurn(req);
         await (typed === undefined
           ? deps.sendResponse(req.requestId, "reject")
           : deps.sendResponse(req.requestId, "approve", typed));
