@@ -13,6 +13,7 @@ function makeDeps(opts: { chatVisibleAndFocused: boolean; alwaysModal?: boolean 
     showInline: vi.fn(async () => "approve" as const),
     showToast: vi.fn(async () => "approve" as const),
     showModal: vi.fn(async () => "approve" as const),
+    askTyped: vi.fn(async () => undefined as string | undefined),
     sendResponse: vi.fn(async () => undefined),
     onCountChange: vi.fn(),
     alwaysModal: () => opts.alwaysModal ?? false,
@@ -74,5 +75,40 @@ describe("HitlRouter", () => {
     void router.handle({ requestId: "r-pending", prompt: "p" });
     await new Promise((r) => setTimeout(r, 5));
     expect(router.snapshot().map((r) => r.requestId)).toContain("r-pending");
+  });
+
+  describe("type-to-confirm", () => {
+    const CONFIRM: HitlRequest = { ...REQ, confirmText: "github/merge org/repo#7" };
+
+    test("uses the input box only, whatever the surface preference, and never a button surface", async () => {
+      for (const alwaysModal of [false, true]) {
+        const deps = makeDeps({ chatVisibleAndFocused: true, alwaysModal });
+        vi.mocked(deps.askTyped).mockResolvedValueOnce("github/merge org/repo#7");
+        await createHitlRouter(deps).handle({ ...CONFIRM, streamId: "active-stream" });
+        expect(deps.askTyped).toHaveBeenCalledTimes(1);
+        expect(deps.showInline).not.toHaveBeenCalled();
+        expect(deps.showToast).not.toHaveBeenCalled();
+        expect(deps.showModal).not.toHaveBeenCalled();
+      }
+    });
+
+    test("sends the typed text unchanged, even when it does not match", async () => {
+      const deps = makeDeps({ chatVisibleAndFocused: false });
+      vi.mocked(deps.askTyped).mockResolvedValueOnce(" Github/Merge ");
+      await createHitlRouter(deps).handle(CONFIRM);
+      expect(deps.sendResponse).toHaveBeenCalledWith("req-1", "approve", " Github/Merge ");
+    });
+
+    test("a dismissed box rejects", async () => {
+      const deps = makeDeps({ chatVisibleAndFocused: false });
+      await createHitlRouter(deps).handle(CONFIRM);
+      expect(deps.sendResponse).toHaveBeenCalledWith("req-1", "reject");
+    });
+
+    test("an ordinary request never opens the input box", async () => {
+      const deps = makeDeps({ chatVisibleAndFocused: false });
+      await createHitlRouter(deps).handle(REQ);
+      expect(deps.askTyped).not.toHaveBeenCalled();
+    });
   });
 });

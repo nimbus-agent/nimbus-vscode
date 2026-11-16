@@ -3092,12 +3092,81 @@ describe("activateWithDeps", () => {
     fire({ type: "hitlResponse", requestId: "req-x", decision: "approve" });
     await flush();
 
-    // Approving routes the decision to the Gateway; the fake client has no
-    // `.ipc`, so sendConsentResponse throws and the failure is logged rather
-    // than silently dropped — proving sendResponse actually ran.
+    // The fake client has no `consentRespond`, so the send throws and the failure is
+    // logged rather than silently dropped, proving sendResponse actually ran.
     expect(f.outputAppendLines.some((l) => l.includes("HITL sendResponse failed"))).toBe(true);
   });
 
+  test("an ordinary approval is answered with answerSource human and no typed text", async () => {
+    const consentRespond = vi.fn(async () => ({ ok: true }));
+    const f = makeFixture({
+      infoMessageClicks: ["Approve"],
+      openClient: makeFakeClient({ consentRespond } as unknown as Partial<ClientLike>),
+    });
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    handle.fireHitl({ requestId: "req-h", prompt: "Allow?" } as Parameters<
+      typeof handle.fireHitl
+    >[0]);
+    await flush();
+    expect(consentRespond).toHaveBeenCalledWith({
+      requestId: "req-h",
+      approved: true,
+      answerSource: "human",
+    });
+  });
+
+  test("a type-to-confirm request opens an unfilled input box and sends the typed text unchanged", async () => {
+    const consentRespond = vi.fn(async () => ({ ok: true }));
+    const f = makeFixture({
+      inputBoxAnswers: ["  github/merge Org/Repo#7 "],
+      infoMessageClicks: ["Approve"],
+      openClient: makeFakeClient({ consentRespond } as unknown as Partial<ClientLike>),
+    });
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    handle.fireHitl({
+      requestId: "req-t",
+      prompt: "Merge it?",
+      confirmText: "github/merge org/repo#7",
+    } as Parameters<typeof handle.fireHitl>[0]);
+    await flush();
+    // No button surface was offered, and the box was not pre-filled.
+    expect(f.deps.window.showInformationMessage).not.toHaveBeenCalled();
+    const box = (f.deps.window.showInputBox as unknown as ReturnType<typeof vi.fn>).mock
+      .calls[0]?.[0] as { prompt: string; value?: string };
+    expect(box.value).toBeUndefined();
+    expect(box.prompt).toContain("github/merge org/repo#7");
+    // Sent exactly as typed (a mismatch is the Gateway's to refuse), never auto-corrected.
+    expect(consentRespond).toHaveBeenCalledWith({
+      requestId: "req-t",
+      approved: true,
+      typed: "  github/merge Org/Repo#7 ",
+      answerSource: "human",
+    });
+  });
+
+  test("dismissing the input box of a type-to-confirm request rejects it", async () => {
+    const consentRespond = vi.fn(async () => ({ ok: true }));
+    const f = makeFixture({
+      inputBoxAnswers: [undefined],
+      infoMessageClicks: ["Approve"],
+      openClient: makeFakeClient({ consentRespond } as unknown as Partial<ClientLike>),
+    });
+    const handle = activateWithDeps(f.ctx, f.deps);
+    await waitForConnect();
+    handle.fireHitl({
+      requestId: "req-d",
+      prompt: "Merge it?",
+      confirmText: "github/merge org/repo#7",
+    } as Parameters<typeof handle.fireHitl>[0]);
+    await flush();
+    expect(consentRespond).toHaveBeenCalledWith({
+      requestId: "req-d",
+      approved: false,
+      answerSource: "human",
+    });
+  });
   test("an approved HITL request while disconnected is dropped with a warning, not sent", async () => {
     const f = makeFixture({ openClient: disconnectedClient(), infoMessageClicks: ["Approve"] });
     const handle = activateWithDeps(f.ctx, f.deps);

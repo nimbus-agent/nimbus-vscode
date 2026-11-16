@@ -8,7 +8,14 @@ export interface HitlRouterDeps {
   showInline(req: HitlRequest): Promise<HitlDecision | undefined>;
   showToast(req: HitlRequest): Promise<HitlDecision | undefined>;
   showModal(req: HitlRequest): Promise<HitlDecision | undefined>;
-  sendResponse(requestId: string, decision: HitlDecision): Promise<void>;
+  /**
+   * A type-to-confirm request: the person must TYPE `req.confirmText`. Resolves with exactly
+   * what they typed, or `undefined` if they dismissed the box. Never pre-filled, never
+   * compared here: the Gateway decides.
+   */
+  askTyped(req: HitlRequest): Promise<string | undefined>;
+  /** `typed` is set only for a type-to-confirm approval, and is sent unchanged. */
+  sendResponse(requestId: string, decision: HitlDecision, typed?: string): Promise<void>;
   onCountChange(count: number): void;
   alwaysModal(): boolean;
 }
@@ -30,6 +37,15 @@ export function createHitlRouter(deps: HitlRouterDeps): HitlRouter {
     pending.set(req.requestId, req);
     emitCount();
     try {
+      // A type-to-confirm request has ONE surface: the input box. No inline card, toast or
+      // modal button can approve it, and nothing here ever answers it on the person's behalf.
+      if (req.confirmText !== undefined) {
+        const typed = await deps.askTyped(req);
+        await (typed === undefined
+          ? deps.sendResponse(req.requestId, "reject")
+          : deps.sendResponse(req.requestId, "approve", typed));
+        return;
+      }
       const useInline =
         typeof req.streamId === "string" &&
         deps.streamRegistered(req.streamId) &&
