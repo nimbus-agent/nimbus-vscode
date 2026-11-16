@@ -3134,9 +3134,11 @@ describe("activateWithDeps", () => {
     // No button surface was offered, and the box was not pre-filled.
     expect(f.deps.window.showInformationMessage).not.toHaveBeenCalled();
     const box = (f.deps.window.showInputBox as unknown as ReturnType<typeof vi.fn>).mock
-      .calls[0]?.[0] as { prompt: string; value?: string };
+      .calls[0]?.[0] as { title: string; prompt: string; value?: string };
     expect(box.value).toBeUndefined();
-    expect(box.prompt).toContain("github/merge org/repo#7");
+    // The text to type is in the title, which VS Code shows literally.
+    expect(box.title).toContain("github/merge org/repo#7");
+    expect(box.prompt).toContain("Merge it?");
     // Sent exactly as typed (a mismatch is the Gateway's to refuse), never auto-corrected.
     expect(consentRespond).toHaveBeenCalledWith({
       requestId: "req-t",
