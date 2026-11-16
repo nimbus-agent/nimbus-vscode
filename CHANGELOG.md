@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.24.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.23.0...v0.24.0) (2026-11-16)
+
+
+### Features
+
+* ask the owner to type the confirm text for a type-to-confirm approval, and report who answered ([#131](https://github.com/nimbus-agent/nimbus-vscode/issues/131)) ([eead1fa](https://github.com/nimbus-agent/nimbus-vscode/commit/eead1fa5eba2c5aef1045c3993c5caff5417497b))
+
 ## [0.23.0](https://github.com/nimbus-agent/nimbus-vscode/compare/v0.22.0...v0.23.0) (2026-10-04)
 
 
