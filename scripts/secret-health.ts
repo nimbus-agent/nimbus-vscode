@@ -171,7 +171,7 @@ export function verdictFor(probeStatus: string, expiryIso: string | undefined, n
   const calendar = classifyExpiry(expiryIso, now);
   const rank = (v: Verdict): number => {
     const i = PRECEDENCE.indexOf(v);
-    return i < 0 ? 0 : i;
+    return Math.max(i, 0);
   };
   return rank(probe) <= rank(calendar) ? probe : calendar;
 }
