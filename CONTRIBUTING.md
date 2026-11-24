@@ -113,7 +113,9 @@ A range bump is not the whole job for these:
   `package.json`, not the version `bun.lock` resolved — check that too. That is
   why the range is a tilde on the floor's minor (`~1.95.0`): a caret let the
   lockfile resolve 1.125.0. Raise the two together, deliberately, never as
-  part of a bulk update.
+  part of a bulk update. *Held back, re-tested 2026-11-24:* 1.146.0 is the
+  latest, but the docs promise VS Code 1.95+ and the floor is raised only
+  deliberately, so it stays at `~1.95.0` with `engines.vscode` `^1.95.0`.
 - **The UI-test harness** — `vscode-extension-tester` (pinned exactly),
   `mocha`, `chai` and their `@types`. CI typechecks `test/ui/` but never runs
   it, so after bumping any of them run `bun run test:ui` yourself (see

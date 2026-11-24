@@ -37,7 +37,7 @@ build-test:
   before_script:
     # Bun is pinned here and in the workflows' `bun-version` input; move the
     # two together.
-    - npm install -g bun@1.3.14
+    - npm install -g bun@1.4.5
     # git ships with this image (node's Debian images build on
     # buildpack-deps); biome's ignore-file resolution (vcs.useIgnoreFile)
     # needs it or it scans node_modules. Trust the workspace (root-owned
