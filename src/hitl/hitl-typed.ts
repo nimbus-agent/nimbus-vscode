@@ -8,7 +8,7 @@ import type { WindowApi } from "../vscode-shim.js";
 const INVISIBLE = /[\p{Cc}\p{Cf}\u2028\u2029]/gu;
 
 export function visibleText(s: string): string {
-  return s.replace(INVISIBLE, (ch) => `\\u{${(ch.codePointAt(0) ?? 0).toString(16)}}`);
+  return s.replace(INVISIBLE, (ch) => String.raw`\u{${(ch.codePointAt(0) ?? 0).toString(16)}}`);
 }
 
 /**
@@ -18,7 +18,7 @@ export function visibleText(s: string): string {
  * with a visible space. Nothing else about the text changes.
  */
 export function unlinked(s: string): string {
-  return s.replace(/\]\(/g, "] (");
+  return s.replaceAll("](", "] (");
 }
 
 /**
