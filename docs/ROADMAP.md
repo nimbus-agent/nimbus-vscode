@@ -47,9 +47,11 @@ is "does the RPC exist yet?":
   than re-freezing a copy here — a frozen copy is what made this section stale.
   Three items graduated out of Phase 4 once those RPCs shipped (Workflow surface,
   Connector management, Index write ops); what is left below is genuinely
-  unshipped upstream. The pin is `^0.18.0` today: `0.18.0` added
+  unshipped upstream. The pin is `^0.19.0` today: `0.18.0` added
   `searchRankedWithRetrieval` (ranked hits plus the Gateway's own notes on how
-  complete the search was), which the `@nimbus` participant's citations use.
+  complete the search was), which the `@nimbus` participant's citations use, and
+  `0.19.0` added `typed` and `answerSource` to `consentRespond`, which the
+  type-to-confirm prompt uses.
 
 The columns below name the enabling client RPC (or, for Phase 4, the new SDK
 capability required) so the split is verifiable, not aspirational. Effort is a
@@ -91,7 +93,7 @@ What is missing is not reach any more, but that most of that reach is still
   conflicts, decisions, expert, ghost, glossary, huddle, impact, janitor,
   negotiate, oncall, ownership, premortem, preflight, standup, why, and the
   synchronous whyPeek companion (re-derived from the Gateway's `main` on
-  2026-10-03). That count moves with the Gateway, not with this repo; re-derive
+  2026-11-26). That count moves with the Gateway, not with this repo; re-derive
   it from the handler map there rather than trusting this line.
 - The published (pinned) client types **ten** of them — all but changelog,
   decisions, glossary, negotiate, oncall, ownership, premortem and standup,
@@ -247,7 +249,16 @@ RPC ships.
 | **Targeted single-item sync** — index one item on demand when resolution misses, then answer | Removes "not indexed yet" as a dead end; `connectorSync` takes a `serviceId` and syncs the whole connector. The Gateway side now exists as `POST /v1/items/fetch`, an explicit `I13` HTTP write route rather than a read, which records one egress-ledger row per fetch; the pinned client types no method for it | a typed per-item fetch-and-index client method | L |
 | **The eight untyped Gateway agents** — changelog, decisions, glossary, negotiate, oncall, ownership, pre-mortem, standup | The cheapest rows here: the Gateway already dispatches `agents.changelog`, `agents.decisions`, `agents.glossary`, `agents.negotiate`, `agents.oncall`, `agents.ownership`, `agents.premortem` and `agents.standup` over IPC alongside the ten this extension already calls — only the typed client methods are missing, so each needs a client release, not Gateway work | a client release typing the `agents.changelog` / `.decisions` / `.glossary` / `.negotiate` / `.oncall` / `.ownership` / `.premortem` / `.standup` methods | S each |
 | **MCP connector command line, shown in the Connectors view** | You could see what a registered `mcp_*` connector actually runs without opening the CLI — the posture this extension already has for everything else it touches. `commandLine` appears in the typed client **only as an input to `connectorAddMcp`**; no status, result, or notification type returns it, so there is nothing to render | a client release that returns `commandLine` from `connectorListStatus` or `connectorStatus` | S |
-| **Approve an outside agent's proposed write, in the editor** | The Gateway's roadmap now leads with Nimbus as the trust layer for agents ([§ Direction](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md#direction), recorded 2026-11-12), and its [Phase 28](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md#phase-28--the-agent-door) plans a one-step approval of writes proposed by outside agents. An editor is where such an agent usually runs, so it is a natural place to see the typed preview and answer it. Nothing here is built, and the Gateway side is planned too | typed client methods to list waiting proposals and to answer one; their names are for Phase 28's design to fix | M |
+| **See an outside agent's proposed write, read-only, in the editor** | The Gateway side shipped with [Phase 28](https://github.com/nimbus-agent/Nimbus/blob/main/docs/roadmap.md#phase-28--the-agent-door), the agent door (complete 2026-11-26): `approvals.list`, `approvals.get`, `approvals.approve` and `approvals.decline` in `packages/gateway/src/ipc/approvals-rpc.ts`. All four are served only to a connection that declared `cli` or `ui` (`APPROVER_BY_KIND`), so reading the queue needs that declared kind too; the pinned client (0.19.0) types none of them and, as far as checked, has no way to declare a kind (unverified). Owner decision 2026-11-26: the editor shows the queue and each proposal **read-only**, with the `nimbus approvals <id>` command to copy. Approval stays at the terminal for the near future, because an agent that can drive the editor could otherwise approve its own proposal; approving from the editor may be reconsidered when collaboration features arrive | typed client methods for `approvals.list` / `approvals.get`, and a way to declare the connection's kind | M |
+| **On-call chip and handoff tab** — who is on call now in the status bar, and the shift handoff brief in a tab | Answered from the local index, no model | typed client methods for `oncall.now`, `oncall.handoff` | S |
+| **Morning briefing tab** — the latest briefing and its history | A deterministic, no-model briefing from the local index; `briefing.runNow` is CLI-only and stays out | typed client methods for `briefing.latest`, `briefing.list`, `briefing.get`, `briefing.status` | S |
+| **Incidents view, read-only** — incident records, their briefs and timelines, remediation proposals and findings; a proposal shows the copyable `nimbus incident remediate <record> --pick <proposal>` command | Remediation stays at the terminal, where the owner's prompt is answered | typed client methods for `incident.list`, `incident.get`, `incident.timeline`, `incident.proposals`, `incident.findings` | M |
+| **Deploy-risk block in *Safe to deploy?*** | The preflight brief gains an advisory `risk` field (level, one-line why, four factors) that never changes the verdict; the client's `deploy.preflight` validator and types do not carry it | a client release typing the `risk` field of `deploy.preflight` | S |
+| **Schedules and standing rules, read-only, in the Workflows view** — each workflow's schedule and blocked run, plus standing rules, their fires and open suggestions | Creating or resuming a rule stays CLI-only (a person's answer at the terminal) | typed client methods for `workflow.scheduleList`, `standing.list`, `standing.show`, `standing.fires`, `standing.suggestions` | M |
+| **IaC drift row** — the latest Terraform drift finding per approved directory | Read-only; `iac.driftCheck` stays CLI | a typed client method for `iac.driftLatest` | S |
+| **Marketplace, browse-only** — search the registries and open an extension's tile (score, permissions, provenance, blocked versions) | Install stays a copied `nimbus extension install <id> --registry <name>` command | typed client methods for `registry.list`, `registry.search`, `registry.info` | M |
+| **PR pre-review brief** on a branch with an indexed pull request | A co-change and past-review brief from the local index, no model and nothing posted. `prreview.run` is served only to a connection that declared `cli` or `ui`, so it needs the same declared kind as the approvals row | a typed client method for `prreview.run` | S |
+| **Agent-kit drift hint** — when `.vscode/mcp.json` lacks the Nimbus entry or it has drifted, point to `nimbus agent install vscode --scope project` and `nimbus agent status` | Guidance only: a local file check and a message, nothing written and no Gateway call | *no RPC* (a local file read) | S |
 
 ---
 
